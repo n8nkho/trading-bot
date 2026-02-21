@@ -82,6 +82,66 @@ if ALPACA_API_KEY and ALPACA_SECRET_KEY:
 else:
     logger.warning("Alpaca credentials not found. Trading execution disabled.")
 
+# Initialize Alpaca client (paper trading only)
+ALPACA_API_KEY = os.getenv('ALPACA_API_KEY')
+ALPACA_SECRET_KEY = os.getenv('ALPACA_SECRET_KEY')
+ALPACA_BASE_URL = os.getenv('ALPACA_BASE_URL', 'https://paper-api.alpaca.markets')
+
+# Verify paper trading URL
+if ALPACA_BASE_URL and 'paper' not in ALPACA_BASE_URL.lower():
+    logger.error("SAFETY CHECK FAILED: Not using paper trading URL!")
+    logger.error(f"Current URL: {ALPACA_BASE_URL}")
+    logger.error("Please set ALPACA_BASE_URL to paper trading endpoint")
+    raise ValueError("Must use paper trading URL for safety")
+
+alpaca_client = None
+if ALPACA_API_KEY and ALPACA_SECRET_KEY:
+    try:
+        alpaca_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
+        logger.info(f"Alpaca client initialized (PAPER TRADING): {ALPACA_BASE_URL}")
+    except Exception as e:
+        logger.error(f"Failed to initialize Alpaca client: {type(e).__name__}: {str(e)}")
+else:
+    logger.warning("Alpaca credentials not found. Trading execution disabled.")
+
+
+def get_account_info():
+    """
+    Get Alpaca account information including buying power.
+    
+    Returns:
+        dict: {
+            'buying_power': float,
+            'equity': float,
+            'cash': float,
+            'portfolio_value': float,
+            'position_count': int
+        } or None if error
+    """
+    if not alpaca_client:
+        logger.error("Alpaca client not initialized")
+        return None
+    
+    try:
+        account = alpaca_client.get_account()
+        
+        info = {
+            'buying_power': float(account.buying_power),
+            'equity': float(account.equity),
+            'cash': float(account.cash),
+            'portfolio_value': float(account.portfolio_value),
+            'position_count': len(alpaca_client.get_all_positions())
+        }
+        
+        logger.info(f"Account info: Buying power=${info['buying_power']:,.2f}, "
+                   f"Equity=${info['equity']:,.2f}, Positions={info['position_count']}")
+        
+        return info
+        
+    except Exception as e:
+        logger.error(f"Error getting account info: {type(e).__name__}: {str(e)}")
+        return None
+
 
 def get_account_info():
     """
@@ -148,6 +208,135 @@ def is_market_hours():
     except Exception as e:
         logger.error(f"Error checking market hours: {type(e).__name__}: {str(e)}")
         return False
+
+
+def execute_buy_order(ticker, shares, entry_price):
+    """
+    Execute a market buy order via Alpaca.
+    
+    Args:
+        ticker: Stock symbol
+        shares: Number of shares to buy
+        entry_price: Expected entry price (for logging)
+        
+    Returns:
+        dict: {
+            'success': bool,
+            'order_id': str or None,
+            'filled_qty': int or None,
+            'filled_price': float or None,
+            'error': str or None
+        }
+    """
+    if not alpaca_client:
+        logger.error(f"{ticker}: Cannot execute order - Alpaca client not initialized")
+        return {
+            'success': False,
+            'order_id': None,
+            'filled_qty': None,
+            'filled_price': None,
+            'error': 'Alpaca client not initialized'
+        }
+    
+    try:
+        logger.info(f"{ticker}: Submitting BUY order for {shares} shares (expected price: ${entry_price:.2f})")
+        
+        # Create market order request
+        order_data = MarketOrderRequest(
+            symbol=ticker,
+            qty=shares,
+            side=OrderSide.BUY,
+            time_in_force=TimeInForce.DAY
+        )
+        
+        # Submit order
+        order = alpaca_client.submit_order(order_data)
+        
+        logger.info(f"{ticker}: Order submitted - ID: {order.id}, Status: {order.status}")
+        
+        # Return order details
+        return {
+            'success': True,
+            'order_id': str(order.id),
+            'filled_qty': int(order.filled_qty) if order.filled_qty else None,
+            'filled_price': float(order.filled_avg_price) if order.filled_avg_price else None,
+            'status': str(order.status),
+            'error': None
+        }
+        
+    except Exception as e:
+        logger.error(f"{ticker}: Error executing buy order: {type(e).__name__}: {str(e)}")
+        return {
+            'success': False,
+            'order_id': None,
+            'filled_qty': None,
+            'filled_price': None,
+            'error': f"{type(e).__name__}: {str(e)}"
+        }
+
+
+def execute_sell_order(ticker, shares):
+    """
+    Execute a market sell order via Alpaca.
+    
+    Args:
+        ticker: Stock symbol
+        shares: Number of shares to sell
+        
+    Returns:
+        dict: {
+            'success': bool,
+            'order_id': str or None,
+            'filled_qty': int or None,
+            'filled_price': float or None,
+            'error': str or None
+        }
+    """
+    if not alpaca_client:
+        logger.error(f"{ticker}: Cannot execute order - Alpaca client not initialized")
+        return {
+            'success': False,
+            'order_id': None,
+            'filled_qty': None,
+            'filled_price': None,
+            'error': 'Alpaca client not initialized'
+        }
+    
+    try:
+        logger.info(f"{ticker}: Submitting SELL order for {shares} shares")
+        
+        # Create market order request
+        order_data = MarketOrderRequest(
+            symbol=ticker,
+            qty=shares,
+            side=OrderSide.SELL,
+            time_in_force=TimeInForce.DAY
+        )
+        
+        # Submit order
+        order = alpaca_client.submit_order(order_data)
+        
+        logger.info(f"{ticker}: Order submitted - ID: {order.id}, Status: {order.status}")
+        
+        # Return order details
+        return {
+            'success': True,
+            'order_id': str(order.id),
+            'filled_qty': int(order.filled_qty) if order.filled_qty else None,
+            'filled_price': float(order.filled_avg_price) if order.filled_avg_price else None,
+            'status': str(order.status),
+            'error': None
+        }
+        
+    except Exception as e:
+        logger.error(f"{ticker}: Error executing sell order: {type(e).__name__}: {str(e)}")
+        return {
+            'success': False,
+            'order_id': None,
+            'filled_qty': None,
+            'filled_price': None,
+            'error': f"{type(e).__name__}: {str(e)}"
+        }
 
 
 def execute_buy_order(ticker, shares, entry_price):
@@ -486,6 +675,33 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
                     'value': decision['position_size'],
                     'sector': new_position['sector']
                 })
+                
+                # Track decision for performance analysis
+                signal_id = f"{ticker}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                track_decision(signal_id, {
+                    'ticker': ticker,
+                    'action': 'BUY',
+                    'entry_price': decision['entry_price'],
+                    'shares': decision['shares'],
+                    'position_size': decision['position_size'],
+                    'confidence': decision['confidence'],
+                    'reasoning': decision['reasoning'],
+                    'metrics': {
+                        'rsi': decision.get('rsi'),
+                        'drop_pct': decision.get('drop_pct'),
+                        'volume_ratio': decision.get('volume_ratio'),
+                        'confidence': decision['confidence']
+                    },
+                    'grok_sentiment': decision.get('grok_sentiment'),
+                    'timestamp': datetime.now().isoformat()
+                })
+                
+                # Update portfolio data for next iteration
+                portfolio_data['positions'].append({
+                    'ticker': ticker,
+                    'value': decision['position_size'],
+                    'sector': new_position['sector']
+                })
             else:
                 logger.warning(f"{ticker}: REJECTED - {risk_check['reason']}")
                 rejected_trades.append({
@@ -688,7 +904,52 @@ def monitor_positions():
                         signal['execution_error'] = order_result['error']
                         exit_failures.append(signal)
         
-        # Compile results
+        # Step 5: Execute approved trades
+        logger.info("Step 5: Executing approved trades...")
+        
+        executed_trades = []
+        execution_failures = []
+        
+        for trade in approved_trades:
+            ticker = trade['ticker']
+            shares = trade['shares']
+            entry_price = trade['entry_price']
+            
+            # Execute buy order
+            order_result = execute_buy_order(ticker, shares, entry_price)
+            
+            if order_result['success']:
+                logger.info(f"{ticker}: Order executed successfully - ID: {order_result['order_id']}")
+                
+                # Add order info to trade
+                trade['order_id'] = order_result['order_id']
+                trade['order_status'] = order_result['status']
+                trade['filled_qty'] = order_result['filled_qty']
+                trade['filled_price'] = order_result['filled_price']
+                trade['executed'] = True
+                trade['execution_time'] = datetime.now().isoformat()
+                
+                executed_trades.append(trade)
+                
+                # Add to positions file
+                add_position({
+                    'ticker': ticker,
+                    'shares': shares,
+                    'entry_price': entry_price,
+                    'entry_date': datetime.now().isoformat(),
+                    'order_id': order_result['order_id'],
+                    'sector': get_sector_from_candidates(ticker, candidates),
+                    'stop_loss_pct': current_params['stop_loss_pct'],
+                    'take_profit_pct': current_params.get('take_profit_pct', 15.0)
+                })
+                
+            else:
+                logger.error(f"{ticker}: Order execution failed - {order_result['error']}")
+                trade['executed'] = False
+                trade['execution_error'] = order_result['error']
+                execution_failures.append(trade)
+        
+        # Step 6: Compile results
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
         
@@ -728,6 +989,131 @@ def monitor_positions():
         }
         save_exit_signals(result)
         return result
+
+
+def load_positions():
+    """
+    Load open positions from data/positions.json.
+    
+    Returns:
+        list: List of position dicts
+    """
+    try:
+        if not POSITIONS_FILE.exists():
+            logger.info(f"Positions file not found: {POSITIONS_FILE}")
+            return []
+        
+        with open(POSITIONS_FILE, 'r') as f:
+            data = json.load(f)
+        
+        positions = data.get('positions', [])
+        logger.info(f"Loaded {len(positions)} positions from {POSITIONS_FILE}")
+        return positions
+        
+    except Exception as e:
+        logger.error(f"Error loading positions: {type(e).__name__}: {str(e)}")
+        return []
+
+
+def add_position(position):
+    """
+    Add a new position to data/positions.json.
+    
+    Args:
+        position: Position dict with ticker, shares, entry_price, etc.
+    """
+    try:
+        # Load existing positions
+        positions = load_positions()
+        
+        # Add new position
+        positions.append(position)
+        
+        # Save back to file
+        with open(POSITIONS_FILE, 'w') as f:
+            json.dump({'positions': positions, 'last_updated': datetime.now().isoformat()}, f, indent=2)
+        
+        logger.info(f"Added position: {position['ticker']} - {position['shares']} shares @ ${position['entry_price']:.2f}")
+        
+    except Exception as e:
+        logger.error(f"Error adding position: {type(e).__name__}: {str(e)}")
+
+
+def remove_position(ticker):
+    """
+    Remove a position from data/positions.json.
+    
+    Args:
+        ticker: Stock ticker to remove
+    """
+    try:
+        # Load existing positions
+        positions = load_positions()
+        
+        # Remove position
+        positions = [p for p in positions if p['ticker'] != ticker]
+        
+        # Save back to file
+        with open(POSITIONS_FILE, 'w') as f:
+            json.dump({'positions': positions, 'last_updated': datetime.now().isoformat()}, f, indent=2)
+        
+        logger.info(f"Removed position: {ticker}")
+        
+    except Exception as e:
+        logger.error(f"Error removing position: {type(e).__name__}: {str(e)}")
+
+
+def update_position_quantity(ticker, qty_sold):
+    """
+    Update position quantity after partial sale.
+    
+    Args:
+        ticker: Stock ticker
+        qty_sold: Number of shares sold
+    """
+    try:
+        # Load existing positions
+        positions = load_positions()
+        
+        # Update position
+        for pos in positions:
+            if pos['ticker'] == ticker:
+                old_qty = pos['shares']
+                pos['shares'] = old_qty - qty_sold
+                logger.info(f"Updated position: {ticker} - {old_qty} -> {pos['shares']} shares")
+                break
+        
+        # Save back to file
+        with open(POSITIONS_FILE, 'w') as f:
+            json.dump({'positions': positions, 'last_updated': datetime.now().isoformat()}, f, indent=2)
+        
+    except Exception as e:
+        logger.error(f"Error updating position quantity: {type(e).__name__}: {str(e)}")
+
+
+def build_portfolio_data(positions, portfolio_value):
+    """
+    Build portfolio data dict for risk checks.
+    
+    Args:
+        positions: List of current positions
+        portfolio_value: Total portfolio value
+        
+    Returns:
+        dict: Portfolio data for risk_guardian
+    """
+    # Calculate today's P&L (simplified - would need actual tracking)
+    today_pnl = 0
+    for pos in positions:
+        if 'current_pnl' in pos:
+            today_pnl += pos['current_pnl']
+    
+    return {
+        'equity': portfolio_value,
+        'positions': positions,
+        'today_pnl': today_pnl,
+        'week_pnl': None  # Would need historical tracking
+    }
 
 
 def load_positions():
