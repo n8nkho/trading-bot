@@ -9,6 +9,12 @@ import os
 from datetime import datetime, time
 from pathlib import Path
 import pytz
+from dotenv import load_dotenv
+
+# Import Alpaca
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import MarketOrderRequest
+from alpaca.trading.enums import OrderSide, TimeInForce
 
 # Import agents
 from agents.screener_agent import run_screener
@@ -17,6 +23,9 @@ from agents.exit_monitor import monitor_positions as monitor_exit_conditions
 from agents.risk_guardian import check_risk_limits, get_risk_status
 from agents.performance_analyzer import track_decision, load_current_params
 from utils.grok_sentiment import check_twitter_sentiment
+
+# Load environment variables
+load_dotenv()
 
 # Setup logging
 log_dir = Path("logs")
@@ -47,6 +56,70 @@ MARKET_CLOSE = time(16, 0)  # 4:00 PM ET
 # Screening configuration
 GROK_CONFIDENCE_THRESHOLD = 0.8  # Only use Grok for high-confidence candidates
 
+# Trading configuration
+MAX_POSITIONS = 5  # Maximum number of open positions
+BUYING_POWER_BUFFER = 1.2  # Require 20% buffer on buying power
+
+# Initialize Alpaca client (paper trading only)
+ALPACA_API_KEY = os.getenv('ALPACA_API_KEY')
+ALPACA_SECRET_KEY = os.getenv('ALPACA_SECRET_KEY')
+ALPACA_BASE_URL = os.getenv('ALPACA_BASE_URL', 'https://paper-api.alpaca.markets')
+
+# Verify paper trading URL
+if ALPACA_BASE_URL and 'paper' not in ALPACA_BASE_URL.lower():
+    logger.error("SAFETY CHECK FAILED: Not using paper trading URL!")
+    logger.error(f"Current URL: {ALPACA_BASE_URL}")
+    logger.error("Please set ALPACA_BASE_URL to paper trading endpoint")
+    raise ValueError("Must use paper trading URL for safety")
+
+alpaca_client = None
+if ALPACA_API_KEY and ALPACA_SECRET_KEY:
+    try:
+        alpaca_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
+        logger.info(f"Alpaca client initialized (PAPER TRADING): {ALPACA_BASE_URL}")
+    except Exception as e:
+        logger.error(f"Failed to initialize Alpaca client: {type(e).__name__}: {str(e)}")
+else:
+    logger.warning("Alpaca credentials not found. Trading execution disabled.")
+
+
+def get_account_info():
+    """
+    Get Alpaca account information including buying power.
+    
+    Returns:
+        dict: {
+            'buying_power': float,
+            'equity': float,
+            'cash': float,
+            'portfolio_value': float,
+            'position_count': int
+        } or None if error
+    """
+    if not alpaca_client:
+        logger.error("Alpaca client not initialized")
+        return None
+    
+    try:
+        account = alpaca_client.get_account()
+        
+        info = {
+            'buying_power': float(account.buying_power),
+            'equity': float(account.equity),
+            'cash': float(account.cash),
+            'portfolio_value': float(account.portfolio_value),
+            'position_count': len(alpaca_client.get_all_positions())
+        }
+        
+        logger.info(f"Account info: Buying power=${info['buying_power']:,.2f}, "
+                   f"Equity=${info['equity']:,.2f}, Positions={info['position_count']}")
+        
+        return info
+        
+    except Exception as e:
+        logger.error(f"Error getting account info: {type(e).__name__}: {str(e)}")
+        return None
+
 
 def is_market_hours():
     """
@@ -75,6 +148,135 @@ def is_market_hours():
     except Exception as e:
         logger.error(f"Error checking market hours: {type(e).__name__}: {str(e)}")
         return False
+
+
+def execute_buy_order(ticker, shares, entry_price):
+    """
+    Execute a market buy order via Alpaca.
+    
+    Args:
+        ticker: Stock symbol
+        shares: Number of shares to buy
+        entry_price: Expected entry price (for logging)
+        
+    Returns:
+        dict: {
+            'success': bool,
+            'order_id': str or None,
+            'filled_qty': int or None,
+            'filled_price': float or None,
+            'error': str or None
+        }
+    """
+    if not alpaca_client:
+        logger.error(f"{ticker}: Cannot execute order - Alpaca client not initialized")
+        return {
+            'success': False,
+            'order_id': None,
+            'filled_qty': None,
+            'filled_price': None,
+            'error': 'Alpaca client not initialized'
+        }
+    
+    try:
+        logger.info(f"{ticker}: Submitting BUY order for {shares} shares (expected price: ${entry_price:.2f})")
+        
+        # Create market order request
+        order_data = MarketOrderRequest(
+            symbol=ticker,
+            qty=shares,
+            side=OrderSide.BUY,
+            time_in_force=TimeInForce.DAY
+        )
+        
+        # Submit order
+        order = alpaca_client.submit_order(order_data)
+        
+        logger.info(f"{ticker}: Order submitted - ID: {order.id}, Status: {order.status}")
+        
+        # Return order details
+        return {
+            'success': True,
+            'order_id': str(order.id),
+            'filled_qty': int(order.filled_qty) if order.filled_qty else None,
+            'filled_price': float(order.filled_avg_price) if order.filled_avg_price else None,
+            'status': str(order.status),
+            'error': None
+        }
+        
+    except Exception as e:
+        logger.error(f"{ticker}: Error executing buy order: {type(e).__name__}: {str(e)}")
+        return {
+            'success': False,
+            'order_id': None,
+            'filled_qty': None,
+            'filled_price': None,
+            'error': f"{type(e).__name__}: {str(e)}"
+        }
+
+
+def execute_sell_order(ticker, shares):
+    """
+    Execute a market sell order via Alpaca.
+    
+    Args:
+        ticker: Stock symbol
+        shares: Number of shares to sell
+        
+    Returns:
+        dict: {
+            'success': bool,
+            'order_id': str or None,
+            'filled_qty': int or None,
+            'filled_price': float or None,
+            'error': str or None
+        }
+    """
+    if not alpaca_client:
+        logger.error(f"{ticker}: Cannot execute order - Alpaca client not initialized")
+        return {
+            'success': False,
+            'order_id': None,
+            'filled_qty': None,
+            'filled_price': None,
+            'error': 'Alpaca client not initialized'
+        }
+    
+    try:
+        logger.info(f"{ticker}: Submitting SELL order for {shares} shares")
+        
+        # Create market order request
+        order_data = MarketOrderRequest(
+            symbol=ticker,
+            qty=shares,
+            side=OrderSide.SELL,
+            time_in_force=TimeInForce.DAY
+        )
+        
+        # Submit order
+        order = alpaca_client.submit_order(order_data)
+        
+        logger.info(f"{ticker}: Order submitted - ID: {order.id}, Status: {order.status}")
+        
+        # Return order details
+        return {
+            'success': True,
+            'order_id': str(order.id),
+            'filled_qty': int(order.filled_qty) if order.filled_qty else None,
+            'filled_price': float(order.filled_avg_price) if order.filled_avg_price else None,
+            'status': str(order.status),
+            'error': None
+        }
+        
+    except Exception as e:
+        logger.error(f"{ticker}: Error executing sell order: {type(e).__name__}: {str(e)}")
+        return {
+            'success': False,
+            'order_id': None,
+            'filled_qty': None,
+            'filled_price': None,
+            'error': f"{type(e).__name__}: {str(e)}"
+        }
 
 
 def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
@@ -161,8 +363,38 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
         
         logger.info(f"Entry evaluation: {len(buy_decisions)} BUY, {len(skip_decisions)} SKIP")
         
-        # Step 4: Check risk limits for approved entries
-        logger.info("Step 4: Checking risk limits...")
+        # Step 4: Check account and risk limits
+        logger.info("Step 4: Checking account status and risk limits...")
+        
+        # Get account info
+        account_info = get_account_info()
+        if not account_info:
+            logger.error("Failed to get account info. Cannot proceed with trading.")
+            result = {
+                'timestamp': datetime.now().isoformat(),
+                'error': 'Failed to get account info',
+                'candidates_found': len(candidates),
+                'approved_trades': [],
+                'rejected_trades': [],
+                'risk_status': get_risk_status()
+            }
+            save_daily_signals(result)
+            return result
+        
+        # Check position limit
+        if account_info['position_count'] >= MAX_POSITIONS:
+            logger.warning(f"Position limit reached: {account_info['position_count']}/{MAX_POSITIONS}")
+            logger.warning("Skipping all trades")
+            result = {
+                'timestamp': datetime.now().isoformat(),
+                'candidates_found': len(candidates),
+                'approved_trades': [],
+                'rejected_trades': [{'ticker': d['ticker'], 'reason': 'Position limit reached'} for d in buy_decisions],
+                'risk_status': get_risk_status(),
+                'account_info': account_info
+            }
+            save_daily_signals(result)
+            return result
         
         # Load current positions
         current_positions = load_positions()
@@ -180,6 +412,27 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
         for decision in buy_decisions:
             ticker = decision['ticker']
             logger.info(f"{ticker}: Checking risk limits...")
+            
+            # Check position limit
+            if account_info['position_count'] + len(approved_trades) >= MAX_POSITIONS:
+                logger.warning(f"{ticker}: Position limit would be exceeded")
+                rejected_trades.append({
+                    'ticker': ticker,
+                    'reason': f'Position limit ({MAX_POSITIONS}) would be exceeded',
+                    'original_decision': decision
+                })
+                continue
+            
+            # Check buying power
+            required_capital = decision['position_size'] * BUYING_POWER_BUFFER
+            if account_info['buying_power'] < required_capital:
+                logger.warning(f"{ticker}: Insufficient buying power (need ${required_capital:,.2f}, have ${account_info['buying_power']:,.2f})")
+                rejected_trades.append({
+                    'ticker': ticker,
+                    'reason': f'Insufficient buying power (need ${required_capital:,.2f} with buffer)',
+                    'original_decision': decision
+                })
+                continue
             
             # Build new position dict for risk check
             new_position = {
@@ -241,7 +494,52 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
                     'original_decision': decision
                 })
         
-        # Step 5: Compile results
+        # Step 5: Execute approved trades
+        logger.info("Step 5: Executing approved trades...")
+        
+        executed_trades = []
+        execution_failures = []
+        
+        for trade in approved_trades:
+            ticker = trade['ticker']
+            shares = trade['shares']
+            entry_price = trade['entry_price']
+            
+            # Execute buy order
+            order_result = execute_buy_order(ticker, shares, entry_price)
+            
+            if order_result['success']:
+                logger.info(f"{ticker}: Order executed successfully - ID: {order_result['order_id']}")
+                
+                # Add order info to trade
+                trade['order_id'] = order_result['order_id']
+                trade['order_status'] = order_result['status']
+                trade['filled_qty'] = order_result['filled_qty']
+                trade['filled_price'] = order_result['filled_price']
+                trade['executed'] = True
+                trade['execution_time'] = datetime.now().isoformat()
+                
+                executed_trades.append(trade)
+                
+                # Add to positions file
+                add_position({
+                    'ticker': ticker,
+                    'shares': shares,
+                    'entry_price': entry_price,
+                    'entry_date': datetime.now().isoformat(),
+                    'order_id': order_result['order_id'],
+                    'sector': get_sector_from_candidates(ticker, candidates),
+                    'stop_loss_pct': current_params['stop_loss_pct'],
+                    'take_profit_pct': current_params.get('take_profit_pct', 15.0)
+                })
+                
+            else:
+                logger.error(f"{ticker}: Order execution failed - {order_result['error']}")
+                trade['executed'] = False
+                trade['execution_error'] = order_result['error']
+                execution_failures.append(trade)
+        
+        # Step 6: Compile results
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
         
@@ -251,17 +549,20 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
             'candidates_found': len(candidates),
             'candidates': candidates,
             'approved_trades': approved_trades,
+            'executed_trades': executed_trades,
+            'execution_failures': execution_failures,
             'rejected_trades': rejected_trades,
             'risk_status': get_risk_status(),
-            'portfolio_value': portfolio_value
+            'portfolio_value': portfolio_value,
+            'account_info': account_info
         }
         
         logger.info("=" * 80)
-        logger.info(f"DAILY SCREENING COMPLETE: {len(approved_trades)} approved, {len(rejected_trades)} rejected")
+        logger.info(f"DAILY SCREENING COMPLETE: {len(executed_trades)} executed, {len(execution_failures)} failed, {len(rejected_trades)} rejected")
         logger.info(f"Duration: {duration:.2f} seconds")
         logger.info("=" * 80)
         
-        # Step 6: Save results
+        # Step 7: Save results
         save_daily_signals(result)
         
         return result
@@ -348,6 +649,45 @@ def monitor_positions():
         
         logger.info(f"Exit monitoring complete: {action_counts}")
         
+        # Execute sell orders for exit signals
+        logger.info("Executing exit orders...")
+        
+        executed_exits = []
+        exit_failures = []
+        
+        for signal in exit_signals:
+            if signal['action'] in ['SELL_ALL', 'SELL_HALF']:
+                ticker = signal['ticker']
+                sell_qty = signal.get('sell_qty', 0)
+                
+                if sell_qty > 0:
+                    # Execute sell order
+                    order_result = execute_sell_order(ticker, sell_qty)
+                    
+                    if order_result['success']:
+                        logger.info(f"{ticker}: Exit order executed - ID: {order_result['order_id']}")
+                        
+                        signal['order_id'] = order_result['order_id']
+                        signal['order_status'] = order_result['status']
+                        signal['filled_qty'] = order_result['filled_qty']
+                        signal['filled_price'] = order_result['filled_price']
+                        signal['executed'] = True
+                        signal['execution_time'] = datetime.now().isoformat()
+                        
+                        executed_exits.append(signal)
+                        
+                        # Update positions file
+                        if signal['action'] == 'SELL_ALL':
+                            remove_position(ticker)
+                        else:  # SELL_HALF
+                            update_position_quantity(ticker, sell_qty)
+                        
+                    else:
+                        logger.error(f"{ticker}: Exit order failed - {order_result['error']}")
+                        signal['executed'] = False
+                        signal['execution_error'] = order_result['error']
+                        exit_failures.append(signal)
+        
         # Compile results
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
@@ -358,11 +698,13 @@ def monitor_positions():
             'market_open': True,
             'positions_monitored': len(positions),
             'exit_signals': exit_signals,
+            'executed_exits': executed_exits,
+            'exit_failures': exit_failures,
             'action_summary': action_counts
         }
         
         logger.info("=" * 80)
-        logger.info(f"POSITION MONITORING COMPLETE: {len(exit_signals)} signals generated")
+        logger.info(f"POSITION MONITORING COMPLETE: {len(executed_exits)} exits executed, {len(exit_failures)} failed")
         logger.info(f"Duration: {duration:.2f} seconds")
         logger.info("=" * 80)
         
@@ -410,6 +752,82 @@ def load_positions():
     except Exception as e:
         logger.error(f"Error loading positions: {type(e).__name__}: {str(e)}")
         return []
+
+
+def add_position(position):
+    """
+    Add a new position to data/positions.json.
+    
+    Args:
+        position: Position dict with ticker, shares, entry_price, etc.
+    """
+    try:
+        # Load existing positions
+        positions = load_positions()
+        
+        # Add new position
+        positions.append(position)
+        
+        # Save back to file
+        with open(POSITIONS_FILE, 'w') as f:
+            json.dump({'positions': positions, 'last_updated': datetime.now().isoformat()}, f, indent=2)
+        
+        logger.info(f"Added position: {position['ticker']} - {position['shares']} shares @ ${position['entry_price']:.2f}")
+        
+    except Exception as e:
+        logger.error(f"Error adding position: {type(e).__name__}: {str(e)}")
+
+
+def remove_position(ticker):
+    """
+    Remove a position from data/positions.json.
+    
+    Args:
+        ticker: Stock ticker to remove
+    """
+    try:
+        # Load existing positions
+        positions = load_positions()
+        
+        # Remove position
+        positions = [p for p in positions if p['ticker'] != ticker]
+        
+        # Save back to file
+        with open(POSITIONS_FILE, 'w') as f:
+            json.dump({'positions': positions, 'last_updated': datetime.now().isoformat()}, f, indent=2)
+        
+        logger.info(f"Removed position: {ticker}")
+        
+    except Exception as e:
+        logger.error(f"Error removing position: {type(e).__name__}: {str(e)}")
+
+
+def update_position_quantity(ticker, qty_sold):
+    """
+    Update position quantity after partial sale.
+    
+    Args:
+        ticker: Stock ticker
+        qty_sold: Number of shares sold
+    """
+    try:
+        # Load existing positions
+        positions = load_positions()
+        
+        # Update position
+        for pos in positions:
+            if pos['ticker'] == ticker:
+                old_qty = pos['shares']
+                pos['shares'] = old_qty - qty_sold
+                logger.info(f"Updated position: {ticker} - {old_qty} -> {pos['shares']} shares")
+                break
+        
+        # Save back to file
+        with open(POSITIONS_FILE, 'w') as f:
+            json.dump({'positions': positions, 'last_updated': datetime.now().isoformat()}, f, indent=2)
+        
+    except Exception as e:
+        logger.error(f"Error updating position quantity: {type(e).__name__}: {str(e)}")
 
 
 def build_portfolio_data(positions, portfolio_value):
@@ -534,13 +952,20 @@ if __name__ == "__main__":
         print(f"Approved trades: {len(result['approved_trades'])}")
         print(f"Rejected trades: {len(result['rejected_trades'])}")
         
-        if result['approved_trades']:
-            print("\nApproved Trades:")
-            for trade in result['approved_trades']:
+        if result.get('executed_trades'):
+            print("\nExecuted Trades:")
+            for trade in result['executed_trades']:
                 print(f"  {trade['ticker']}: {trade['shares']} shares @ ${trade['entry_price']:.2f} = ${trade['position_size']:.2f}")
+                print(f"    Order ID: {trade['order_id']}")
+                print(f"    Status: {trade['order_status']}")
                 print(f"    Confidence: {trade['confidence']:.2f}")
                 if trade.get('risk_adjusted'):
                     print(f"    (Position size adjusted by risk management)")
+        
+        if result.get('execution_failures'):
+            print("\nExecution Failures:")
+            for trade in result['execution_failures']:
+                print(f"  {trade['ticker']}: {trade['execution_error']}")
         
         if result['rejected_trades']:
             print("\nRejected Trades:")
@@ -563,17 +988,24 @@ if __name__ == "__main__":
         print(f"Market open: {result['market_open']}")
         print(f"Positions monitored: {result['positions_monitored']}")
         
-        if result.get('exit_signals'):
-            print(f"\nExit Signals:")
-            for signal in result['exit_signals']:
+        if result.get('executed_exits'):
+            print(f"\nExecuted Exits:")
+            for signal in result['executed_exits']:
                 print(f"  {signal['ticker']}: {signal['action']}")
+                print(f"    Order ID: {signal['order_id']}")
+                print(f"    Status: {signal['order_status']}")
                 print(f"    Reason: {signal['reason']}")
                 if signal.get('current_price'):
                     print(f"    Current price: ${signal['current_price']:.2f}")
                 if signal.get('pnl_pct') is not None:
                     print(f"    P&L: {signal['pnl_pct']*100:.2f}%")
                 if signal.get('sell_qty', 0) > 0:
-                    print(f"    Sell quantity: {signal['sell_qty']} shares")
+                    print(f"    Sold: {signal['sell_qty']} shares")
+        
+        if result.get('exit_failures'):
+            print(f"\nExit Failures:")
+            for signal in result['exit_failures']:
+                print(f"  {signal['ticker']}: {signal['execution_error']}")
         
         if result.get('action_summary'):
             print(f"\nAction Summary: {result['action_summary']}")
