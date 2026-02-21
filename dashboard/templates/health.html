@@ -54,7 +54,7 @@
                     <div class="mb-3">
                         <div class="d-flex justify-content-between mb-1">
                             <span>Usage</span>
-                            <span>{{ "%.1f"|format(disk_pct) }}%</span>
+                            <span>{{ "{:.1f}".format(disk_pct|default(0)) }}%</span>
                         </div>
                         <div class="progress" style="height: 20px;">
                             <div class="progress-bar {% if disk_pct < 70 %}bg-success{% elif disk_pct < 85 %}bg-warning{% else %}bg-danger{% endif %}" 
@@ -65,7 +65,7 @@
                     </div>
                     <p class="mb-0">
                         <small class="text-muted">
-                            {{ "%.1f"|format(disk_free_gb) }} GB free of {{ "%.1f"|format(disk_total_gb) }} GB
+                            {{ "{:.1f}".format(disk_free_gb|default(0)) }} GB free of {{ "{:.1f}".format(disk_total_gb|default(0)) }} GB
                         </small>
                     </p>
                 </div>

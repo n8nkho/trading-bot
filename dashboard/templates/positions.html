@@ -36,20 +36,20 @@
                                 {% for pos in positions %}
                                 <tr class="{% if pos.pnl|default(0) >= 0 %}table-success{% else %}table-danger{% endif %}">
                                     <td><strong>{{ pos.ticker }}</strong></td>
-                                    <td>${{ "%.2f"|format(pos.entry_price) }}</td>
-                                    <td>${{ "%.2f"|format(pos.current_price) }}</td>
+                                    <td>${{ "{:.2f}".format(pos.entry_price|default(0)) }}</td>
+                                    <td>${{ "{:.2f}".format(pos.current_price|default(0)) }}</td>
                                     <td>
                                         {% if pos.pnl|default(0) >= 0 %}
-                                            <span class="text-success">+${{ "%.2f"|format(pos.pnl|default(0)) }}</span>
+                                            <span class="text-success">+${{ "{:.2f}".format(pos.pnl|default(0)) }}</span>
                                         {% else %}
-                                            <span class="text-danger">-${{ "%.2f"|format((pos.pnl|default(0))|abs) }}</span>
+                                            <span class="text-danger">-${{ "{:.2f}".format((pos.pnl|default(0))|abs) }}</span>
                                         {% endif %}
                                     </td>
                                     <td>
                                         {% if pos.pnl_pct|default(0) >= 0 %}
-                                            <span class="text-success">+{{ "%.2f"|format(pos.pnl_pct|default(0)) }}%</span>
+                                            <span class="text-success">+{{ "{:.2f}".format(pos.pnl_pct|default(0)) }}%</span>
                                         {% else %}
-                                            <span class="text-danger">{{ "%.2f"|format(pos.pnl_pct|default(0)) }}%</span>
+                                            <span class="text-danger">{{ "{:.2f}".format(pos.pnl_pct|default(0)) }}%</span>
                                         {% endif %}
                                     </td>
                                     <td>{{ pos.qty }}</td>

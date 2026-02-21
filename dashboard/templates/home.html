@@ -19,7 +19,7 @@
                     <h6 class="card-subtitle mb-2 text-white-50">
                         <i class="bi bi-wallet2"></i> Portfolio Value
                     </h6>
-                    <h2 class="card-title mb-0">${{ "%.2f"|format(portfolio_value) }}</h2>
+                    <h2 class="card-title mb-0">${{ "{:.2f}".format(portfolio_value|default(0)) }}</h2>
                 </div>
             </div>
         </div>
@@ -31,7 +31,7 @@
                         <i class="bi bi-graph-up"></i> Today's P&L
                     </h6>
                     <h2 class="card-title mb-0">
-                        {% if today_pnl|default(0) >= 0 %}+{% endif %}${{ "%.2f"|format(today_pnl|default(0)) }}
+                        {% if today_pnl|default(0) >= 0 %}+{% endif %}${{ "{:.2f}".format(today_pnl|default(0)) }}
                     </h2>
                 </div>
             </div>
@@ -54,7 +54,7 @@
                     <h6 class="card-subtitle mb-2 text-dark-50">
                         <i class="bi bi-trophy"></i> Win Rate (30d)
                     </h6>
-                    <h2 class="card-title mb-0">{{ "%.1f"|format(win_rate) }}%</h2>
+                    <h2 class="card-title mb-0">{{ "{:.1f}".format(win_rate|default(0)) }}%</h2>
                 </div>
             </div>
         </div>
