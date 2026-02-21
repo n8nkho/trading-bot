@@ -965,6 +965,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py preload                    - Preload Llama models (run at 2:55 AM)")
         print("  python orchestrator.py tune                       - Auto-tune parameters")
         print("  python orchestrator.py review                     - Weekly performance review")
+        print("  python orchestrator.py architect                  - Run meta-architect improvement cycle")
         sys.exit(1)
     
     command = sys.argv[1].lower()
@@ -1130,6 +1131,35 @@ if __name__ == "__main__":
             print(f"Win rate: {report['win_rate']*100:.1f}%")
             print(f"Average win: {report['avg_win_pct']:.2f}%")
             print(f"Average loss: {report['avg_loss_pct']:.2f}%")
+    
+    elif command == "architect":
+        from agents.meta_architect import autonomous_improvement_cycle
+        print("\nRunning Meta-Architect improvement cycle...")
+        result = autonomous_improvement_cycle()
+        
+        print("\n" + "=" * 80)
+        print("META-ARCHITECT RESULTS")
+        print("=" * 80)
+        print(f"Success: {result['success']}")
+        
+        if result.get('error'):
+            print(f"Error: {result['error']}")
+        else:
+            print(f"Agents created: {result.get('total_created', 0)}")
+            print(f"Agents failed: {result.get('total_failed', 0)}")
+            
+            if result.get('agents_created'):
+                print("\n✓ Successfully Created Agents:")
+                for agent in result['agents_created']:
+                    print(f"\n  {agent['agent_name']}")
+                    print(f"    Improvement: {agent['improvement']*100:.1f}%")
+                    print(f"    Win rate: {agent['baseline_win_rate']*100:.1f}% → {agent['agent_win_rate']*100:.1f}%")
+                    print(f"    Addresses: {agent['weakness_addressed']}")
+            
+            if result.get('agents_failed'):
+                print(f"\n✗ Failed Agents: {len(result['agents_failed'])}")
+                for agent in result['agents_failed']:
+                    print(f"  - {agent['agent_name']}: {agent.get('reason', agent.get('error', 'Unknown'))}")
     
     else:
         print(f"Unknown command: {command}")
