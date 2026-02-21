@@ -15,6 +15,7 @@ from agents.screener_agent import run_screener
 from agents.entry_agent import evaluate_entry
 from agents.exit_monitor import monitor_positions as monitor_exit_conditions
 from agents.risk_guardian import check_risk_limits, get_risk_status
+from agents.performance_analyzer import track_decision, load_current_params
 from utils.grok_sentiment import check_twitter_sentiment
 
 # Setup logging
@@ -166,6 +167,10 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
         # Load current positions
         current_positions = load_positions()
         
+        # Load current parameters (may have been auto-tuned)
+        current_params = load_current_params()
+        logger.info(f"Using parameters: RSI<{current_params['rsi_threshold']}, Stop Loss: {current_params['stop_loss_pct']}%")
+        
         # Build portfolio data for risk checks
         portfolio_data = build_portfolio_data(current_positions, portfolio_value)
         
@@ -201,6 +206,26 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
                 
                 decision['risk_check'] = risk_check
                 approved_trades.append(decision)
+                
+                # Track decision for performance analysis
+                signal_id = f"{ticker}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                track_decision(signal_id, {
+                    'ticker': ticker,
+                    'action': 'BUY',
+                    'entry_price': decision['entry_price'],
+                    'shares': decision['shares'],
+                    'position_size': decision['position_size'],
+                    'confidence': decision['confidence'],
+                    'reasoning': decision['reasoning'],
+                    'metrics': {
+                        'rsi': decision.get('rsi'),
+                        'drop_pct': decision.get('drop_pct'),
+                        'volume_ratio': decision.get('volume_ratio'),
+                        'confidence': decision['confidence']
+                    },
+                    'grok_sentiment': decision.get('grok_sentiment'),
+                    'timestamp': datetime.now().isoformat()
+                })
                 
                 # Update portfolio data for next iteration
                 portfolio_data['positions'].append({
@@ -491,6 +516,8 @@ if __name__ == "__main__":
         print("  python orchestrator.py screen [portfolio_value]  - Run daily screening")
         print("  python orchestrator.py monitor                    - Monitor positions")
         print("  python orchestrator.py status                     - Check market status")
+        print("  python orchestrator.py tune                       - Auto-tune parameters")
+        print("  python orchestrator.py review                     - Weekly performance review")
         sys.exit(1)
     
     command = sys.argv[1].lower()
@@ -566,6 +593,40 @@ if __name__ == "__main__":
                 print("Reason: Weekend")
             else:
                 print(f"Reason: Outside market hours")
+    
+    elif command == "tune":
+        from agents.performance_analyzer import auto_tune_parameters
+        print("\nAuto-tuning parameters based on recent performance...")
+        result = auto_tune_parameters()
+        
+        print("\n" + "=" * 80)
+        print("AUTO-TUNING RESULTS")
+        print("=" * 80)
+        print(f"Tuned: {result['tuned']}")
+        
+        if result['tuned']:
+            print(f"\nChanges made:")
+            for change in result['changes_made']:
+                print(f"  {change['parameter']}: {change['old_value']} → {change['new_value']}")
+                print(f"    Reason: {change['reason']}")
+        else:
+            print(f"\nReason: {result.get('reason', 'No changes needed')}")
+    
+    elif command == "review":
+        from agents.performance_analyzer import weekly_review
+        print("\nGenerating weekly performance review...")
+        report = weekly_review()
+        
+        print("\n" + "=" * 80)
+        print("WEEKLY REVIEW")
+        print("=" * 80)
+        print(f"Week ending: {report['week_ending']}")
+        print(f"Trades: {report.get('trades_analyzed', 0)}")
+        
+        if report.get('trades_analyzed', 0) > 0:
+            print(f"Win rate: {report['win_rate']*100:.1f}%")
+            print(f"Average win: {report['avg_win_pct']:.2f}%")
+            print(f"Average loss: {report['avg_loss_pct']:.2f}%")
     
     else:
         print(f"Unknown command: {command}")

@@ -4,8 +4,38 @@ import time
 import logging
 import traceback
 from datetime import datetime
+from pathlib import Path
 import yfinance as yf
 from utils.local_llm import analyze_stock_drop
+
+# Load current parameters
+DATA_DIR = Path("data")
+CURRENT_PARAMS_FILE = DATA_DIR / "current_params.json"
+
+def load_screening_params():
+    """Load current screening parameters (may have been auto-tuned)"""
+    try:
+        if CURRENT_PARAMS_FILE.exists():
+            with open(CURRENT_PARAMS_FILE, 'r') as f:
+                params = json.load(f)
+                logging.info(f"Loaded tuned parameters: RSI<{params['rsi_threshold']}, Drop: {params['drop_min']}% to {params['drop_max']}%")
+                return params
+        else:
+            # Default parameters
+            return {
+                'rsi_threshold': 40,
+                'drop_min': -15,
+                'drop_max': -5,
+                'volume_ratio_min': 1.5
+            }
+    except Exception as e:
+        logging.error(f"Error loading parameters, using defaults: {e}")
+        return {
+            'rsi_threshold': 40,
+            'drop_min': -15,
+            'drop_max': -5,
+            'volume_ratio_min': 1.5
+        }
 
 logging.basicConfig(
     filename='logs/screener.log', 
@@ -14,6 +44,9 @@ logging.basicConfig(
 )
 
 def run_screener():
+    # Load current parameters (may have been auto-tuned)
+    params = load_screening_params()
+    
     with open('config/watchlist.json', 'r') as f:
         watchlist = json.load(f)['quality_stocks']
 
@@ -63,21 +96,21 @@ def run_screener():
             volume_ratio = stock_data['Volume'].iloc[-1] / mean_volume
             logging.info(f"{ticker}: Volume ratio: {volume_ratio:.2f}")
 
-            # Check if stock meets ALL criteria before calling LLM
-            meets_drop_criteria = -15 <= drop_pct <= -5
-            meets_rsi_criteria = rsi < 40
-            meets_volume_criteria = volume_ratio > 1.5
+            # Check if stock meets ALL criteria before calling LLM (using current parameters)
+            meets_drop_criteria = params['drop_min'] <= drop_pct <= params['drop_max']
+            meets_rsi_criteria = rsi < params['rsi_threshold']
+            meets_volume_criteria = volume_ratio > params['volume_ratio_min']
             
             if not meets_drop_criteria:
-                logging.info(f"{ticker}: Does not meet drop criteria (drop: {drop_pct:.1f}%, need -15% to -5%)")
+                logging.info(f"{ticker}: Does not meet drop criteria (drop: {drop_pct:.1f}%, need {params['drop_min']}% to {params['drop_max']}%)")
                 continue
             
             if not meets_rsi_criteria:
-                logging.info(f"{ticker}: Does not meet RSI criteria (rsi: {rsi:.1f}, need < 40)")
+                logging.info(f"{ticker}: Does not meet RSI criteria (rsi: {rsi:.1f}, need < {params['rsi_threshold']})")
                 continue
                 
             if not meets_volume_criteria:
-                logging.info(f"{ticker}: Does not meet volume criteria (vol_ratio: {volume_ratio:.1f}, need > 1.5)")
+                logging.info(f"{ticker}: Does not meet volume criteria (vol_ratio: {volume_ratio:.1f}, need > {params['volume_ratio_min']})")
                 continue
 
             # Stock meets ALL criteria - fetch news and analyze with LLM
