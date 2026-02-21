@@ -22,6 +22,7 @@ from agents.entry_agent import evaluate_entry
 from agents.exit_monitor import monitor_positions as monitor_exit_conditions
 from agents.risk_guardian import check_risk_limits, get_risk_status
 from agents.performance_analyzer import track_decision, load_current_params
+from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mode
 from utils.grok_sentiment import check_twitter_sentiment
 
 # Load environment variables
@@ -960,6 +961,8 @@ if __name__ == "__main__":
         print("  python orchestrator.py screen [portfolio_value]  - Run daily screening")
         print("  python orchestrator.py monitor                    - Monitor positions")
         print("  python orchestrator.py status                     - Check market status")
+        print("  python orchestrator.py watchdog                   - Check Llama health and optimize")
+        print("  python orchestrator.py preload                    - Preload Llama models (run at 2:55 AM)")
         print("  python orchestrator.py tune                       - Auto-tune parameters")
         print("  python orchestrator.py review                     - Weekly performance review")
         sys.exit(1)
@@ -1070,6 +1073,48 @@ if __name__ == "__main__":
         else:
             print(f"\nReason: {result.get('reason', 'No changes needed')}")
     
+    elif command == "watchdog":
+        print("\nRunning Llama watchdog...")
+        report = run_watchdog()
+        
+        print("\n" + "=" * 80)
+        print("LLAMA WATCHDOG REPORT")
+        print("=" * 80)
+        print(f"Health Score: {report['health']['health_score']}/100")
+        print(f"Service Running: {report['health']['service_running']}")
+        print(f"Emergency Mode: {report['emergency_mode']}")
+        
+        if report['health']['response_time']:
+            print(f"Response Time: {report['health']['response_time']:.2f}s")
+        
+        if report['health']['models_loaded']:
+            print(f"Models Loaded: {', '.join(report['health']['models_loaded'])}")
+        
+        if report['health']['issues']:
+            print("\nIssues Detected:")
+            for issue in report['health']['issues']:
+                print(f"  - {issue}")
+        
+        if report['optimization']['optimized']:
+            print("\nOptimizations Applied:")
+            for action in report['optimization']['actions_taken']:
+                print(f"  - {action}")
+    
+    elif command == "preload":
+        print("\nPreloading Llama models...")
+        result = preload_models()
+        
+        print("\n" + "=" * 80)
+        print("LLAMA PRELOAD")
+        print("=" * 80)
+        print(f"Success: {result['success']}")
+        
+        if result['success']:
+            print(f"Preload Time: {result['preload_time']:.2f}s")
+            print("Models ready for 3 AM screening")
+        else:
+            print(f"Error: {result['error']}")
+    
     elif command == "review":
         from agents.performance_analyzer import weekly_review
         print("\nGenerating weekly performance review...")
@@ -1088,5 +1133,5 @@ if __name__ == "__main__":
     
     else:
         print(f"Unknown command: {command}")
-        print("Use 'screen', 'monitor', or 'status'")
+        print("Use 'screen', 'monitor', 'status', 'watchdog', 'preload', 'tune', or 'review'")
         sys.exit(1)
