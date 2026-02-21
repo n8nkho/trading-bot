@@ -25,7 +25,7 @@ def run_screener():
         try:
             # Fetch Yahoo Finance data
             logging.info(f"Fetching data for {ticker}...")
-            stock_data = yf.Ticker(ticker).history(period="10d")
+            stock_data = yf.Ticker(ticker).history(period="1mo")
             logging.info(f"{ticker}: Fetched {len(stock_data)} days of data")
             
             if len(stock_data) < 2:
