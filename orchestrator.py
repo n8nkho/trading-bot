@@ -23,6 +23,7 @@ from agents.exit_monitor import monitor_positions as monitor_exit_conditions
 from agents.risk_guardian import check_risk_limits, get_risk_status
 from agents.performance_analyzer import track_decision, load_current_params
 from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mode
+from agents.vision_analyst import quick_vision_check, multi_timeframe_analysis
 from utils.grok_sentiment import check_twitter_sentiment
 
 # Load environment variables
@@ -56,6 +57,7 @@ MARKET_CLOSE = time(16, 0)  # 4:00 PM ET
 
 # Screening configuration
 GROK_CONFIDENCE_THRESHOLD = 0.8  # Only use Grok for high-confidence candidates
+VISION_CONFIDENCE_THRESHOLD = 0.9  # Only use Vision for very high-confidence candidates
 
 # Trading configuration
 MAX_POSITIONS = 5  # Maximum number of open positions
@@ -354,6 +356,39 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
                 logger.info(f"{ticker}: Confidence {confidence:.2f} below threshold {GROK_CONFIDENCE_THRESHOLD} - skipping Grok")
                 candidate['grok_sentiment'] = None
         
+        # Step 2.5: Vision analysis for very high-confidence candidates
+        logger.info("Step 2.5: Running vision analysis for very high-confidence candidates...")
+        vision_total_cost = 0
+        
+        for candidate in candidates:
+            confidence = candidate.get('analysis', {}).get('confidence', 0)
+            ticker = candidate['ticker']
+            
+            if confidence >= VISION_CONFIDENCE_THRESHOLD:
+                logger.info(f"{ticker}: Very high confidence ({confidence:.2f}) - running vision analysis...")
+                
+                vision_result = quick_vision_check(ticker, confidence)
+                candidate['vision_analysis'] = vision_result
+                vision_total_cost += vision_result['cost']
+                
+                # Update confidence based on vision analysis
+                if vision_result['vision_approved']:
+                    original_confidence = confidence
+                    candidate['analysis']['confidence'] = vision_result['adjusted_confidence']
+                    logger.info(f"{ticker}: Vision APPROVED - Confidence: {original_confidence:.2f} → {vision_result['adjusted_confidence']:.2f}")
+                    logger.info(f"{ticker}: {vision_result['reason']}")
+                else:
+                    original_confidence = confidence
+                    candidate['analysis']['confidence'] = vision_result['adjusted_confidence']
+                    logger.warning(f"{ticker}: Vision NOT approved - Confidence: {original_confidence:.2f} → {vision_result['adjusted_confidence']:.2f}")
+                    logger.warning(f"{ticker}: {vision_result['reason']}")
+            else:
+                logger.info(f"{ticker}: Confidence {confidence:.2f} below vision threshold {VISION_CONFIDENCE_THRESHOLD} - skipping vision")
+                candidate['vision_analysis'] = None
+        
+        if vision_total_cost > 0:
+            logger.info(f"Total vision analysis cost: ${vision_total_cost:.3f}")
+        
         # Step 3: Evaluate entry timing and conditions
         logger.info("Step 3: Evaluating entry conditions...")
         entry_decisions = evaluate_entry(candidates, portfolio_value)
@@ -477,33 +512,7 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
                         'confidence': decision['confidence']
                     },
                     'grok_sentiment': decision.get('grok_sentiment'),
-                    'timestamp': datetime.now().isoformat()
-                })
-                
-                # Update portfolio data for next iteration
-                portfolio_data['positions'].append({
-                    'ticker': ticker,
-                    'value': decision['position_size'],
-                    'sector': new_position['sector']
-                })
-                
-                # Track decision for performance analysis
-                signal_id = f"{ticker}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                track_decision(signal_id, {
-                    'ticker': ticker,
-                    'action': 'BUY',
-                    'entry_price': decision['entry_price'],
-                    'shares': decision['shares'],
-                    'position_size': decision['position_size'],
-                    'confidence': decision['confidence'],
-                    'reasoning': decision['reasoning'],
-                    'metrics': {
-                        'rsi': decision.get('rsi'),
-                        'drop_pct': decision.get('drop_pct'),
-                        'volume_ratio': decision.get('volume_ratio'),
-                        'confidence': decision['confidence']
-                    },
-                    'grok_sentiment': decision.get('grok_sentiment'),
+                    'vision_analysis': decision.get('vision_analysis'),
                     'timestamp': datetime.now().isoformat()
                 })
                 
@@ -581,7 +590,8 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
             'rejected_trades': rejected_trades,
             'risk_status': get_risk_status(),
             'portfolio_value': portfolio_value,
-            'account_info': account_info
+            'account_info': account_info,
+            'vision_cost': vision_total_cost
         }
         
         logger.info("=" * 80)
@@ -966,6 +976,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py tune                       - Auto-tune parameters")
         print("  python orchestrator.py review                     - Weekly performance review")
         print("  python orchestrator.py architect                  - Run meta-architect improvement cycle")
+        print("  python orchestrator.py vision <ticker>            - Run multi-timeframe vision analysis")
         sys.exit(1)
     
     command = sys.argv[1].lower()
@@ -1161,7 +1172,38 @@ if __name__ == "__main__":
                 for agent in result['agents_failed']:
                     print(f"  - {agent['agent_name']}: {agent.get('reason', agent.get('error', 'Unknown'))}")
     
+    elif command == "vision":
+        if len(sys.argv) < 3:
+            print("Usage: python orchestrator.py vision <ticker>")
+            sys.exit(1)
+        
+        ticker = sys.argv[2].upper()
+        print(f"\nRunning multi-timeframe vision analysis for {ticker}...")
+        result = multi_timeframe_analysis(ticker)
+        
+        print("\n" + "=" * 80)
+        print(f"VISION ANALYSIS: {ticker}")
+        print("=" * 80)
+        print(f"Success: {result['success']}")
+        print(f"Total Cost: ${result['total_cost']:.3f}")
+        
+        if result.get('errors'):
+            print(f"\nErrors: {result['errors']}")
+        
+        print(f"\n{result['alignment']['summary']}")
+        
+        for timeframe, analysis in result['timeframes'].items():
+            if analysis and analysis['success']:
+                data = analysis['analysis']
+                print(f"\n{timeframe.upper()} Timeframe:")
+                print(f"  Outlook: {data.get('outlook', 'N/A')}")
+                print(f"  Confidence: {data.get('confidence', 'N/A')}")
+                print(f"  Trend: {data.get('trend', {}).get('direction', 'N/A')} ({data.get('trend', {}).get('strength', 'N/A')})")
+                print(f"  RSI: {data.get('rsi_status', 'N/A')}")
+                if data.get('summary'):
+                    print(f"  Summary: {data['summary']}")
+    
     else:
         print(f"Unknown command: {command}")
-        print("Use 'screen', 'monitor', 'status', 'watchdog', 'preload', 'tune', or 'review'")
+        print("Use 'screen', 'monitor', 'status', 'watchdog', 'preload', 'tune', 'review', 'architect', or 'vision'")
         sys.exit(1)
