@@ -1,0 +1,238 @@
+import logging
+import yfinance as yf
+from datetime import datetime
+import pytz
+
+logging.basicConfig(
+    filename='logs/entry.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+# Configuration
+PORTFOLIO_VALUE = 50000  # Default portfolio value
+BASE_POSITION_PCT = 0.05  # 5% of portfolio per position
+MAX_POSITION_SIZE = 2000  # Maximum dollars per position
+RSI_THRESHOLD = 35  # Extra oversold threshold
+STABILIZATION_FACTOR = 1.02  # Price must be 2% above low
+ENTRY_WINDOW_START = (14, 30)  # 2:30 PM ET
+ENTRY_WINDOW_END = (15, 45)  # 3:45 PM ET
+
+def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
+    """
+    Evaluate entry decisions for screened candidates.
+    
+    Args:
+        candidates: List of candidate stocks from screener
+        portfolio_value: Current portfolio value for position sizing
+        
+    Returns:
+        List of entry decisions with BUY/SKIP and reasoning
+    """
+    logging.info(f"Starting entry evaluation for {len(candidates)} candidates")
+    logging.info(f"Portfolio value: ${portfolio_value:,.2f}")
+    
+    decisions = []
+    
+    for candidate in candidates:
+        ticker = candidate['ticker']
+        logging.info(f"Evaluating entry for {ticker}")
+        
+        try:
+            decision = evaluate_single_entry(candidate, portfolio_value)
+            decisions.append(decision)
+            
+            if decision['action'] == 'BUY':
+                logging.info(f"{ticker}: BUY decision - Position size: ${decision['position_size']:.2f}, Shares: {decision['shares']}")
+            else:
+                logging.info(f"{ticker}: SKIP - {decision['reason']}")
+                
+        except Exception as e:
+            logging.error(f"Error evaluating {ticker}: {type(e).__name__}: {str(e)}")
+            decisions.append({
+                'ticker': ticker,
+                'action': 'SKIP',
+                'reason': f'Error during evaluation: {str(e)}',
+                'position_size': 0,
+                'shares': 0,
+                'timestamp': datetime.now().isoformat()
+            })
+    
+    buy_count = sum(1 for d in decisions if d['action'] == 'BUY')
+    logging.info(f"Entry evaluation complete: {buy_count} BUY, {len(decisions) - buy_count} SKIP")
+    
+    return decisions
+
+def evaluate_single_entry(candidate, portfolio_value):
+    """
+    Evaluate a single candidate for entry.
+    
+    Args:
+        candidate: Candidate dict from screener with ticker, rsi, analysis, etc.
+        portfolio_value: Current portfolio value
+        
+    Returns:
+        Decision dict with action, reason, position_size, shares
+    """
+    ticker = candidate['ticker']
+    screener_rsi = candidate.get('rsi', 100)
+    confidence = candidate.get('analysis', {}).get('confidence', 0.5)
+    
+    # Fetch current intraday data
+    logging.info(f"{ticker}: Fetching intraday data...")
+    stock = yf.Ticker(ticker)
+    intraday_data = stock.history(period="1d", interval="1m")
+    
+    if len(intraday_data) == 0:
+        logging.warning(f"{ticker}: No intraday data available")
+        return create_skip_decision(ticker, "No intraday data available")
+    
+    # Get current price and day's low
+    current_price = intraday_data['Close'].iloc[-1]
+    day_low = intraday_data['Low'].min()
+    day_high = intraday_data['High'].max()
+    
+    logging.info(f"{ticker}: Current price: ${current_price:.2f}, Day low: ${day_low:.2f}, Day high: ${day_high:.2f}")
+    
+    # Check 1: RSI must be extra oversold
+    if screener_rsi >= RSI_THRESHOLD:
+        reason = f"RSI not oversold enough ({screener_rsi:.1f} >= {RSI_THRESHOLD})"
+        logging.info(f"{ticker}: {reason}")
+        return create_skip_decision(ticker, reason)
+    
+    logging.info(f"{ticker}: ✓ RSI check passed ({screener_rsi:.1f} < {RSI_THRESHOLD})")
+    
+    # Check 2: Price stabilization (current price > low * 1.02)
+    stabilization_price = day_low * STABILIZATION_FACTOR
+    if current_price <= stabilization_price:
+        reason = f"Price not stabilized (${current_price:.2f} <= ${stabilization_price:.2f})"
+        logging.info(f"{ticker}: {reason}")
+        return create_skip_decision(ticker, reason)
+    
+    logging.info(f"{ticker}: ✓ Price stabilization check passed (${current_price:.2f} > ${stabilization_price:.2f})")
+    
+    # Check 3: Time of day (2:30-3:45 PM ET)
+    if not is_entry_window():
+        current_time_et = get_current_time_et()
+        reason = f"Outside entry window (current: {current_time_et.strftime('%H:%M')} ET, window: 14:30-15:45 ET)"
+        logging.info(f"{ticker}: {reason}")
+        return create_skip_decision(ticker, reason)
+    
+    current_time_et = get_current_time_et()
+    logging.info(f"{ticker}: ✓ Time window check passed ({current_time_et.strftime('%H:%M')} ET)")
+    
+    # Calculate position size using fractional Kelly
+    base_position = portfolio_value * BASE_POSITION_PCT
+    adjusted_position = base_position * confidence
+    position_size = min(adjusted_position, MAX_POSITION_SIZE)
+    shares = int(position_size / current_price)
+    
+    # Ensure at least 1 share
+    if shares < 1:
+        reason = f"Position size too small (${position_size:.2f} < 1 share at ${current_price:.2f})"
+        logging.info(f"{ticker}: {reason}")
+        return create_skip_decision(ticker, reason)
+    
+    actual_position_size = shares * current_price
+    
+    logging.info(f"{ticker}: Position sizing - Base: ${base_position:.2f}, Confidence: {confidence:.2f}, Adjusted: ${adjusted_position:.2f}, Final: ${actual_position_size:.2f} ({shares} shares)")
+    
+    # All checks passed - BUY decision
+    return {
+        'ticker': ticker,
+        'action': 'BUY',
+        'reason': f'All entry criteria met: RSI={screener_rsi:.1f}, Price stabilized at ${current_price:.2f}, Time={current_time_et.strftime("%H:%M")} ET',
+        'position_size': actual_position_size,
+        'shares': shares,
+        'entry_price': current_price,
+        'confidence': confidence,
+        'screener_data': {
+            'drop_pct': candidate.get('drop_pct'),
+            'rsi': screener_rsi,
+            'volume_ratio': candidate.get('volume_ratio'),
+            'news': candidate.get('news', [])
+        },
+        'timestamp': datetime.now().isoformat()
+    }
+
+def create_skip_decision(ticker, reason):
+    """Create a SKIP decision dict"""
+    return {
+        'ticker': ticker,
+        'action': 'SKIP',
+        'reason': reason,
+        'position_size': 0,
+        'shares': 0,
+        'timestamp': datetime.now().isoformat()
+    }
+
+def is_entry_window():
+    """Check if current time is within entry window (2:30-3:45 PM ET)"""
+    try:
+        current_time = get_current_time_et()
+        start_hour, start_min = ENTRY_WINDOW_START
+        end_hour, end_min = ENTRY_WINDOW_END
+        
+        current_minutes = current_time.hour * 60 + current_time.minute
+        start_minutes = start_hour * 60 + start_min
+        end_minutes = end_hour * 60 + end_min
+        
+        in_window = start_minutes <= current_minutes <= end_minutes
+        
+        if not in_window:
+            logging.info(f"Outside entry window: {current_time.strftime('%H:%M')} ET (window: {start_hour:02d}:{start_min:02d}-{end_hour:02d}:{end_min:02d} ET)")
+        
+        return in_window
+    except Exception as e:
+        logging.error(f"Error checking entry window: {type(e).__name__}: {str(e)}")
+        return False
+
+def get_current_time_et():
+    """Get current time in Eastern Time"""
+    et_tz = pytz.timezone('US/Eastern')
+    return datetime.now(et_tz)
+
+if __name__ == "__main__":
+    # Test with sample candidates
+    import json
+    
+    sample_candidates = [
+        {
+            'ticker': 'AAPL',
+            'drop_pct': -8.5,
+            'rsi': 32.5,
+            'volume_ratio': 2.1,
+            'news': ['Apple announces new product', 'Market concerns over supply chain'],
+            'analysis': {'confidence': 0.75, 'reasoning': 'Strong fundamentals, temporary drop'}
+        },
+        {
+            'ticker': 'MSFT',
+            'drop_pct': -6.2,
+            'rsi': 38.0,
+            'volume_ratio': 1.8,
+            'news': ['Microsoft cloud growth slows'],
+            'analysis': {'confidence': 0.60, 'reasoning': 'Moderate opportunity'}
+        }
+    ]
+    
+    print("Entry Agent Test Run")
+    print("=" * 60)
+    
+    decisions = evaluate_entry(sample_candidates, portfolio_value=50000)
+    
+    print("\nEntry Decisions:")
+    print("-" * 60)
+    for decision in decisions:
+        print(f"\n{decision['ticker']}: {decision['action']}")
+        print(f"  Reason: {decision['reason']}")
+        if decision['action'] == 'BUY':
+            print(f"  Position Size: ${decision['position_size']:.2f}")
+            print(f"  Shares: {decision['shares']}")
+            print(f"  Entry Price: ${decision['entry_price']:.2f}")
+            print(f"  Confidence: {decision['confidence']:.2f}")
+    
+    # Save decisions to file
+    filename = f"data/entry_decisions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    with open(filename, 'w') as f:
+        json.dump(decisions, f, indent=2)
+    print(f"\nDecisions saved to {filename}")
