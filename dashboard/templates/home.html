@@ -25,13 +25,13 @@
         </div>
         
         <div class="col-12 col-md-6 col-lg-3">
-            <div class="card stat-card {% if today_pnl >= 0 %}bg-success{% else %}bg-danger{% endif %} text-white h-100">
+            <div class="card stat-card {% if today_pnl|default(0) >= 0 %}bg-success{% else %}bg-danger{% endif %} text-white h-100">
                 <div class="card-body">
                     <h6 class="card-subtitle mb-2 text-white-50">
                         <i class="bi bi-graph-up"></i> Today's P&L
                     </h6>
                     <h2 class="card-title mb-0">
-                        {% if today_pnl >= 0 %}+{% endif %}${{ "%.2f"|format(today_pnl|default(0)) }}
+                        {% if today_pnl|default(0) >= 0 %}+{% endif %}${{ "%.2f"|format(today_pnl|default(0)) }}
                     </h2>
                 </div>
             </div>
