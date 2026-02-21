@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="display-4 mb-4">
+                <i class="bi bi-heart-pulse"></i> System Health
+            </h1>
+        </div>
+    </div>
+
+    <!-- Risk Management Status -->
+    <div class="row g-4 mb-4">
+        <div class="col-12 col-md-6 col-lg-4">
+            <div class="card bg-dark border-secondary h-100">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="bi bi-shield-check"></i> Circuit Breaker
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% if circuit_breaker == "OK" %}
+                        <div class="text-center">
+                            <i class="bi bi-check-circle text-success display-1"></i>
+                            <p class="mt-3 mb-0"><strong class="text-success">OK</strong></p>
+                            <small class="text-muted">System operating normally</small>
+                        </div>
+                    {% elif circuit_breaker == "TRIPPED" %}
+                        <div class="text-center">
+                            <i class="bi bi-x-circle text-danger display-1"></i>
+                            <p class="mt-3 mb-0"><strong class="text-danger">TRIPPED</strong></p>
+                            <small class="text-muted">Trading halted due to losses</small>
+                        </div>
+                    {% else %}
+                        <div class="text-center">
+                            <i class="bi bi-question-circle text-warning display-1"></i>
+                            <p class="mt-3 mb-0"><strong class="text-warning">UNKNOWN</strong></p>
+                            <small class="text-muted">Status unavailable</small>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-md-6 col-lg-4">
+            <div class="card bg-dark border-secondary h-100">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="bi bi-hdd"></i> Disk Space
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between mb-1">
+                            <span>Usage</span>
+                            <span>{{ "%.1f"|format(disk_pct) }}%</span>
+                        </div>
+                        <div class="progress" style="height: 20px;">
+                            <div class="progress-bar {% if disk_pct < 70 %}bg-success{% elif disk_pct < 85 %}bg-warning{% else %}bg-danger{% endif %}" 
+                                 role="progressbar" 
+                                 style="width: {{ disk_pct }}%">
+                            </div>
+                        </div>
+                    </div>
+                    <p class="mb-0">
+                        <small class="text-muted">
+                            {{ "%.1f"|format(disk_free_gb) }} GB free of {{ "%.1f"|format(disk_total_gb) }} GB
+                        </small>
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-md-6 col-lg-4">
+            <div class="card bg-dark border-secondary h-100">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="bi bi-clock-history"></i> Last Runs
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <strong>Screener:</strong>
+                        <br>
+                        <small class="text-muted">{{ screener_last_run }}</small>
+                    </div>
+                    <div>
+                        <strong>Sniper:</strong>
+                        <br>
+                        <small class="text-muted">{{ sniper_last_run }}</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- API Status -->
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div class="card bg-dark border-secondary">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="bi bi-plug"></i> API Connectivity
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-12 col-md-4">
+                            <div class="d-flex align-items-center">
+                                {% if alpaca_status == "OK" %}
+                                    <i class="bi bi-check-circle-fill text-success fs-3 me-3"></i>
+                                {% else %}
+                                    <i class="bi bi-x-circle-fill text-danger fs-3 me-3"></i>
+                                {% endif %}
+                                <div>
+                                    <strong>Alpaca API</strong>
+                                    <br>
+                                    <small class="text-muted">{{ alpaca_status }}</small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-12 col-md-4">
+                            <div class="d-flex align-items-center">
+                                {% if ollama_status == "OK" %}
+                                    <i class="bi bi-check-circle-fill text-success fs-3 me-3"></i>
+                                {% else %}
+                                    <i class="bi bi-x-circle-fill text-danger fs-3 me-3"></i>
+                                {% endif %}
+                                <div>
+                                    <strong>Ollama LLM</strong>
+                                    <br>
+                                    <small class="text-muted">{{ ollama_status }}</small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-12 col-md-4">
+                            <div class="d-flex align-items-center">
+                                <i class="bi bi-check-circle-fill text-success fs-3 me-3"></i>
+                                <div>
+                                    <strong>Yahoo Finance</strong>
+                                    <br>
+                                    <small class="text-muted">OK</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

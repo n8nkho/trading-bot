@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="display-4 mb-4">
+                <i class="bi bi-graph-up"></i> Performance Analytics
+            </h1>
+        </div>
+    </div>
+
+    <!-- Stats Row -->
+    <div class="row g-4 mb-4">
+        <div class="col-12 col-md-6 col-lg-3">
+            <div class="card bg-dark border-secondary h-100">
+                <div class="card-body">
+                    <h6 class="card-subtitle mb-2 text-muted">
+                        <i class="bi bi-percent"></i> Sharpe Ratio
+                    </h6>
+                    <h3 class="card-title mb-0">{{ "%.2f"|format(sharpe) }}</h3>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-12 col-md-6 col-lg-3">
+            <div class="card bg-dark border-secondary h-100">
+                <div class="card-body">
+                    <h6 class="card-subtitle mb-2 text-muted">
+                        <i class="bi bi-arrow-down-circle"></i> Max Drawdown
+                    </h6>
+                    <h3 class="card-title mb-0 text-danger">{{ "%.2f"|format(max_drawdown) }}%</h3>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-12 col-md-6 col-lg-3">
+            <div class="card bg-dark border-secondary h-100">
+                <div class="card-body">
+                    <h6 class="card-subtitle mb-2 text-muted">
+                        <i class="bi bi-clock"></i> Avg Hold Time
+                    </h6>
+                    <h3 class="card-title mb-0">{{ "%.1f"|format(avg_hold_time) }}h</h3>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-12 col-md-6 col-lg-3">
+            <div class="card bg-dark border-secondary h-100">
+                <div class="card-body">
+                    <h6 class="card-subtitle mb-2 text-muted">
+                        <i class="bi bi-calendar-range"></i> Period
+                    </h6>
+                    <h3 class="card-title mb-0">30 Days</h3>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Time Filter Buttons -->
+    <div class="row mb-3">
+        <div class="col-12">
+            <div class="btn-group" role="group">
+                <button type="button" class="btn btn-outline-primary">7d</button>
+                <button type="button" class="btn btn-primary active">30d</button>
+                <button type="button" class="btn btn-outline-primary">All</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Section -->
+    <div class="row g-4 mb-4">
+        <div class="col-12 col-lg-6">
+            <div class="card bg-dark border-secondary">
+                <div class="card-header">
+                    <h5 class="mb-0">Daily P&L</h5>
+                </div>
+                <div class="card-body">
+                    <div id="daily-pnl"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-12 col-lg-6">
+            <div class="card bg-dark border-secondary">
+                <div class="card-header">
+                    <h5 class="mb-0">Win/Loss Distribution</h5>
+                </div>
+                <div class="card-body">
+                    <div id="win-loss"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div class="card bg-dark border-secondary">
+                <div class="card-header">
+                    <h5 class="mb-0">Cumulative Returns</h5>
+                </div>
+                <div class="card-body">
+                    <div id="cumulative"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Render Plotly charts
+    var pnlChart = {{ pnl_chart|safe }};
+    var winlossChart = {{ winloss_chart|safe }};
+    var cumulativeChart = {{ cumulative_chart|safe }};
+    
+    // Apply dark theme to all charts
+    var layout_update = {
+        paper_bgcolor: '#212529',
+        plot_bgcolor: '#2c3034',
+        font: { color: '#f8f9fa' },
+        xaxis: { gridcolor: '#495057' },
+        yaxis: { gridcolor: '#495057' }
+    };
+    
+    if (pnlChart && pnlChart.data) {
+        Plotly.newPlot('daily-pnl', pnlChart.data, Object.assign({}, pnlChart.layout, layout_update), {responsive: true});
+    }
+    
+    if (winlossChart && winlossChart.data) {
+        Plotly.newPlot('win-loss', winlossChart.data, Object.assign({}, winlossChart.layout, layout_update), {responsive: true});
+    }
+    
+    if (cumulativeChart && cumulativeChart.data) {
+        Plotly.newPlot('cumulative', cumulativeChart.data, Object.assign({}, cumulativeChart.layout, layout_update), {responsive: true});
+    }
+</script>
+{% endblock %}

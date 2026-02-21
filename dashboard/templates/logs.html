@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="display-4 mb-4">
+                <i class="bi bi-file-text"></i> System Logs
+            </h1>
+        </div>
+    </div>
+
+    <!-- Screener Logs -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card bg-dark border-secondary">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="bi bi-search"></i> Screener Logs
+                    </h5>
+                    <div class="btn-group btn-group-sm" role="group">
+                        <button type="button" class="btn btn-outline-secondary active" onclick="filterLogs('screener', 'all')">All</button>
+                        <button type="button" class="btn btn-outline-info" onclick="filterLogs('screener', 'INFO')">INFO</button>
+                        <button type="button" class="btn btn-outline-warning" onclick="filterLogs('screener', 'WARNING')">WARNING</button>
+                        <button type="button" class="btn btn-outline-danger" onclick="filterLogs('screener', 'ERROR')">ERROR</button>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <pre id="screener-logs" class="p-3 mb-0" style="max-height: 400px; overflow-y: auto; background-color: #1a1d20; color: #f8f9fa; font-size: 0.85rem;">{% if screener_logs %}{% for log in screener_logs %}<span class="log-line {% if log.level == 'WARNING' %}text-warning{% elif log.level == 'ERROR' %}text-danger{% else %}text-info{% endif %}" data-level="{{ log.level }}">{{ log.text }}</span>
+{% endfor %}{% else %}<span class="text-muted">No logs available</span>{% endif %}</pre>
+                </div>
+                <div class="card-footer text-muted">
+                    <small>
+                        <i class="bi bi-arrow-clockwise"></i> Last 100 lines | Auto-refresh every 10 seconds
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sniper Logs -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card bg-dark border-secondary">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="bi bi-bullseye"></i> Sniper Logs
+                    </h5>
+                    <div class="btn-group btn-group-sm" role="group">
+                        <button type="button" class="btn btn-outline-secondary active" onclick="filterLogs('sniper', 'all')">All</button>
+                        <button type="button" class="btn btn-outline-info" onclick="filterLogs('sniper', 'INFO')">INFO</button>
+                        <button type="button" class="btn btn-outline-warning" onclick="filterLogs('sniper', 'WARNING')">WARNING</button>
+                        <button type="button" class="btn btn-outline-danger" onclick="filterLogs('sniper', 'ERROR')">ERROR</button>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <pre id="sniper-logs" class="p-3 mb-0" style="max-height: 400px; overflow-y: auto; background-color: #1a1d20; color: #f8f9fa; font-size: 0.85rem;">{% if sniper_logs %}{% for log in sniper_logs %}<span class="log-line {% if log.level == 'WARNING' %}text-warning{% elif log.level == 'ERROR' %}text-danger{% else %}text-info{% endif %}" data-level="{{ log.level }}">{{ log.text }}</span>
+{% endfor %}{% else %}<span class="text-muted">No logs available</span>{% endif %}</pre>
+                </div>
+                <div class="card-footer text-muted">
+                    <small>
+                        <i class="bi bi-arrow-clockwise"></i> Last 100 lines | Auto-refresh every 10 seconds
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Auto-scroll to bottom of logs
+    function scrollToBottom(elementId) {
+        var element = document.getElementById(elementId);
+        if (element) {
+            element.scrollTop = element.scrollHeight;
+        }
+    }
+    
+    // Scroll on page load
+    scrollToBottom('screener-logs');
+    scrollToBottom('sniper-logs');
+    
+    // Filter logs by level
+    function filterLogs(logType, level) {
+        var logContainer = document.getElementById(logType + '-logs');
+        var lines = logContainer.getElementsByClassName('log-line');
+        
+        // Update button states
+        var buttons = event.target.parentElement.getElementsByTagName('button');
+        for (var i = 0; i < buttons.length; i++) {
+            buttons[i].classList.remove('active');
+        }
+        event.target.classList.add('active');
+        
+        // Filter lines
+        for (var i = 0; i < lines.length; i++) {
+            if (level === 'all' || lines[i].getAttribute('data-level') === level) {
+                lines[i].style.display = 'block';
+            } else {
+                lines[i].style.display = 'none';
+            }
+        }
+    }
+    
+    // Auto-refresh every 10 seconds
+    setTimeout(function() {
+        location.reload();
+    }, 10000);
+</script>
+{% endblock %}

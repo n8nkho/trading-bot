@@ -13,6 +13,15 @@ from pathlib import Path
 
 app = Flask(__name__)
 
+# Add custom Jinja2 filters
+@app.template_filter('format_currency')
+def format_currency(value):
+    """Format number as currency"""
+    try:
+        return f"${value:,.2f}"
+    except (ValueError, TypeError):
+        return "$0.00"
+
 # Setup logging
 log_dir = Path('../logs')
 log_dir.mkdir(exist_ok=True)
