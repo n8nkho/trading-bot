@@ -1,0 +1,14 @@
+{
+  "quality_stocks": [
+    {"ticker": "AAPL", "sector": "Technology", "name": "Apple"},
+    {"ticker": "MSFT", "sector": "Technology", "name": "Microsoft"},
+    {"ticker": "GOOGL", "sector": "Technology", "name": "Alphabet"},
+    {"ticker": "META", "sector": "Technology", "name": "Meta"},
+    {"ticker": "NVDA", "sector": "Technology", "name": "NVIDIA"},
+    {"ticker": "TSLA", "sector": "Auto", "name": "Tesla"},
+    {"ticker": "JPM", "sector": "Financials", "name": "JPMorgan"},
+    {"ticker": "V", "sector": "Financials", "name": "Visa"},
+    {"ticker": "JNJ", "sector": "Healthcare", "name": "Johnson & Johnson"},
+    {"ticker": "WMT", "sector": "Consumer", "name": "Walmart"}
+  ]
+}
