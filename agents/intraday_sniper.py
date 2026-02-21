@@ -171,7 +171,7 @@ def scan_intraday_opportunities(portfolio_value=10000):
     return opportunities
 
 
-def evaluate_quick_entry(ticker, current_price, metrics):
+def evaluate_quick_entry(ticker, current_price, metrics, portfolio_value=10000):
     """Fast entry decision without AI - pure technical rules"""
     
     # Check technical conditions
@@ -357,7 +357,8 @@ if __name__ == "__main__":
             decision = evaluate_quick_entry(
                 opp['ticker'],
                 opp['entry_price'],
-                opp['metrics']
+                opp['metrics'],
+                portfolio_value=10000
             )
             print(f"Decision: {decision['action']} - {decision['reason']}")
     else:
