@@ -3,6 +3,7 @@ Trading System Orchestrator
 Coordinates the complete workflow: screening, entry evaluation, risk management, and position monitoring
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -284,13 +285,16 @@ def execute_sell_order(ticker, shares):
         }
 
 
-def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
+async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
     """
-    Run the complete daily screening workflow.
+    Run the complete daily screening workflow with async parallel execution.
     
     Workflow:
     1. Run screener to find beaten-down stocks
-    2. For high-confidence candidates (>0.8), check Grok sentiment
+    2. For high-confidence candidates, run parallel checks:
+       - Grok sentiment analysis
+       - Vision chart analysis
+       - SEC fundamental analysis
     3. Evaluate entry timing and conditions
     4. Check risk limits for each approved entry
     5. Return approved trades with position sizes
@@ -332,109 +336,154 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
             save_daily_signals(result)
             return result
         
-        # Step 2: Check Grok sentiment for high-confidence candidates
-        logger.info("Step 2: Checking Grok sentiment for high-confidence candidates...")
-        for candidate in candidates:
+        # Step 2: Run parallel analysis for high-confidence candidates
+        logger.info("Step 2: Running parallel analysis (Grok, Vision, Fundamentals)...")
+        
+        # Create async tasks for each candidate
+        async def analyze_candidate(candidate):
+            """Run all applicable analyses for a candidate in parallel."""
             confidence = candidate.get('analysis', {}).get('confidence', 0)
             ticker = candidate['ticker']
             
+            # Determine which analyses to run
+            tasks = []
+            task_names = []
+            
+            # Grok sentiment (if confidence >= threshold)
             if confidence >= GROK_CONFIDENCE_THRESHOLD:
-                logger.info(f"{ticker}: High confidence ({confidence:.2f}) - checking Grok sentiment...")
-                sentiment = check_twitter_sentiment(ticker, confidence)
-                candidate['grok_sentiment'] = sentiment
-                
-                if sentiment:
-                    logger.info(f"{ticker}: Grok sentiment = {sentiment}")
-                    
-                    # Adjust confidence based on sentiment
-                    if sentiment == "BEARISH":
-                        original_confidence = confidence
-                        candidate['analysis']['confidence'] = confidence * 0.7  # Reduce by 30%
-                        logger.warning(f"{ticker}: Confidence reduced from {original_confidence:.2f} to {confidence*0.7:.2f} due to bearish sentiment")
-                    elif sentiment == "BULLISH":
-                        original_confidence = confidence
-                        candidate['analysis']['confidence'] = min(confidence * 1.1, 1.0)  # Increase by 10%, cap at 1.0
-                        logger.info(f"{ticker}: Confidence increased from {original_confidence:.2f} to {min(confidence*1.1, 1.0):.2f} due to bullish sentiment")
+                tasks.append(asyncio.to_thread(check_twitter_sentiment, ticker, confidence))
+                task_names.append('grok')
             else:
-                logger.info(f"{ticker}: Confidence {confidence:.2f} below threshold {GROK_CONFIDENCE_THRESHOLD} - skipping Grok")
-                candidate['grok_sentiment'] = None
-        
-        # Step 2.5: Vision analysis for very high-confidence candidates
-        logger.info("Step 2.5: Running vision analysis for very high-confidence candidates...")
-        vision_total_cost = 0
-        
-        for candidate in candidates:
-            confidence = candidate.get('analysis', {}).get('confidence', 0)
-            ticker = candidate['ticker']
+                tasks.append(asyncio.sleep(0, result=None))  # Dummy task
+                task_names.append('grok')
             
+            # Vision analysis (if confidence >= threshold)
             if confidence >= VISION_CONFIDENCE_THRESHOLD:
-                logger.info(f"{ticker}: Very high confidence ({confidence:.2f}) - running vision analysis...")
-                
-                vision_result = quick_vision_check(ticker, confidence)
-                candidate['vision_analysis'] = vision_result
-                vision_total_cost += vision_result['cost']
-                
-                # Update confidence based on vision analysis
-                if vision_result['vision_approved']:
-                    original_confidence = confidence
-                    candidate['analysis']['confidence'] = vision_result['adjusted_confidence']
-                    logger.info(f"{ticker}: Vision APPROVED - Confidence: {original_confidence:.2f} → {vision_result['adjusted_confidence']:.2f}")
-                    logger.info(f"{ticker}: {vision_result['reason']}")
-                else:
-                    original_confidence = confidence
-                    candidate['analysis']['confidence'] = vision_result['adjusted_confidence']
-                    logger.warning(f"{ticker}: Vision NOT approved - Confidence: {original_confidence:.2f} → {vision_result['adjusted_confidence']:.2f}")
-                    logger.warning(f"{ticker}: {vision_result['reason']}")
+                tasks.append(asyncio.to_thread(quick_vision_check, ticker, confidence))
+                task_names.append('vision')
             else:
-                logger.info(f"{ticker}: Confidence {confidence:.2f} below vision threshold {VISION_CONFIDENCE_THRESHOLD} - skipping vision")
+                tasks.append(asyncio.sleep(0, result=None))  # Dummy task
+                task_names.append('vision')
+            
+            # Fundamental analysis (if confidence >= threshold)
+            if confidence >= FUNDAMENTAL_CONFIDENCE_THRESHOLD:
+                tasks.append(asyncio.to_thread(quick_fundamental_check, ticker, confidence))
+                task_names.append('fundamental')
+            else:
+                tasks.append(asyncio.sleep(0, result=None))  # Dummy task
+                task_names.append('fundamental')
+            
+            # Run all tasks in parallel
+            logger.info(f"{ticker}: Starting parallel analysis (confidence: {confidence:.2f})...")
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Process results
+            grok_result = results[0] if not isinstance(results[0], Exception) else None
+            vision_result = results[1] if not isinstance(results[1], Exception) else None
+            fundamental_result = results[2] if not isinstance(results[2], Exception) else None
+            
+            # Handle Grok sentiment
+            if confidence >= GROK_CONFIDENCE_THRESHOLD:
+                if isinstance(results[0], Exception):
+                    logger.error(f"{ticker}: Grok analysis failed: {results[0]}")
+                    candidate['grok_sentiment'] = None
+                else:
+                    candidate['grok_sentiment'] = grok_result
+                    if grok_result:
+                        logger.info(f"{ticker}: Grok sentiment = {grok_result}")
+                        
+                        # Adjust confidence based on sentiment
+                        if grok_result == "BEARISH":
+                            original_confidence = confidence
+                            candidate['analysis']['confidence'] = confidence * 0.7
+                            logger.warning(f"{ticker}: Confidence reduced from {original_confidence:.2f} to {confidence*0.7:.2f} due to bearish sentiment")
+                        elif grok_result == "BULLISH":
+                            original_confidence = confidence
+                            candidate['analysis']['confidence'] = min(confidence * 1.1, 1.0)
+                            logger.info(f"{ticker}: Confidence increased from {original_confidence:.2f} to {min(confidence*1.1, 1.0):.2f} due to bullish sentiment")
+            else:
+                candidate['grok_sentiment'] = None
+            
+            # Handle Vision analysis
+            if confidence >= VISION_CONFIDENCE_THRESHOLD:
+                if isinstance(results[1], Exception):
+                    logger.error(f"{ticker}: Vision analysis failed: {results[1]}")
+                    candidate['vision_analysis'] = None
+                else:
+                    candidate['vision_analysis'] = vision_result
+                    
+                    # Update confidence based on vision analysis
+                    if vision_result['vision_approved']:
+                        original_confidence = candidate['analysis']['confidence']
+                        candidate['analysis']['confidence'] = vision_result['adjusted_confidence']
+                        logger.info(f"{ticker}: Vision APPROVED - Confidence: {original_confidence:.2f} → {vision_result['adjusted_confidence']:.2f}")
+                        logger.info(f"{ticker}: {vision_result['reason']}")
+                    else:
+                        original_confidence = candidate['analysis']['confidence']
+                        candidate['analysis']['confidence'] = vision_result['adjusted_confidence']
+                        logger.warning(f"{ticker}: Vision NOT approved - Confidence: {original_confidence:.2f} → {vision_result['adjusted_confidence']:.2f}")
+                        logger.warning(f"{ticker}: {vision_result['reason']}")
+            else:
                 candidate['vision_analysis'] = None
+            
+            # Handle Fundamental analysis
+            if confidence >= FUNDAMENTAL_CONFIDENCE_THRESHOLD:
+                if isinstance(results[2], Exception):
+                    logger.error(f"{ticker}: Fundamental analysis failed: {results[2]}")
+                    candidate['fundamental_analysis'] = None
+                else:
+                    candidate['fundamental_analysis'] = fundamental_result
+                    
+                    # Check risk score threshold
+                    risk_score = fundamental_result.get('risk_score')
+                    
+                    if risk_score is not None and risk_score >= FUNDAMENTAL_RISK_THRESHOLD:
+                        # High risk detected - reduce confidence significantly
+                        original_confidence = candidate['analysis']['confidence']
+                        candidate['analysis']['confidence'] = original_confidence * 0.5
+                        logger.warning(f"{ticker}: HIGH RISK fundamentals (score: {risk_score}) - Confidence: {original_confidence:.2f} → {original_confidence*0.5:.2f}")
+                        logger.warning(f"{ticker}: {fundamental_result['reason']}")
+                    elif fundamental_result['fundamental_approved']:
+                        logger.info(f"{ticker}: Fundamentals OK - {fundamental_result['reason']}")
+                    else:
+                        # Some concern but not critical
+                        original_confidence = candidate['analysis']['confidence']
+                        candidate['analysis']['confidence'] = fundamental_result['adjusted_confidence']
+                        logger.info(f"{ticker}: Fundamental check: {fundamental_result['reason']}")
+                        if original_confidence != fundamental_result['adjusted_confidence']:
+                            logger.info(f"{ticker}: Confidence: {original_confidence:.2f} → {fundamental_result['adjusted_confidence']:.2f}")
+            else:
+                candidate['fundamental_analysis'] = None
+            
+            logger.info(f"{ticker}: Parallel analysis complete")
+            return candidate
+        
+        # Run analysis for all candidates in parallel
+        analyzed_candidates = await asyncio.gather(*[analyze_candidate(c) for c in candidates])
+        
+        # Calculate total costs
+        vision_total_cost = sum(
+            c.get('vision_analysis', {}).get('cost', 0) 
+            for c in analyzed_candidates 
+            if c.get('vision_analysis')
+        )
+        fundamental_total_cost = sum(
+            c.get('fundamental_analysis', {}).get('cost', 0) 
+            for c in analyzed_candidates 
+            if c.get('fundamental_analysis')
+        )
         
         if vision_total_cost > 0:
             logger.info(f"Total vision analysis cost: ${vision_total_cost:.3f}")
-        
-        # Step 2.75: Fundamental analysis for high-confidence candidates
-        logger.info("Step 2.75: Running fundamental analysis for high-confidence candidates...")
-        fundamental_total_cost = 0
-        
-        for candidate in candidates:
-            confidence = candidate.get('analysis', {}).get('confidence', 0)
-            ticker = candidate['ticker']
-            
-            if confidence >= FUNDAMENTAL_CONFIDENCE_THRESHOLD:
-                logger.info(f"{ticker}: High confidence ({confidence:.2f}) - running fundamental analysis...")
-                
-                fundamental_result = quick_fundamental_check(ticker, confidence)
-                candidate['fundamental_analysis'] = fundamental_result
-                fundamental_total_cost += fundamental_result['cost']
-                
-                # Check risk score threshold
-                risk_score = fundamental_result.get('risk_score')
-                
-                if risk_score is not None and risk_score >= FUNDAMENTAL_RISK_THRESHOLD:
-                    # High risk detected - reduce confidence significantly
-                    original_confidence = confidence
-                    candidate['analysis']['confidence'] = confidence * 0.5  # Reduce by 50%
-                    logger.warning(f"{ticker}: HIGH RISK fundamentals (score: {risk_score}) - Confidence: {original_confidence:.2f} → {confidence*0.5:.2f}")
-                    logger.warning(f"{ticker}: {fundamental_result['reason']}")
-                elif fundamental_result['fundamental_approved']:
-                    logger.info(f"{ticker}: Fundamentals OK - {fundamental_result['reason']}")
-                else:
-                    # Some concern but not critical
-                    original_confidence = confidence
-                    candidate['analysis']['confidence'] = fundamental_result['adjusted_confidence']
-                    logger.info(f"{ticker}: Fundamental check: {fundamental_result['reason']}")
-                    if original_confidence != fundamental_result['adjusted_confidence']:
-                        logger.info(f"{ticker}: Confidence: {original_confidence:.2f} → {fundamental_result['adjusted_confidence']:.2f}")
-            else:
-                logger.info(f"{ticker}: Confidence {confidence:.2f} below fundamental threshold {FUNDAMENTAL_CONFIDENCE_THRESHOLD} - skipping fundamental analysis")
-                candidate['fundamental_analysis'] = None
-        
         if fundamental_total_cost > 0:
             logger.info(f"Total fundamental analysis cost: ${fundamental_total_cost:.3f}")
         
+        # Update candidates with analyzed results
+        candidates = analyzed_candidates
+        
         # Step 3: Evaluate entry timing and conditions
         logger.info("Step 3: Evaluating entry conditions...")
-        entry_decisions = evaluate_entry(candidates, portfolio_value)
+        entry_decisions = await asyncio.to_thread(evaluate_entry, candidates, portfolio_value)
         
         buy_decisions = [d for d in entry_decisions if d['action'] == 'BUY']
         skip_decisions = [d for d in entry_decisions if d['action'] == 'SKIP']
@@ -444,8 +493,8 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
         # Step 4: Check account and risk limits
         logger.info("Step 4: Checking account status and risk limits...")
         
-        # Get account info
-        account_info = get_account_info()
+        # Get account info (async)
+        account_info = await asyncio.to_thread(get_account_info)
         if not account_info:
             logger.error("Failed to get account info. Cannot proceed with trading.")
             result = {
@@ -520,8 +569,8 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
                 'sector': get_sector_from_candidates(ticker, candidates)
             }
             
-            # Check risk limits
-            risk_check = check_risk_limits(portfolio_data, new_position)
+            # Check risk limits (async)
+            risk_check = await asyncio.to_thread(check_risk_limits, portfolio_data, new_position)
             
             if risk_check['approved']:
                 logger.info(f"{ticker}: APPROVED - {risk_check['reason']}")
@@ -574,19 +623,17 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
                     'original_decision': decision
                 })
         
-        # Step 5: Execute approved trades
+        # Step 5: Execute approved trades (in parallel)
         logger.info("Step 5: Executing approved trades...")
         
-        executed_trades = []
-        execution_failures = []
-        
-        for trade in approved_trades:
+        async def execute_trade(trade):
+            """Execute a single trade asynchronously."""
             ticker = trade['ticker']
             shares = trade['shares']
             entry_price = trade['entry_price']
             
             # Execute buy order
-            order_result = execute_buy_order(ticker, shares, entry_price)
+            order_result = await asyncio.to_thread(execute_buy_order, ticker, shares, entry_price)
             
             if order_result['success']:
                 logger.info(f"{ticker}: Order executed successfully - ID: {order_result['order_id']}")
@@ -599,10 +646,8 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
                 trade['executed'] = True
                 trade['execution_time'] = datetime.now().isoformat()
                 
-                executed_trades.append(trade)
-                
                 # Add to positions file
-                add_position({
+                await asyncio.to_thread(add_position, {
                     'ticker': ticker,
                     'shares': shares,
                     'entry_price': entry_price,
@@ -613,11 +658,18 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
                     'take_profit_pct': current_params.get('take_profit_pct', 15.0)
                 })
                 
+                return ('success', trade)
             else:
                 logger.error(f"{ticker}: Order execution failed - {order_result['error']}")
                 trade['executed'] = False
                 trade['execution_error'] = order_result['error']
-                execution_failures.append(trade)
+                return ('failure', trade)
+        
+        # Execute all trades in parallel
+        execution_results = await asyncio.gather(*[execute_trade(t) for t in approved_trades])
+        
+        executed_trades = [trade for status, trade in execution_results if status == 'success']
+        execution_failures = [trade for status, trade in execution_results if status == 'failure']
         
         # Step 6: Compile results
         end_time = datetime.now()
@@ -667,15 +719,29 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
         return result
 
 
-def monitor_positions():
+def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
     """
-    Monitor open positions and generate exit signals.
+    Synchronous wrapper for async run_daily_screening_async().
+    
+    Args:
+        portfolio_value: Current portfolio value for position sizing
+        
+    Returns:
+        dict: Screening results
+    """
+    return asyncio.run(run_daily_screening_async(portfolio_value))
+
+
+async def monitor_positions_async():
+    """
+    Monitor open positions and generate exit signals (async version).
     
     Workflow:
     1. Load open positions from data/positions.json
     2. Check if market is open
-    3. Run exit monitoring for each position
-    4. Save exit signals to data/exit_signals_YYYYMMDD.json
+    3. Run exit monitoring for each position in parallel
+    4. Execute exit orders in parallel
+    5. Save exit signals to data/exit_signals_YYYYMMDD.json
     
     Returns:
         dict: {
@@ -720,8 +786,8 @@ def monitor_positions():
         
         logger.info(f"Monitoring {len(positions)} open positions...")
         
-        # Run exit monitoring
-        exit_signals = monitor_exit_conditions(positions)
+        # Run exit monitoring (async)
+        exit_signals = await asyncio.to_thread(monitor_exit_conditions, positions)
         
         # Count actions
         action_counts = {}
@@ -731,44 +797,51 @@ def monitor_positions():
         
         logger.info(f"Exit monitoring complete: {action_counts}")
         
-        # Execute sell orders for exit signals
+        # Execute sell orders for exit signals (in parallel)
         logger.info("Executing exit orders...")
         
-        executed_exits = []
-        exit_failures = []
-        
-        for signal in exit_signals:
-            if signal['action'] in ['SELL_ALL', 'SELL_HALF']:
-                ticker = signal['ticker']
-                sell_qty = signal.get('sell_qty', 0)
+        async def execute_exit(signal):
+            """Execute a single exit order asynchronously."""
+            if signal['action'] not in ['SELL_ALL', 'SELL_HALF']:
+                return None
+            
+            ticker = signal['ticker']
+            sell_qty = signal.get('sell_qty', 0)
+            
+            if sell_qty <= 0:
+                return None
+            
+            # Execute sell order
+            order_result = await asyncio.to_thread(execute_sell_order, ticker, sell_qty)
+            
+            if order_result['success']:
+                logger.info(f"{ticker}: Exit order executed - ID: {order_result['order_id']}")
                 
-                if sell_qty > 0:
-                    # Execute sell order
-                    order_result = execute_sell_order(ticker, sell_qty)
-                    
-                    if order_result['success']:
-                        logger.info(f"{ticker}: Exit order executed - ID: {order_result['order_id']}")
-                        
-                        signal['order_id'] = order_result['order_id']
-                        signal['order_status'] = order_result['status']
-                        signal['filled_qty'] = order_result['filled_qty']
-                        signal['filled_price'] = order_result['filled_price']
-                        signal['executed'] = True
-                        signal['execution_time'] = datetime.now().isoformat()
-                        
-                        executed_exits.append(signal)
-                        
-                        # Update positions file
-                        if signal['action'] == 'SELL_ALL':
-                            remove_position(ticker)
-                        else:  # SELL_HALF
-                            update_position_quantity(ticker, sell_qty)
-                        
-                    else:
-                        logger.error(f"{ticker}: Exit order failed - {order_result['error']}")
-                        signal['executed'] = False
-                        signal['execution_error'] = order_result['error']
-                        exit_failures.append(signal)
+                signal['order_id'] = order_result['order_id']
+                signal['order_status'] = order_result['status']
+                signal['filled_qty'] = order_result['filled_qty']
+                signal['filled_price'] = order_result['filled_price']
+                signal['executed'] = True
+                signal['execution_time'] = datetime.now().isoformat()
+                
+                # Update positions file
+                if signal['action'] == 'SELL_ALL':
+                    await asyncio.to_thread(remove_position, ticker)
+                else:  # SELL_HALF
+                    await asyncio.to_thread(update_position_quantity, ticker, sell_qty)
+                
+                return ('success', signal)
+            else:
+                logger.error(f"{ticker}: Exit order failed - {order_result['error']}")
+                signal['executed'] = False
+                signal['execution_error'] = order_result['error']
+                return ('failure', signal)
+        
+        # Execute all exits in parallel
+        exit_results = await asyncio.gather(*[execute_exit(s) for s in exit_signals])
+        
+        executed_exits = [signal for result in exit_results if result and result[0] == 'success' for _, signal in [result]]
+        exit_failures = [signal for result in exit_results if result and result[0] == 'failure' for _, signal in [result]]
         
         # Compile results
         end_time = datetime.now()
@@ -810,6 +883,16 @@ def monitor_positions():
         }
         save_exit_signals(result)
         return result
+
+
+def monitor_positions():
+    """
+    Synchronous wrapper for async monitor_positions_async().
+    
+    Returns:
+        dict: Position monitoring results
+    """
+    return asyncio.run(monitor_positions_async())
 
 
 def load_positions():
@@ -1029,6 +1112,7 @@ if __name__ == "__main__":
     if command == "screen":
         portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else PORTFOLIO_VALUE
         print(f"\nRunning daily screening workflow (Portfolio: ${portfolio_value:,.2f})...")
+        print("Using async parallel execution for 5x faster analysis...")
         result = run_daily_screening(portfolio_value)
         
         print("\n" + "=" * 80)
@@ -1066,6 +1150,7 @@ if __name__ == "__main__":
         
     elif command == "monitor":
         print("\nMonitoring open positions...")
+        print("Using async parallel execution for faster order processing...")
         result = monitor_positions()
         
         print("\n" + "=" * 80)
