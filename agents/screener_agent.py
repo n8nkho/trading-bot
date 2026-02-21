@@ -63,29 +63,42 @@ def run_screener():
             volume_ratio = stock_data['Volume'].iloc[-1] / mean_volume
             logging.info(f"{ticker}: Volume ratio: {volume_ratio:.2f}")
 
-            # Fetch news headlines
-            logging.info(f"{ticker}: Fetching news headlines...")
+            # Check if stock meets ALL criteria before calling LLM
+            meets_drop_criteria = -15 <= drop_pct <= -5
+            meets_rsi_criteria = rsi < 40
+            meets_volume_criteria = volume_ratio > 1.5
+            
+            if not meets_drop_criteria:
+                logging.info(f"{ticker}: Does not meet drop criteria (drop: {drop_pct:.1f}%, need -15% to -5%)")
+                continue
+            
+            if not meets_rsi_criteria:
+                logging.info(f"{ticker}: Does not meet RSI criteria (rsi: {rsi:.1f}, need < 40)")
+                continue
+                
+            if not meets_volume_criteria:
+                logging.info(f"{ticker}: Does not meet volume criteria (vol_ratio: {volume_ratio:.1f}, need > 1.5)")
+                continue
+
+            # Stock meets ALL criteria - fetch news and analyze with LLM
+            logging.info(f"{ticker}: MEETS ALL CRITERIA - Fetching news headlines...")
             news_headlines = get_news_headlines(ticker, 3)
             logging.info(f"{ticker}: Found {len(news_headlines)} news headlines")
 
-            # Analyze stock drop
+            # Analyze stock drop with LLM
             logging.info(f"{ticker}: Analyzing stock drop with LLM...")
             analysis = analyze_stock_drop(ticker, news_headlines, {'drop_pct': drop_pct, 'rsi': rsi})
             logging.info(f"{ticker}: Analysis complete")
 
-            # Filter for candidates
-            if 5 <= abs(drop_pct) <= 15 and rsi < 40 and volume_ratio > 1.5:
-                logging.info(f"{ticker}: CANDIDATE FOUND!")
-                candidates.append({
-                    'ticker': ticker,
-                    'drop_pct': drop_pct,
-                    'rsi': rsi,
-                    'volume_ratio': volume_ratio,
-                    'news': news_headlines,
-                    'analysis': analysis
-                })
-            else:
-                logging.info(f"{ticker}: Does not meet criteria (drop: {drop_pct:.1f}%, rsi: {rsi:.1f}, vol_ratio: {volume_ratio:.1f})")
+            logging.info(f"{ticker}: CANDIDATE FOUND!")
+            candidates.append({
+                'ticker': ticker,
+                'drop_pct': drop_pct,
+                'rsi': rsi,
+                'volume_ratio': volume_ratio,
+                'news': news_headlines,
+                'analysis': analysis
+            })
 
         except Exception as e:
             logging.error(f"Error scanning {ticker}: {type(e).__name__}: {str(e)}")
@@ -119,7 +132,12 @@ def get_news_headlines(ticker, limit):
     """Fetch top news headlines for a stock from Yahoo Finance"""
     try:
         news = yf.Ticker(ticker).get_news()
-        headlines = [h['title'] for h in news[:limit]]
+        headlines = []
+        for h in news[:limit]:
+            if 'title' in h:
+                headlines.append(h['title'])
+            else:
+                logging.warning(f"News item for {ticker} missing 'title' field: {h.keys()}")
         return headlines
     except Exception as e:
         logging.warning(f"Could not fetch news for {ticker}: {type(e).__name__}: {str(e)}")
