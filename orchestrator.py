@@ -24,6 +24,7 @@ from agents.risk_guardian import check_risk_limits, get_risk_status
 from agents.performance_analyzer import track_decision, load_current_params
 from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mode
 from agents.vision_analyst import quick_vision_check, multi_timeframe_analysis
+from agents.document_analyst import quick_fundamental_check
 from utils.grok_sentiment import check_twitter_sentiment
 
 # Load environment variables
@@ -58,6 +59,8 @@ MARKET_CLOSE = time(16, 0)  # 4:00 PM ET
 # Screening configuration
 GROK_CONFIDENCE_THRESHOLD = 0.8  # Only use Grok for high-confidence candidates
 VISION_CONFIDENCE_THRESHOLD = 0.9  # Only use Vision for very high-confidence candidates
+FUNDAMENTAL_CONFIDENCE_THRESHOLD = 0.85  # Only use fundamental analysis for high-confidence candidates
+FUNDAMENTAL_RISK_THRESHOLD = 70  # Skip if SEC risk score >= 70
 
 # Trading configuration
 MAX_POSITIONS = 5  # Maximum number of open positions
@@ -389,6 +392,46 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
         if vision_total_cost > 0:
             logger.info(f"Total vision analysis cost: ${vision_total_cost:.3f}")
         
+        # Step 2.75: Fundamental analysis for high-confidence candidates
+        logger.info("Step 2.75: Running fundamental analysis for high-confidence candidates...")
+        fundamental_total_cost = 0
+        
+        for candidate in candidates:
+            confidence = candidate.get('analysis', {}).get('confidence', 0)
+            ticker = candidate['ticker']
+            
+            if confidence >= FUNDAMENTAL_CONFIDENCE_THRESHOLD:
+                logger.info(f"{ticker}: High confidence ({confidence:.2f}) - running fundamental analysis...")
+                
+                fundamental_result = quick_fundamental_check(ticker, confidence)
+                candidate['fundamental_analysis'] = fundamental_result
+                fundamental_total_cost += fundamental_result['cost']
+                
+                # Check risk score threshold
+                risk_score = fundamental_result.get('risk_score')
+                
+                if risk_score is not None and risk_score >= FUNDAMENTAL_RISK_THRESHOLD:
+                    # High risk detected - reduce confidence significantly
+                    original_confidence = confidence
+                    candidate['analysis']['confidence'] = confidence * 0.5  # Reduce by 50%
+                    logger.warning(f"{ticker}: HIGH RISK fundamentals (score: {risk_score}) - Confidence: {original_confidence:.2f} → {confidence*0.5:.2f}")
+                    logger.warning(f"{ticker}: {fundamental_result['reason']}")
+                elif fundamental_result['fundamental_approved']:
+                    logger.info(f"{ticker}: Fundamentals OK - {fundamental_result['reason']}")
+                else:
+                    # Some concern but not critical
+                    original_confidence = confidence
+                    candidate['analysis']['confidence'] = fundamental_result['adjusted_confidence']
+                    logger.info(f"{ticker}: Fundamental check: {fundamental_result['reason']}")
+                    if original_confidence != fundamental_result['adjusted_confidence']:
+                        logger.info(f"{ticker}: Confidence: {original_confidence:.2f} → {fundamental_result['adjusted_confidence']:.2f}")
+            else:
+                logger.info(f"{ticker}: Confidence {confidence:.2f} below fundamental threshold {FUNDAMENTAL_CONFIDENCE_THRESHOLD} - skipping fundamental analysis")
+                candidate['fundamental_analysis'] = None
+        
+        if fundamental_total_cost > 0:
+            logger.info(f"Total fundamental analysis cost: ${fundamental_total_cost:.3f}")
+        
         # Step 3: Evaluate entry timing and conditions
         logger.info("Step 3: Evaluating entry conditions...")
         entry_decisions = evaluate_entry(candidates, portfolio_value)
@@ -513,6 +556,7 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
                     },
                     'grok_sentiment': decision.get('grok_sentiment'),
                     'vision_analysis': decision.get('vision_analysis'),
+                    'fundamental_analysis': decision.get('fundamental_analysis'),
                     'timestamp': datetime.now().isoformat()
                 })
                 
@@ -591,7 +635,8 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
             'risk_status': get_risk_status(),
             'portfolio_value': portfolio_value,
             'account_info': account_info,
-            'vision_cost': vision_total_cost
+            'vision_cost': vision_total_cost,
+            'fundamental_cost': fundamental_total_cost
         }
         
         logger.info("=" * 80)
