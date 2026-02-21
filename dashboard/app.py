@@ -1,4 +1,7 @@
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, Response
+from flask_sockets import Sockets
+import time
+import json
 import plotly
 import plotly.graph_objs as go
 import pandas as pd
@@ -12,6 +15,7 @@ import logging
 from pathlib import Path
 
 app = Flask(__name__)
+sockets = Sockets(app)
 
 # Add custom Jinja2 filters
 @app.template_filter('format_currency')
@@ -470,7 +474,42 @@ def api_status():
             'message': str(e)
         }), 500
 
-if __name__ == '__main__':
+@app.route('/stream')
+def stream():
+    """SSE endpoint for real-time updates"""
+    def event_stream():
+        while True:
+            # Fetch data for SSE
+            positions = load_positions()
+            pnl = calculate_win_rate()
+            health = get_market_status()
+            alerts = []  # Placeholder for alerts logic
+
+            # Create JSON payload
+            data = json.dumps({
+                'positions': positions,
+                'pnl': pnl,
+                'health': health,
+                'alerts': alerts
+            })
+
+            yield f"data: {data}\n\n"
+            time.sleep(5)
+
+    return Response(event_stream(), mimetype='text/event-stream')
+
+@sockets.route('/trades')
+def trades_socket(ws):
+    """WebSocket endpoint for real-time trade notifications"""
+    while not ws.closed:
+        # Placeholder for trade notification logic
+        message = ws.receive()
+        if message:
+            # Process incoming message
+            ws.send(json.dumps({
+                'type': 'trade',
+                'message': 'New trade executed'
+            }))
     # Create necessary directories
     DATA_DIR.mkdir(exist_ok=True)
     Path('../logs').mkdir(exist_ok=True)
