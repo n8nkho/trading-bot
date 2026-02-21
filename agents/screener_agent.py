@@ -2,11 +2,16 @@ import os
 import json
 import time
 import logging
+import traceback
 from datetime import datetime
 import yfinance as yf
 from utils.local_llm import analyze_stock_drop
 
-logging.basicConfig(filename='logs/screener.log', level=logging.INFO)
+logging.basicConfig(
+    filename='logs/screener.log', 
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 def run_screener():
     with open('config/watchlist.json', 'r') as f:
@@ -19,24 +24,58 @@ def run_screener():
 
         try:
             # Fetch Yahoo Finance data
+            logging.info(f"Fetching data for {ticker}...")
             stock_data = yf.Ticker(ticker).history(period="10d")
+            logging.info(f"{ticker}: Fetched {len(stock_data)} days of data")
+            
             if len(stock_data) < 2:
-                logging.warning(f"Skipping {ticker} - insufficient data")
+                logging.warning(f"Skipping {ticker} - insufficient data (only {len(stock_data)} days)")
                 continue
 
-            # Calculate metrics
-            drop_pct = (stock_data['Open'][-1] - stock_data['Close'][-1]) / stock_data['Open'][-1] * 100
+            # Log the data we got
+            logging.info(f"{ticker}: Latest close: {stock_data['Close'].iloc[-1]:.2f}, Latest volume: {stock_data['Volume'].iloc[-1]}")
+
+            # Calculate metrics with validation
+            latest_open = stock_data['Open'].iloc[-1]
+            latest_close = stock_data['Close'].iloc[-1]
+            
+            if latest_open == 0:
+                logging.warning(f"Skipping {ticker} - zero open price")
+                continue
+                
+            drop_pct = (latest_open - latest_close) / latest_open * 100
+            logging.info(f"{ticker}: Drop percentage: {drop_pct:.2f}%")
+            
+            # Calculate RSI with validation
+            if len(stock_data) < 15:
+                logging.warning(f"Skipping {ticker} - insufficient data for RSI calculation (need 15+ days, have {len(stock_data)})")
+                continue
+                
             rsi = calculate_rsi(stock_data['Close'], 14)
-            volume_ratio = stock_data['Volume'][-1] / stock_data['Volume'].mean()
+            logging.info(f"{ticker}: RSI: {rsi:.2f}")
+            
+            # Calculate volume ratio
+            mean_volume = stock_data['Volume'].mean()
+            if mean_volume == 0:
+                logging.warning(f"Skipping {ticker} - zero mean volume")
+                continue
+                
+            volume_ratio = stock_data['Volume'].iloc[-1] / mean_volume
+            logging.info(f"{ticker}: Volume ratio: {volume_ratio:.2f}")
 
             # Fetch news headlines
+            logging.info(f"{ticker}: Fetching news headlines...")
             news_headlines = get_news_headlines(ticker, 3)
+            logging.info(f"{ticker}: Found {len(news_headlines)} news headlines")
 
             # Analyze stock drop
+            logging.info(f"{ticker}: Analyzing stock drop with LLM...")
             analysis = analyze_stock_drop(ticker, news_headlines, {'drop_pct': drop_pct, 'rsi': rsi})
+            logging.info(f"{ticker}: Analysis complete")
 
             # Filter for candidates
             if 5 <= abs(drop_pct) <= 15 and rsi < 40 and volume_ratio > 1.5:
+                logging.info(f"{ticker}: CANDIDATE FOUND!")
                 candidates.append({
                     'ticker': ticker,
                     'drop_pct': drop_pct,
@@ -45,28 +84,45 @@ def run_screener():
                     'news': news_headlines,
                     'analysis': analysis
                 })
+            else:
+                logging.info(f"{ticker}: Does not meet criteria (drop: {drop_pct:.1f}%, rsi: {rsi:.1f}, vol_ratio: {volume_ratio:.1f})")
 
         except Exception as e:
-            logging.error(f"Error scanning {ticker}: {str(e)}")
+            logging.error(f"Error scanning {ticker}: {type(e).__name__}: {str(e)}")
+            logging.error(f"Full traceback for {ticker}:\n{traceback.format_exc()}")
 
     return sorted(candidates, key=lambda x: x['analysis']['confidence'], reverse=True)
 
 def calculate_rsi(prices, n=14):
     """Calculate the Relative Strength Index (RSI)"""
-    deltas = prices.diff()
-    seed = deltas[:n+1]
-    up = seed[seed >= 0].sum() / n
-    down = -seed[seed < 0].sum() / n
-    rs = up / down
-    rsi = 100 - (100 / (1 + rs))
-    return rsi.iloc[-1]
+    try:
+        deltas = prices.diff()
+        seed = deltas[:n+1]
+        up = seed[seed >= 0].sum() / n
+        down = -seed[seed < 0].sum() / n
+        
+        if down == 0:
+            return 100.0  # If no down movement, RSI is 100
+            
+        rs = up / down
+        rsi = 100 - (100 / (1 + rs))
+        
+        # Handle if rsi is a Series, get the last value
+        if hasattr(rsi, 'iloc'):
+            return rsi.iloc[-1]
+        return rsi
+    except Exception as e:
+        logging.error(f"Error calculating RSI: {type(e).__name__}: {str(e)}")
+        raise
 
 def get_news_headlines(ticker, limit):
     """Fetch top news headlines for a stock from Yahoo Finance"""
     try:
         news = yf.Ticker(ticker).get_news()
-        return [h['title'] for h in news[:limit]]
-    except:
+        headlines = [h['title'] for h in news[:limit]]
+        return headlines
+    except Exception as e:
+        logging.warning(f"Could not fetch news for {ticker}: {type(e).__name__}: {str(e)}")
         return []
 
 if __name__ == "__main__":
