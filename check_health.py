@@ -126,17 +126,18 @@ else:
     print("   ⏳ No decision log yet")
 
 # 8. COMPREHENSIVE COST ANALYSIS:
-print("\n8. COST ANALYSIS:")
+print("\n8. COMPREHENSIVE COSTS:")
 try:
     from utils.cost_calculator import get_daily_costs, get_monthly_projection
     
-    today_costs = get_daily_costs()
+    costs = get_daily_costs()
     monthly = get_monthly_projection()
     
-    if today_costs['api_calls'] > 0:
-        print(f"   📊 Today: ${today_costs['total_cost']:.2f} ({today_costs['api_calls']} calls)")
-        if today_costs['api_savings'] > 0:
-            print(f"   💰 Saved: ${today_costs['api_savings']:.2f} (caching)")
+    if costs['api_calls'] > 0:
+        print(f"   💰 Today: ${costs['total_cost']:.2f}")
+        print(f"   📊 API: ${costs['api_cost']:.2f} ({costs['api_calls']} calls)")
+        print(f"   💾 Cache savings: ${costs['api_savings']:.2f}")
+        print(f"   ☁️  OCI: ${costs['oci_cost']:.2f} (FREE tier)")
         print(f"   📈 Monthly projection: ${monthly['monthly_projection']:.2f}")
     else:
         print("   ⏳ No API calls logged today")
