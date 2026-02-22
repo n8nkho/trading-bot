@@ -125,6 +125,35 @@ if os.path.exists('data/decisions_log.jsonl'):
 else:
     print("   ⏳ No decision log yet")
 
-print("\n" + "=" * 60)
+# 8. API COSTS & SAVINGS (if available):
+print("\n8. API COSTS & SAVINGS (if available):")
+api_costs_path = 'data/api_costs.jsonl'
+if os.path.exists(api_costs_path):
+    try:
+        today = datetime.now().date()
+        calls, total_cost, cached_tokens, total_tokens = 0, 0.0, 0, 0
+        with open(api_costs_path) as f:
+            for line in f:
+                record = json.loads(line)
+                record_date = datetime.fromisoformat(record['date']).date()
+                if record_date == today:
+                    calls += 1
+                    total_cost += record.get('cost', 0)
+                    cached_tokens += record.get('cached_tokens', 0)
+                    total_tokens += record.get('input_tokens', 0) + record.get('output_tokens', 0)
+        
+        if calls > 0:
+            cache_hit_rate = (cached_tokens / total_tokens) * 100 if total_tokens > 0 else 0
+            savings = (total_tokens - cached_tokens) * 0.01  # Assuming $0.01 per token saved
+            print(f"   📊 API Costs Today:")
+            print(f"      Calls: {calls}")
+            print(f"      Cost: ${total_cost:.2f} ({cache_hit_rate:.1f}% cached)")
+            print(f"      Savings: ${savings:.2f}")
+        else:
+            print("   ⏳ No API calls logged today")
+    except Exception as e:
+        print(f"   ⚠️  Can't read API costs: {e}")
+else:
+    print("   ⏳ No API cost log yet")
 print("Health check complete!")
 print("=" * 60)
