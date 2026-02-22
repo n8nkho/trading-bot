@@ -48,7 +48,7 @@ def check_twitter_sentiment(ticker, confidence_threshold=0.8):
                 "Content-Type": "application/json"
             },
             json={
-                "model": "grok-2-mini",
+                "model": "grok-3-mini",
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": 10,
                 "temperature": 0.1
