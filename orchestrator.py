@@ -26,6 +26,13 @@ from agents.performance_analyzer import track_decision, load_current_params
 from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mode
 from agents.document_analyst import quick_fundamental_check
 from utils.grok_sentiment import check_twitter_sentiment
+from utils.cost_calculator import (
+    get_daily_costs,
+    get_monthly_projection,
+    get_lifetime_costs,
+    get_cost_per_trade,
+    generate_cost_report
+)
 
 # Load environment variables
 load_dotenv()
@@ -1063,6 +1070,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py screen [portfolio_value]  - Run daily screening")
         print("  python orchestrator.py monitor                    - Monitor positions")
         print("  python orchestrator.py status                     - Check market status")
+        print("  python orchestrator.py costs                      - Show comprehensive cost report")
         print("  python orchestrator.py watchdog                   - Check Llama health and optimize")
         print("  python orchestrator.py preload                    - Preload Llama models (run at 2:55 AM)")
         print("  python orchestrator.py tune                       - Auto-tune parameters")
@@ -1159,6 +1167,112 @@ if __name__ == "__main__":
                 print("Reason: Weekend")
             else:
                 print(f"Reason: Outside market hours")
+    
+    elif command == "costs":
+        # ANSI color codes for colorful output
+        GREEN = '\033[92m'
+        YELLOW = '\033[93m'
+        BLUE = '\033[94m'
+        CYAN = '\033[96m'
+        MAGENTA = '\033[95m'
+        RED = '\033[91m'
+        BOLD = '\033[1m'
+        RESET = '\033[0m'
+        
+        print(f"\n{CYAN}{'=' * 80}{RESET}")
+        print(f"{BOLD}{MAGENTA}💰 COMPREHENSIVE COST ANALYSIS{RESET}")
+        print(f"{CYAN}{'=' * 80}{RESET}\n")
+        
+        # Get cost data
+        today_costs = get_daily_costs()
+        monthly = get_monthly_projection()
+        lifetime = get_lifetime_costs()
+        cost_per_trade = get_cost_per_trade()
+        
+        # TODAY'S COSTS
+        print(f"{BOLD}{BLUE}📅 TODAY:{RESET}")
+        print(f"  API Calls: {YELLOW}{today_costs['api_calls']}{RESET}")
+        
+        if today_costs['service_breakdown']:
+            for service, data in today_costs['service_breakdown'].items():
+                service_name = service.capitalize()
+                if service == 'ollama':
+                    print(f"  {GREEN}✓{RESET} {service_name}: {GREEN}$0.00 (FREE){RESET} ({data['calls']} calls)")
+                else:
+                    cost_color = GREEN if data['cost'] < 0.10 else YELLOW if data['cost'] < 1.0 else RED
+                    print(f"  • {service_name}: {cost_color}${data['cost']:.4f}{RESET} ({data['calls']} calls)")
+                    if data['savings'] > 0:
+                        savings_pct = (data['savings'] / (data['cost'] + data['savings'])) * 100
+                        print(f"    {CYAN}↓ Cache savings: ${data['savings']:.4f} ({savings_pct:.0f}%){RESET}")
+        
+        if today_costs['api_savings'] > 0:
+            total_before = today_costs['api_cost'] + today_costs['api_savings']
+            cache_pct = (today_costs['api_savings'] / total_before) * 100
+            print(f"  {CYAN}💾 Total cache savings: ${today_costs['api_savings']:.4f} ({cache_pct:.0f}%){RESET}")
+        
+        print(f"  {GREEN}☁️  OCI Infrastructure: $0.00 (FREE tier){RESET}")
+        
+        total_color = GREEN if today_costs['total_cost'] < 0.50 else YELLOW if today_costs['total_cost'] < 2.0 else RED
+        print(f"  {BOLD}TOTAL TODAY: {total_color}${today_costs['total_cost']:.4f}{RESET}\n")
+        
+        # MONTHLY PROJECTION
+        print(f"{BOLD}{BLUE}📊 MONTHLY PROJECTION:{RESET}")
+        print(f"  Daily Average: {YELLOW}${monthly['daily_average']:.4f}{RESET}")
+        print(f"  API (projected): {YELLOW}${monthly['api_projection']:.2f}/month{RESET}")
+        print(f"  OCI: {GREEN}$0.00/month (FREE){RESET}")
+        
+        monthly_color = GREEN if monthly['monthly_projection'] < 10 else YELLOW if monthly['monthly_projection'] < 50 else RED
+        print(f"  {BOLD}TOTAL: {monthly_color}${monthly['monthly_projection']:.2f}/month{RESET}")
+        print(f"  {CYAN}(based on {monthly['days_sampled']} day average){RESET}\n")
+        
+        # LIFETIME STATS
+        print(f"{BOLD}{BLUE}📈 LIFETIME STATISTICS:{RESET}")
+        print(f"  Total Spent: {YELLOW}${lifetime['total_spent']:.2f}{RESET}")
+        print(f"  Total Saved: {CYAN}${lifetime['total_saved']:.2f}{RESET} (via caching)")
+        
+        if lifetime['total_saved'] > 0:
+            roi_color = GREEN if lifetime['roi_percent'] > 50 else YELLOW if lifetime['roi_percent'] > 20 else RED
+            print(f"  {BOLD}ROI from Caching: {roi_color}{lifetime['roi_percent']:.1f}%{RESET}")
+        
+        if cost_per_trade > 0:
+            cpt_color = GREEN if cost_per_trade < 0.10 else YELLOW if cost_per_trade < 0.50 else RED
+            print(f"  Cost per Trade: {cpt_color}${cost_per_trade:.4f}{RESET}")
+        
+        print(f"  Total API Calls: {YELLOW}{lifetime['total_calls']:,}{RESET}")
+        print(f"  Days Active: {CYAN}{lifetime['days_active']}{RESET}")
+        
+        if lifetime['first_call']:
+            first_date = datetime.fromisoformat(lifetime['first_call']).strftime('%Y-%m-%d')
+            last_date = datetime.fromisoformat(lifetime['last_call']).strftime('%Y-%m-%d')
+            print(f"  Period: {CYAN}{first_date} → {last_date}{RESET}\n")
+        
+        # COST EFFICIENCY INSIGHTS
+        print(f"{BOLD}{BLUE}💡 INSIGHTS:{RESET}")
+        
+        if lifetime['roi_percent'] > 50:
+            print(f"  {GREEN}✓ Excellent caching efficiency!{RESET}")
+        elif lifetime['roi_percent'] > 20:
+            print(f"  {YELLOW}• Good caching performance{RESET}")
+        else:
+            print(f"  {RED}⚠ Consider optimizing cache usage{RESET}")
+        
+        if monthly['monthly_projection'] < 10:
+            print(f"  {GREEN}✓ Very low monthly costs (<$10){RESET}")
+        elif monthly['monthly_projection'] < 50:
+            print(f"  {YELLOW}• Moderate monthly costs ($10-$50){RESET}")
+        else:
+            print(f"  {RED}⚠ High monthly costs (>${monthly['monthly_projection']:.0f}){RESET}")
+        
+        if cost_per_trade > 0 and cost_per_trade < 0.10:
+            print(f"  {GREEN}✓ Excellent cost per trade (<$0.10){RESET}")
+        elif cost_per_trade > 0 and cost_per_trade < 0.50:
+            print(f"  {YELLOW}• Reasonable cost per trade ($0.10-$0.50){RESET}")
+        elif cost_per_trade > 0:
+            print(f"  {RED}⚠ High cost per trade (>${cost_per_trade:.2f}){RESET}")
+        
+        print(f"  {GREEN}✓ OCI infrastructure: 100% FREE (A1.Flex ARM){RESET}")
+        
+        print(f"\n{CYAN}{'=' * 80}{RESET}\n")
     
     elif command == "tune":
         from agents.performance_analyzer import auto_tune_parameters
@@ -1267,5 +1381,5 @@ if __name__ == "__main__":
     
     else:
         print(f"Unknown command: {command}")
-        print("Use 'screen', 'monitor', 'status', 'watchdog', 'preload', 'tune', 'review', 'architect', or 'vision'")
+        print("Use 'screen', 'monitor', 'status', 'costs', 'watchdog', 'preload', 'tune', 'review', or 'architect'")
         sys.exit(1)
