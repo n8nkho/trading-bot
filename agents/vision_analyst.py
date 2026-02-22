@@ -276,8 +276,9 @@ Always return your analysis as a valid JSON object with this exact structure:
 }"""
         
         # Call Claude Vision API with prompt caching
+        # Using Haiku for cost-effectiveness (20x cheaper than Sonnet, still good for vision)
         message = anthropic_client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-3-haiku-20240307",
             max_tokens=2000,
             system=[
                 {
@@ -384,9 +385,15 @@ Always return your analysis as a valid JSON object with this exact structure:
         
     except Exception as e:
         logger.error(f"{ticker}: Error in vision analysis: {type(e).__name__}: {str(e)}")
+        # Return safe default dict to prevent crashes downstream
         return {
             'success': False,
-            'analysis': None,
+            'analysis': {
+                'pattern': 'ERROR',
+                'outlook': 'neutral',
+                'confidence': 'low',
+                'summary': f'Vision analysis failed: {str(e)}'
+            },
             'raw_response': None,
             'cost': 0,
             'cache_savings': 0,
@@ -604,8 +611,10 @@ def quick_vision_check(ticker, confidence):
         return {
             'vision_approved': False,
             'adjusted_confidence': confidence,
-            'analysis': None,
+            'analysis': result.get('analysis'),  # Use safe default from error handler
             'cost': 0,
+            'cache_savings': 0,
+            'savings_pct': 0,
             'reason': f"Vision analysis failed: {result['error']}"
         }
     
