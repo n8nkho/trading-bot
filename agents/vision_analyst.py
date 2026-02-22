@@ -22,9 +22,15 @@ logger = logging.getLogger(__name__)
 # Configuration
 CHART_DIR = Path("/tmp/trading_charts")
 CHART_DIR.mkdir(exist_ok=True)
+COST_LOG_FILE = Path("logs/api_costs.log")
+COST_LOG_FILE.parent.mkdir(exist_ok=True)
 
-# Cost tracking
-VISION_COST_PER_IMAGE = 0.02  # Approximate cost per chart analysis
+# Cost tracking (with prompt caching, costs are much lower)
+VISION_COST_PER_IMAGE = 0.02  # Base cost without caching
+CACHE_WRITE_COST_PER_TOKEN = 0.00000375  # Cost to write to cache
+CACHE_READ_COST_PER_TOKEN = 0.0000003  # Cost to read from cache (90% savings!)
+INPUT_TOKEN_COST = 0.000003  # Regular input token cost
+OUTPUT_TOKEN_COST = 0.000015  # Output token cost
 
 # Initialize Anthropic client
 ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
@@ -176,7 +182,7 @@ def screenshot_chart(ticker, timeframe='1d', period='3mo'):
 
 def analyze_chart_with_vision(ticker, chart_path):
     """
-    Analyze a chart image using Claude's vision capabilities.
+    Analyze a chart image using Claude's vision capabilities with prompt caching.
     
     Args:
         ticker: Stock symbol
@@ -188,6 +194,7 @@ def analyze_chart_with_vision(ticker, chart_path):
             'analysis': dict with findings,
             'raw_response': str,
             'cost': float,
+            'cache_savings': float,
             'error': str or None
         }
     """
@@ -198,11 +205,12 @@ def analyze_chart_with_vision(ticker, chart_path):
             'analysis': None,
             'raw_response': None,
             'cost': 0,
+            'cache_savings': 0,
             'error': 'Anthropic client not initialized'
         }
     
     try:
-        logger.info(f"{ticker}: Analyzing chart with Claude Vision: {chart_path}")
+        logger.info(f"{ticker}: Analyzing chart with Claude Vision (with caching): {chart_path}")
         
         # Read image file
         with open(chart_path, 'rb') as f:
@@ -211,14 +219,14 @@ def analyze_chart_with_vision(ticker, chart_path):
         import base64
         image_base64 = base64.b64encode(image_data).decode('utf-8')
         
-        # Create prompt for Claude
-        prompt = f"""Analyze this stock chart for {ticker} and provide a detailed technical analysis.
+        # System prompt with cache_control - this gets cached and reused!
+        system_prompt = """You are an expert technical analyst specializing in stock chart analysis.
 
-Identify and describe:
+Your task is to analyze stock charts and provide detailed technical analysis covering:
 
-1. **Support and Resistance Levels**: Key price levels where the stock has historically bounced or faced selling pressure.
+1. **Support and Resistance Levels**: Identify key price levels where the stock has historically bounced or faced selling pressure.
 
-2. **Chart Patterns**: Any recognizable patterns such as:
+2. **Chart Patterns**: Recognize patterns such as:
    - Head and shoulders (bullish/bearish)
    - Double top/bottom
    - Triangles (ascending/descending/symmetrical)
@@ -246,31 +254,38 @@ Identify and describe:
    - Confidence level (high/medium/low)
    - Key risks or concerns
 
-Return your analysis as a JSON object with this structure:
-{{
-    "support_levels": [list of price levels],
-    "resistance_levels": [list of price levels],
+Always return your analysis as a valid JSON object with this exact structure:
+{
+    "support_levels": [list of price levels as numbers],
+    "resistance_levels": [list of price levels as numbers],
     "patterns": [
-        {{"name": "pattern name", "type": "bullish/bearish", "confidence": "high/medium/low"}}
+        {"name": "pattern name", "type": "bullish/bearish", "confidence": "high/medium/low"}
     ],
-    "trend": {{
+    "trend": {
         "direction": "uptrend/downtrend/sideways",
         "strength": "strong/moderate/weak"
-    }},
+    },
     "rsi_status": "overbought/oversold/neutral",
     "volume_trend": "increasing/decreasing/normal",
-    "entry_points": [list of recommended entry prices],
-    "stop_loss": price level,
-    "take_profit": [list of target prices],
+    "entry_points": [list of recommended entry prices as numbers],
+    "stop_loss": price level as number,
+    "take_profit": [list of target prices as numbers],
     "outlook": "bullish/bearish/neutral",
     "confidence": "high/medium/low",
     "summary": "brief summary of key findings"
-}}"""
+}"""
         
-        # Call Claude Vision API
+        # Call Claude Vision API with prompt caching
         message = anthropic_client.messages.create(
             model="claude-3-5-sonnet-20241022",
             max_tokens=2000,
+            system=[
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"}  # Cache this system prompt!
+                }
+            ],
             messages=[
                 {
                     "role": "user",
@@ -285,7 +300,7 @@ Return your analysis as a JSON object with this structure:
                         },
                         {
                             "type": "text",
-                            "text": prompt
+                            "text": f"Analyze this stock chart for {ticker} and provide your technical analysis in the JSON format specified."
                         }
                     ]
                 }
@@ -294,7 +309,43 @@ Return your analysis as a JSON object with this structure:
         
         # Extract response
         response_text = message.content[0].text
-        logger.info(f"{ticker}: Received vision analysis response")
+        
+        # Calculate costs with caching
+        usage = message.usage
+        input_tokens = getattr(usage, 'input_tokens', 0)
+        output_tokens = getattr(usage, 'output_tokens', 0)
+        cache_creation_tokens = getattr(usage, 'cache_creation_input_tokens', 0)
+        cache_read_tokens = getattr(usage, 'cache_read_input_tokens', 0)
+        
+        # Calculate actual cost
+        cache_write_cost = cache_creation_tokens * CACHE_WRITE_COST_PER_TOKEN
+        cache_read_cost = cache_read_tokens * CACHE_READ_COST_PER_TOKEN
+        regular_input_cost = (input_tokens - cache_read_tokens) * INPUT_TOKEN_COST
+        output_cost = output_tokens * OUTPUT_TOKEN_COST
+        
+        total_cost = cache_write_cost + cache_read_cost + regular_input_cost + output_cost
+        
+        # Calculate savings (what it would have cost without caching)
+        cost_without_cache = input_tokens * INPUT_TOKEN_COST + output_cost
+        cache_savings = cost_without_cache - total_cost
+        savings_pct = (cache_savings / cost_without_cache * 100) if cost_without_cache > 0 else 0
+        
+        # Log cost details
+        log_api_cost(ticker, 'vision_analysis', {
+            'input_tokens': input_tokens,
+            'output_tokens': output_tokens,
+            'cache_creation_tokens': cache_creation_tokens,
+            'cache_read_tokens': cache_read_tokens,
+            'total_cost': total_cost,
+            'cache_savings': cache_savings,
+            'savings_pct': savings_pct
+        })
+        
+        logger.info(f"{ticker}: Vision analysis complete - Cost: ${total_cost:.4f} (saved ${cache_savings:.4f}, {savings_pct:.1f}%)")
+        if cache_read_tokens > 0:
+            logger.info(f"{ticker}: ✓ Cache hit! Read {cache_read_tokens} tokens from cache")
+        elif cache_creation_tokens > 0:
+            logger.info(f"{ticker}: ⚡ Cache created with {cache_creation_tokens} tokens (future calls will be 90% cheaper!)")
         
         # Try to parse JSON from response
         try:
@@ -325,7 +376,9 @@ Return your analysis as a JSON object with this structure:
             'success': True,
             'analysis': analysis,
             'raw_response': response_text,
-            'cost': VISION_COST_PER_IMAGE,
+            'cost': total_cost,
+            'cache_savings': cache_savings,
+            'savings_pct': savings_pct,
             'error': None
         }
         
@@ -336,8 +389,35 @@ Return your analysis as a JSON object with this structure:
             'analysis': None,
             'raw_response': None,
             'cost': 0,
+            'cache_savings': 0,
+            'savings_pct': 0,
             'error': f"{type(e).__name__}: {str(e)}"
         }
+
+
+def log_api_cost(ticker, api_type, cost_data):
+    """
+    Log API costs to file for tracking.
+    
+    Args:
+        ticker: Stock symbol
+        api_type: Type of API call (e.g., 'vision_analysis')
+        cost_data: Dict with cost breakdown
+    """
+    try:
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        log_entry = {
+            'timestamp': timestamp,
+            'ticker': ticker,
+            'api_type': api_type,
+            **cost_data
+        }
+        
+        with open(COST_LOG_FILE, 'a') as f:
+            f.write(json.dumps(log_entry) + '\n')
+            
+    except Exception as e:
+        logger.error(f"Failed to log API cost: {e}")
 
 
 def multi_timeframe_analysis(ticker):
@@ -380,6 +460,7 @@ def multi_timeframe_analysis(ticker):
     
     results = {}
     total_cost = 0
+    total_savings = 0
     errors = []
     
     for name, interval, period in timeframes:
@@ -400,7 +481,8 @@ def multi_timeframe_analysis(ticker):
         if analysis['success']:
             results[name] = analysis
             total_cost += analysis['cost']
-            logger.info(f"{ticker}: {name} analysis complete (cost: ${analysis['cost']:.3f})")
+            total_savings += analysis.get('cache_savings', 0)
+            logger.info(f"{ticker}: {name} analysis complete (cost: ${analysis['cost']:.4f}, saved: ${analysis.get('cache_savings', 0):.4f})")
         else:
             logger.error(f"{ticker}: {name} analysis failed: {analysis['error']}")
             errors.append(f"{name}: {analysis['error']}")
@@ -409,11 +491,17 @@ def multi_timeframe_analysis(ticker):
     # Analyze alignment across timeframes
     alignment = analyze_timeframe_alignment(results)
     
+    total_savings_pct = (total_savings / (total_cost + total_savings) * 100) if (total_cost + total_savings) > 0 else 0
+    
+    logger.info(f"{ticker}: Multi-timeframe analysis complete - Total cost: ${total_cost:.4f}, Total savings: ${total_savings:.4f} ({total_savings_pct:.1f}%)")
+    
     return {
         'success': len(errors) == 0,
         'timeframes': results,
         'alignment': alignment,
         'total_cost': total_cost,
+        'total_savings': total_savings,
+        'savings_pct': total_savings_pct,
         'errors': errors if errors else None
     }
 
@@ -565,5 +653,7 @@ def quick_vision_check(ticker, confidence):
         'adjusted_confidence': adjusted_confidence,
         'analysis': analysis,
         'cost': result['cost'],
+        'cache_savings': result.get('cache_savings', 0),
+        'savings_pct': result.get('savings_pct', 0),
         'reason': reason
     }
