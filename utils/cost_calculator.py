@@ -216,6 +216,7 @@ def get_monthly_projection():
             'monthly_projection': 0.0,
             'api_projection': 0.0,
             'oci_projection': 0.0,
+            'days_sampled': 0,
         }
     
     # Calculate average

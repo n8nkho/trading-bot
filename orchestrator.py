@@ -1217,51 +1217,63 @@ if __name__ == "__main__":
         
         # MONTHLY PROJECTION
         print(f"{BOLD}{BLUE}📊 MONTHLY PROJECTION:{RESET}")
-        print(f"  Daily Average: {YELLOW}${monthly['daily_average']:.4f}{RESET}")
-        print(f"  API (projected): {YELLOW}${monthly['api_projection']:.2f}/month{RESET}")
+        print(f"  Daily Average: {YELLOW}${monthly.get('daily_average', 0):.4f}{RESET}")
+        print(f"  API (projected): {YELLOW}${monthly.get('api_projection', 0):.2f}/month{RESET}")
         print(f"  OCI: {GREEN}$0.00/month (FREE){RESET}")
         
-        monthly_color = GREEN if monthly['monthly_projection'] < 10 else YELLOW if monthly['monthly_projection'] < 50 else RED
-        print(f"  {BOLD}TOTAL: {monthly_color}${monthly['monthly_projection']:.2f}/month{RESET}")
-        print(f"  {CYAN}(based on {monthly['days_sampled']} day average){RESET}\n")
+        monthly_projection = monthly.get('monthly_projection', 0)
+        monthly_color = GREEN if monthly_projection < 10 else YELLOW if monthly_projection < 50 else RED
+        print(f"  {BOLD}TOTAL: {monthly_color}${monthly_projection:.2f}/month{RESET}")
+        
+        days_sampled = monthly.get('days_sampled', 1)
+        if days_sampled > 0:
+            print(f"  {CYAN}(based on {days_sampled} day average){RESET}\n")
+        else:
+            print(f"  {CYAN}(no data available yet){RESET}\n")
         
         # LIFETIME STATS
         print(f"{BOLD}{BLUE}📈 LIFETIME STATISTICS:{RESET}")
-        print(f"  Total Spent: {YELLOW}${lifetime['total_spent']:.2f}{RESET}")
-        print(f"  Total Saved: {CYAN}${lifetime['total_saved']:.2f}{RESET} (via caching)")
+        print(f"  Total Spent: {YELLOW}${lifetime.get('total_spent', 0):.2f}{RESET}")
+        print(f"  Total Saved: {CYAN}${lifetime.get('total_saved', 0):.2f}{RESET} (via caching)")
         
-        if lifetime['total_saved'] > 0:
-            roi_color = GREEN if lifetime['roi_percent'] > 50 else YELLOW if lifetime['roi_percent'] > 20 else RED
-            print(f"  {BOLD}ROI from Caching: {roi_color}{lifetime['roi_percent']:.1f}%{RESET}")
+        total_saved = lifetime.get('total_saved', 0)
+        if total_saved > 0:
+            roi_percent = lifetime.get('roi_percent', 0)
+            roi_color = GREEN if roi_percent > 50 else YELLOW if roi_percent > 20 else RED
+            print(f"  {BOLD}ROI from Caching: {roi_color}{roi_percent:.1f}%{RESET}")
         
         if cost_per_trade > 0:
             cpt_color = GREEN if cost_per_trade < 0.10 else YELLOW if cost_per_trade < 0.50 else RED
             print(f"  Cost per Trade: {cpt_color}${cost_per_trade:.4f}{RESET}")
         
-        print(f"  Total API Calls: {YELLOW}{lifetime['total_calls']:,}{RESET}")
-        print(f"  Days Active: {CYAN}{lifetime['days_active']}{RESET}")
+        print(f"  Total API Calls: {YELLOW}{lifetime.get('total_calls', 0):,}{RESET}")
+        print(f"  Days Active: {CYAN}{lifetime.get('days_active', 0)}{RESET}")
         
-        if lifetime['first_call']:
-            first_date = datetime.fromisoformat(lifetime['first_call']).strftime('%Y-%m-%d')
-            last_date = datetime.fromisoformat(lifetime['last_call']).strftime('%Y-%m-%d')
+        first_call = lifetime.get('first_call')
+        last_call = lifetime.get('last_call')
+        if first_call and last_call:
+            first_date = datetime.fromisoformat(first_call).strftime('%Y-%m-%d')
+            last_date = datetime.fromisoformat(last_call).strftime('%Y-%m-%d')
             print(f"  Period: {CYAN}{first_date} → {last_date}{RESET}\n")
         
         # COST EFFICIENCY INSIGHTS
         print(f"{BOLD}{BLUE}💡 INSIGHTS:{RESET}")
         
-        if lifetime['roi_percent'] > 50:
+        roi_percent = lifetime.get('roi_percent', 0)
+        if roi_percent > 50:
             print(f"  {GREEN}✓ Excellent caching efficiency!{RESET}")
-        elif lifetime['roi_percent'] > 20:
+        elif roi_percent > 20:
             print(f"  {YELLOW}• Good caching performance{RESET}")
         else:
             print(f"  {RED}⚠ Consider optimizing cache usage{RESET}")
         
-        if monthly['monthly_projection'] < 10:
+        monthly_projection = monthly.get('monthly_projection', 0)
+        if monthly_projection < 10:
             print(f"  {GREEN}✓ Very low monthly costs (<$10){RESET}")
-        elif monthly['monthly_projection'] < 50:
+        elif monthly_projection < 50:
             print(f"  {YELLOW}• Moderate monthly costs ($10-$50){RESET}")
         else:
-            print(f"  {RED}⚠ High monthly costs (>${monthly['monthly_projection']:.0f}){RESET}")
+            print(f"  {RED}⚠ High monthly costs (>${monthly_projection:.0f}){RESET}")
         
         if cost_per_trade > 0 and cost_per_trade < 0.10:
             print(f"  {GREEN}✓ Excellent cost per trade (<$0.10){RESET}")
