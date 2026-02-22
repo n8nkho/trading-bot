@@ -347,8 +347,8 @@ def analyze_chart_patterns(ticker, price_data=None, period='3mo', interval='1d')
             'trend': trend,
             'rsi_divergence': divergence,
             'volume_spike': volume_spike,
-            'current_price': current_price,
-            'current_rsi': current_rsi,
+            'current_price': float(current_price),
+            'current_rsi': float(current_rsi),
             'price_change_pct': ((prices[-1] - prices[0]) / prices[0] * 100) if len(prices) > 0 else 0
         }
         
@@ -392,22 +392,36 @@ def pattern_to_signal(patterns):
             'stop_loss': float or None
         }
     """
-    if not patterns:
-        return {
-            'signal': 'HOLD',
-            'confidence': 0.0,
-            'reasoning': ['No pattern data available'],
-            'entry_price': None,
-            'stop_loss': None
-        }
+    # Default return value for error cases
+    default_signal = {
+        'signal': 'HOLD',
+        'confidence': 0.0,
+        'reasoning': ['No pattern data available'],
+        'entry_price': None,
+        'stop_loss': None
+    }
     
-    current_price = patterns['current_price']
-    current_rsi = patterns['current_rsi']
-    support_levels = patterns['support_levels']
-    resistance_levels = patterns['resistance_levels']
-    trend = patterns['trend']
-    divergence = patterns['rsi_divergence']
-    volume_spike = patterns['volume_spike']
+    if not patterns:
+        return default_signal
+    
+    try:
+        # Safely extract values with defaults
+        current_price = patterns.get('current_price', 0)
+        current_rsi = patterns.get('current_rsi', 50)
+        support_levels = patterns.get('support_levels', [])
+        resistance_levels = patterns.get('resistance_levels', [])
+        trend = patterns.get('trend', {})
+        divergence = patterns.get('rsi_divergence', {})
+        volume_spike = patterns.get('volume_spike', {})
+        
+        # Validate we have minimum required data
+        if current_price == 0:
+            logger.warning("Missing current_price in patterns, returning default signal")
+            return default_signal
+            
+    except Exception as e:
+        logger.error(f"Error extracting pattern data: {type(e).__name__}: {str(e)}")
+        return default_signal
     
     signal = 'HOLD'
     confidence = 0.5
@@ -415,105 +429,118 @@ def pattern_to_signal(patterns):
     entry_price = None
     stop_loss = None
     
-    # Check if price is near support (within 3%)
-    near_support = False
-    closest_support = None
-    if support_levels:
-        closest_support = min(support_levels, key=lambda x: abs(x - current_price))
-        if abs(current_price - closest_support) / current_price < 0.03:
-            near_support = True
+    try:
+        # Check if price is near support (within 3%)
+        near_support = False
+        closest_support = None
+        if support_levels:
+            closest_support = min(support_levels, key=lambda x: abs(x - current_price))
+            if abs(current_price - closest_support) / current_price < 0.03:
+                near_support = True
+        
+        # Check if price is near resistance (within 3%)
+        near_resistance = False
+        closest_resistance = None
+        if resistance_levels:
+            closest_resistance = min(resistance_levels, key=lambda x: abs(x - current_price))
+            if abs(current_price - closest_resistance) / current_price < 0.03:
+                near_resistance = True
+    except Exception as e:
+        logger.error(f"Error calculating support/resistance proximity: {type(e).__name__}: {str(e)}")
+        return default_signal
     
-    # Check if price is near resistance (within 3%)
-    near_resistance = False
-    closest_resistance = None
-    if resistance_levels:
-        closest_resistance = min(resistance_levels, key=lambda x: abs(x - current_price))
-        if abs(current_price - closest_resistance) / current_price < 0.03:
-            near_resistance = True
+    try:
+        # AVOID signals (bearish)
+        if near_resistance and current_rsi > 70:
+            signal = 'AVOID'
+            confidence = 0.8
+            reasoning.append(f"Price near resistance (${closest_resistance:.2f}) + RSI overbought ({current_rsi:.1f})")
+            return {
+                'signal': signal,
+                'confidence': confidence,
+                'reasoning': reasoning,
+                'entry_price': None,
+                'stop_loss': None
+            }
+        
+        if divergence.get('bearish_divergence', False):
+            signal = 'AVOID'
+            confidence = 0.7 if divergence.get('strength') == 'strong' else 0.6
+            reasoning.append(f"Bearish RSI divergence detected ({divergence.get('strength', 'unknown')})")
+            return {
+                'signal': signal,
+                'confidence': confidence,
+                'reasoning': reasoning,
+                'entry_price': None,
+                'stop_loss': None
+            }
+    except Exception as e:
+        logger.error(f"Error evaluating AVOID signals: {type(e).__name__}: {str(e)}")
+        # Continue to other signals
     
-    # AVOID signals (bearish)
-    if near_resistance and current_rsi > 70:
-        signal = 'AVOID'
-        confidence = 0.8
-        reasoning.append(f"Price near resistance (${closest_resistance:.2f}) + RSI overbought ({current_rsi:.1f})")
+    try:
+        # STRONG_BUY signals (very bullish)
+        if near_support and current_rsi < 30:
+            signal = 'STRONG_BUY'
+            confidence = 0.85
+            reasoning.append(f"Price near support (${closest_support:.2f}) + RSI oversold ({current_rsi:.1f})")
+            entry_price = current_price
+            stop_loss = closest_support * 0.97  # 3% below support
+        
+        elif divergence.get('bullish_divergence', False) and divergence.get('strength') == 'strong' and current_rsi < 40:
+            signal = 'STRONG_BUY'
+            confidence = 0.8
+            reasoning.append(f"Strong bullish RSI divergence + RSI < 40 ({current_rsi:.1f})")
+            entry_price = current_price
+            stop_loss = current_price * 0.95  # 5% stop loss
+        
+        # BUY signals (bullish)
+        elif near_support and current_rsi < 40:
+            signal = 'BUY'
+            confidence = 0.75
+            reasoning.append(f"Price near support (${closest_support:.2f}) + RSI low ({current_rsi:.1f})")
+            entry_price = current_price
+            stop_loss = closest_support * 0.97
+        
+        elif divergence.get('bullish_divergence', False):
+            signal = 'BUY'
+            confidence = 0.7 if divergence.get('strength') in ['strong', 'moderate'] else 0.6
+            reasoning.append(f"Bullish RSI divergence detected ({divergence.get('strength', 'unknown')})")
+            entry_price = current_price
+            stop_loss = current_price * 0.95
+        
+        elif trend.get('direction') == 'uptrend' and trend.get('strength') in ['strong', 'moderate'] and volume_spike.get('recent_spike', False):
+            signal = 'BUY'
+            confidence = 0.7
+            reasoning.append(f"{trend.get('strength')} uptrend + volume spike ({volume_spike.get('spike_ratio', 0):.1f}x avg)")
+            entry_price = current_price
+            stop_loss = current_price * 0.93  # 7% stop loss for momentum plays
+        
+        elif current_rsi < 30 and trend.get('direction') != 'downtrend':
+            signal = 'BUY'
+            confidence = 0.65
+            reasoning.append(f"RSI oversold ({current_rsi:.1f}) + not in downtrend")
+            entry_price = current_price
+            stop_loss = current_price * 0.95
+        
+        # Add additional context
+        if trend.get('direction') != 'sideways':
+            reasoning.append(f"Trend: {trend.get('strength', 'unknown')} {trend.get('direction', 'unknown')} (slope: {trend.get('slope_pct', 0):.1f}%)")
+        
+        if volume_spike.get('has_spike', False):
+            reasoning.append(f"Current volume spike: {volume_spike.get('spike_ratio', 0):.1f}x average")
+        
         return {
             'signal': signal,
             'confidence': confidence,
             'reasoning': reasoning,
-            'entry_price': None,
-            'stop_loss': None
+            'entry_price': entry_price,
+            'stop_loss': stop_loss
         }
-    
-    if divergence['bearish_divergence']:
-        signal = 'AVOID'
-        confidence = 0.7 if divergence['strength'] == 'strong' else 0.6
-        reasoning.append(f"Bearish RSI divergence detected ({divergence['strength']})")
-        return {
-            'signal': signal,
-            'confidence': confidence,
-            'reasoning': reasoning,
-            'entry_price': None,
-            'stop_loss': None
-        }
-    
-    # STRONG_BUY signals (very bullish)
-    if near_support and current_rsi < 30:
-        signal = 'STRONG_BUY'
-        confidence = 0.85
-        reasoning.append(f"Price near support (${closest_support:.2f}) + RSI oversold ({current_rsi:.1f})")
-        entry_price = current_price
-        stop_loss = closest_support * 0.97  # 3% below support
-    
-    elif divergence['bullish_divergence'] and divergence['strength'] == 'strong' and current_rsi < 40:
-        signal = 'STRONG_BUY'
-        confidence = 0.8
-        reasoning.append(f"Strong bullish RSI divergence + RSI < 40 ({current_rsi:.1f})")
-        entry_price = current_price
-        stop_loss = current_price * 0.95  # 5% stop loss
-    
-    # BUY signals (bullish)
-    elif near_support and current_rsi < 40:
-        signal = 'BUY'
-        confidence = 0.75
-        reasoning.append(f"Price near support (${closest_support:.2f}) + RSI low ({current_rsi:.1f})")
-        entry_price = current_price
-        stop_loss = closest_support * 0.97
-    
-    elif divergence['bullish_divergence']:
-        signal = 'BUY'
-        confidence = 0.7 if divergence['strength'] in ['strong', 'moderate'] else 0.6
-        reasoning.append(f"Bullish RSI divergence detected ({divergence['strength']})")
-        entry_price = current_price
-        stop_loss = current_price * 0.95
-    
-    elif trend['direction'] == 'uptrend' and trend['strength'] in ['strong', 'moderate'] and volume_spike['recent_spike']:
-        signal = 'BUY'
-        confidence = 0.7
-        reasoning.append(f"{trend['strength']} uptrend + volume spike ({volume_spike['spike_ratio']:.1f}x avg)")
-        entry_price = current_price
-        stop_loss = current_price * 0.93  # 7% stop loss for momentum plays
-    
-    elif current_rsi < 30 and trend['direction'] != 'downtrend':
-        signal = 'BUY'
-        confidence = 0.65
-        reasoning.append(f"RSI oversold ({current_rsi:.1f}) + not in downtrend")
-        entry_price = current_price
-        stop_loss = current_price * 0.95
-    
-    # Add additional context
-    if trend['direction'] != 'sideways':
-        reasoning.append(f"Trend: {trend['strength']} {trend['direction']} (slope: {trend['slope_pct']:.1f}%)")
-    
-    if volume_spike['has_spike']:
-        reasoning.append(f"Current volume spike: {volume_spike['spike_ratio']:.1f}x average")
-    
-    return {
-        'signal': signal,
-        'confidence': confidence,
-        'reasoning': reasoning,
-        'entry_price': entry_price,
-        'stop_loss': stop_loss
-    }
+        
+    except Exception as e:
+        logger.error(f"Error generating trading signal: {type(e).__name__}: {str(e)}")
+        return default_signal
 
 
 
