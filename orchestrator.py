@@ -24,7 +24,6 @@ from agents.exit_monitor import monitor_positions as monitor_exit_conditions
 from agents.risk_guardian import check_risk_limits, get_risk_status
 from agents.performance_analyzer import track_decision, load_current_params
 from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mode
-from agents.vision_analyst import quick_vision_check, multi_timeframe_analysis
 from agents.document_analyst import quick_fundamental_check
 from utils.grok_sentiment import check_twitter_sentiment
 
@@ -357,14 +356,6 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
                 tasks.append(asyncio.sleep(0, result=None))  # Dummy task
                 task_names.append('grok')
             
-            # Vision analysis (if confidence >= threshold)
-            if confidence >= VISION_CONFIDENCE_THRESHOLD:
-                tasks.append(asyncio.to_thread(quick_vision_check, ticker, confidence))
-                task_names.append('vision')
-            else:
-                tasks.append(asyncio.sleep(0, result=None))  # Dummy task
-                task_names.append('vision')
-            
             # Fundamental analysis (if confidence >= threshold)
             if confidence >= FUNDAMENTAL_CONFIDENCE_THRESHOLD:
                 tasks.append(asyncio.to_thread(quick_fundamental_check, ticker, confidence))
@@ -379,8 +370,7 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
             
             # Process results
             grok_result = results[0] if not isinstance(results[0], Exception) else None
-            vision_result = results[1] if not isinstance(results[1], Exception) else None
-            fundamental_result = results[2] if not isinstance(results[2], Exception) else None
+            fundamental_result = results[1] if not isinstance(results[1], Exception) else None
             
             # Handle Grok sentiment
             if confidence >= GROK_CONFIDENCE_THRESHOLD:
@@ -404,27 +394,9 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
             else:
                 candidate['grok_sentiment'] = None
             
-            # Handle Vision analysis
-            if confidence >= VISION_CONFIDENCE_THRESHOLD:
-                if isinstance(results[1], Exception):
-                    logger.error(f"{ticker}: Vision analysis failed: {results[1]}")
-                    candidate['vision_analysis'] = None
-                else:
-                    candidate['vision_analysis'] = vision_result
-                    
-                    # Update confidence based on vision analysis
-                    if vision_result['vision_approved']:
-                        original_confidence = candidate['analysis']['confidence']
-                        candidate['analysis']['confidence'] = vision_result['adjusted_confidence']
-                        logger.info(f"{ticker}: Vision APPROVED - Confidence: {original_confidence:.2f} → {vision_result['adjusted_confidence']:.2f}")
-                        logger.info(f"{ticker}: {vision_result['reason']}")
-                    else:
-                        original_confidence = candidate['analysis']['confidence']
-                        candidate['analysis']['confidence'] = vision_result['adjusted_confidence']
-                        logger.warning(f"{ticker}: Vision NOT approved - Confidence: {original_confidence:.2f} → {vision_result['adjusted_confidence']:.2f}")
-                        logger.warning(f"{ticker}: {vision_result['reason']}")
-            else:
-                candidate['vision_analysis'] = None
+            # Vision analysis is now handled in screener_agent.py
+            # The vision_signal is already in the candidate dict
+            candidate['vision_analysis'] = candidate.get('vision_signal')
             
             # Handle Fundamental analysis
             if confidence >= FUNDAMENTAL_CONFIDENCE_THRESHOLD:
@@ -462,19 +434,12 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         analyzed_candidates = await asyncio.gather(*[analyze_candidate(c) for c in candidates])
         
         # Calculate total costs
-        vision_total_cost = sum(
-            c.get('vision_analysis', {}).get('cost', 0) 
-            for c in analyzed_candidates 
-            if c.get('vision_analysis')
-        )
         fundamental_total_cost = sum(
             c.get('fundamental_analysis', {}).get('cost', 0) 
             for c in analyzed_candidates 
             if c.get('fundamental_analysis')
         )
         
-        if vision_total_cost > 0:
-            logger.info(f"Total vision analysis cost: ${vision_total_cost:.3f}")
         if fundamental_total_cost > 0:
             logger.info(f"Total fundamental analysis cost: ${fundamental_total_cost:.3f}")
         
@@ -687,7 +652,6 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
             'risk_status': get_risk_status(),
             'portfolio_value': portfolio_value,
             'account_info': account_info,
-            'vision_cost': vision_total_cost,
             'fundamental_cost': fundamental_total_cost
         }
         
@@ -1104,7 +1068,6 @@ if __name__ == "__main__":
         print("  python orchestrator.py tune                       - Auto-tune parameters")
         print("  python orchestrator.py review                     - Weekly performance review")
         print("  python orchestrator.py architect                  - Run meta-architect improvement cycle")
-        print("  python orchestrator.py vision <ticker>            - Run multi-timeframe vision analysis")
         sys.exit(1)
     
     command = sys.argv[1].lower()
@@ -1301,37 +1264,6 @@ if __name__ == "__main__":
                 print(f"\n✗ Failed Agents: {len(result['agents_failed'])}")
                 for agent in result['agents_failed']:
                     print(f"  - {agent['agent_name']}: {agent.get('reason', agent.get('error', 'Unknown'))}")
-    
-    elif command == "vision":
-        if len(sys.argv) < 3:
-            print("Usage: python orchestrator.py vision <ticker>")
-            sys.exit(1)
-        
-        ticker = sys.argv[2].upper()
-        print(f"\nRunning multi-timeframe vision analysis for {ticker}...")
-        result = multi_timeframe_analysis(ticker)
-        
-        print("\n" + "=" * 80)
-        print(f"VISION ANALYSIS: {ticker}")
-        print("=" * 80)
-        print(f"Success: {result['success']}")
-        print(f"Total Cost: ${result['total_cost']:.3f}")
-        
-        if result.get('errors'):
-            print(f"\nErrors: {result['errors']}")
-        
-        print(f"\n{result['alignment']['summary']}")
-        
-        for timeframe, analysis in result['timeframes'].items():
-            if analysis and analysis['success']:
-                data = analysis['analysis']
-                print(f"\n{timeframe.upper()} Timeframe:")
-                print(f"  Outlook: {data.get('outlook', 'N/A')}")
-                print(f"  Confidence: {data.get('confidence', 'N/A')}")
-                print(f"  Trend: {data.get('trend', {}).get('direction', 'N/A')} ({data.get('trend', {}).get('strength', 'N/A')})")
-                print(f"  RSI: {data.get('rsi_status', 'N/A')}")
-                if data.get('summary'):
-                    print(f"  Summary: {data['summary']}")
     
     else:
         print(f"Unknown command: {command}")
