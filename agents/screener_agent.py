@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 import yfinance as yf
 from utils.local_llm import analyze_stock_drop
+from agents.vision_analyst import analyze_chart_patterns, pattern_to_signal
 
 # Load current parameters
 DATA_DIR = Path("data")
@@ -123,6 +124,31 @@ def run_screener():
             analysis = analyze_stock_drop(ticker, news_headlines, {'drop_pct': drop_pct, 'rsi': rsi})
             logging.info(f"{ticker}: Analysis complete")
 
+            # Run FREE local pattern detection for technical confirmation
+            logging.info(f"{ticker}: Running FREE pattern detection...")
+            pattern_result = analyze_chart_patterns(ticker, price_data=stock_data, period='3mo', interval='1d')
+            
+            vision_signal = None
+            if pattern_result['success']:
+                vision_signal = pattern_to_signal(pattern_result['patterns'])
+                signal_type = vision_signal['signal']
+                signal_conf = vision_signal['confidence']
+                signal_reasons = ', '.join(vision_signal['reasoning'][:2])  # First 2 reasons
+                
+                logging.info(f"{ticker}: Vision says {signal_type} ({signal_conf:.0%} confidence) - {signal_reasons}")
+                
+                # Bonus points if vision agrees (BUY or STRONG_BUY)
+                if signal_type in ['BUY', 'STRONG_BUY']:
+                    original_confidence = analysis['confidence']
+                    analysis['confidence'] = min(analysis['confidence'] + 0.10, 1.0)
+                    logging.info(f"{ticker}: Vision agrees! Confidence boost: {original_confidence:.2f} → {analysis['confidence']:.2f}")
+                elif signal_type == 'AVOID':
+                    original_confidence = analysis['confidence']
+                    analysis['confidence'] = max(analysis['confidence'] - 0.15, 0.0)
+                    logging.info(f"{ticker}: Vision says AVOID! Confidence reduced: {original_confidence:.2f} → {analysis['confidence']:.2f}")
+            else:
+                logging.warning(f"{ticker}: Pattern detection failed: {pattern_result.get('error', 'Unknown error')}")
+
             logging.info(f"{ticker}: CANDIDATE FOUND!")
             candidates.append({
                 'ticker': ticker,
@@ -130,7 +156,8 @@ def run_screener():
                 'rsi': rsi,
                 'volume_ratio': volume_ratio,
                 'news': news_headlines,
-                'analysis': analysis
+                'analysis': analysis,
+                'vision_signal': vision_signal
             })
 
         except Exception as e:
