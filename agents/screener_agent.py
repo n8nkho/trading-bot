@@ -78,15 +78,13 @@ def run_screener():
                 continue
                 
             drop_pct = (latest_open - latest_close) / latest_open * 100
-            logging.info(f"  Drop: {drop_pct:.2f}%, RSI: {rsi:.2f}, Volume: {volume_ratio:.2f}x")
-            
+
             # Calculate RSI with validation
             if len(stock_data) < 15:
                 logging.warning(f"Skipping {ticker} - insufficient data for RSI calculation (need 15+ days, have {len(stock_data)})")
                 continue
                 
             rsi = calculate_rsi(stock_data['Close'], 14)
-            logging.info(f"{ticker}: RSI: {rsi:.2f}")
             
             # Calculate volume ratio
             mean_volume = stock_data['Volume'].mean()
@@ -95,7 +93,8 @@ def run_screener():
                 continue
                 
             volume_ratio = stock_data['Volume'].iloc[-1] / mean_volume
-            logging.info(f"{ticker}: Volume ratio: {volume_ratio:.2f}")
+
+            logging.info(f"  Drop: {drop_pct:.2f}%, RSI: {rsi:.2f}, Volume: {volume_ratio:.2f}x")
 
             # Check if stock meets ALL criteria before calling LLM (using current parameters)
             meets_drop_criteria = params['drop_min'] <= drop_pct <= params['drop_max']
