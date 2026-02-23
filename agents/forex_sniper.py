@@ -3,6 +3,7 @@ import logging
 from oandapyV20 import API
 from oandapyV20.endpoints import instruments, orders, accounts
 from oandapyV20.contrib.requests import MarketOrderRequest
+from utils.economic_calendar import is_safe_to_trade
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -27,7 +28,8 @@ stop_trading_for_today = False
 
 def find_sniper_setup():
     """Identify potential trade setups based on specified criteria."""
-    if stop_trading_for_today:
+    if stop_trading_for_today or not is_safe_to_trade():
+        logging.info("News in 2 hours, skipping trade.")
         logging.info("Trading stopped for today due to consecutive losses.")
         return None
 
