@@ -28,6 +28,7 @@ TIER_2_SELL_PCT = 0.30  # Sell 30% at tier 2
 TIER_3_SELL_PCT = 0.20  # Sell remaining 20% at tier 3
 
 def check_option_exit(position):
+    pass
 def monitor_positions(positions):
     """
     Monitor open positions and generate exit decisions.
