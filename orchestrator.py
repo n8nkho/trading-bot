@@ -752,6 +752,35 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
     return asyncio.run(run_daily_screening_async(portfolio_value))
 
 
+def run_fortress():
+    """Run complete fortress hedging system."""
+    logger.info("=" * 80)
+    logger.info("FORTRESS HEDGING SYSTEM")
+    logger.info("=" * 80)
+    
+    try:
+        # Run daily check
+        result = fortress_daily_check()
+        
+        if result:
+            logger.info("Fortress check complete")
+            logger.info(f"Market regime: {result.get('market_conditions', {}).get('regime', 'N/A')}")
+            logger.info(f"Strategies evaluated: {len(result.get('recommendations', {}))}")
+            
+            # Show recommendations
+            recs = result.get('recommendations', {})
+            for strategy, data in recs.items():
+                if data:
+                    logger.info(f"{strategy}: {data}")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Fortress error: {e}")
+        import traceback
+        traceback.print_exc()
+        run_fortress()
+
 async def monitor_positions_async():
     """
     Monitor open positions and generate exit signals (async version).
@@ -1456,34 +1485,6 @@ if __name__ == "__main__":
     
 
     elif command == "fortress":
-def run_fortress():
-    """Run complete fortress hedging system."""
-    logger.info("=" * 80)
-    logger.info("FORTRESS HEDGING SYSTEM")
-    logger.info("=" * 80)
-    
-    try:
-        # Run daily check
-        result = fortress_daily_check()
-        
-        if result:
-            logger.info("Fortress check complete")
-            logger.info(f"Market regime: {result.get('market_conditions', {}).get('regime', 'N/A')}")
-            logger.info(f"Strategies evaluated: {len(result.get('recommendations', {}))}")
-            
-            # Show recommendations
-            recs = result.get('recommendations', {})
-            for strategy, data in recs.items():
-                if data:
-                    logger.info(f"{strategy}: {data}")
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Fortress error: {e}")
-        import traceback
-        traceback.print_exc()
-        run_fortress()
     elif command == "snipe":
         portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else 10000
         logger.info(f"Running intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
