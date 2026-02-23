@@ -19,7 +19,7 @@ STABILIZATION_FACTOR = 1.02  # Price must be 2% above low
 ENTRY_WINDOW_START = (14, 30)  # 2:30 PM ET
 ENTRY_WINDOW_END = (15, 45)  # 3:45 PM ET
 
-def evaluate_options_entry(ticker, current_price, metrics):
+def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
     """
     Evaluate options entry for a given ticker.
     
