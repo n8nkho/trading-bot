@@ -1485,6 +1485,20 @@ if __name__ == "__main__":
     
 
     elif command == "fortress":
+        print("\nRunning complete fortress hedging system...")
+        result = run_fortress()
+        
+        print("\n" + "=" * 80)
+        print("FORTRESS HEDGING SYSTEM RESULTS")
+        print("=" * 80)
+        if result:
+            print(f"Market regime: {result.get('market_conditions', {}).get('regime', 'N/A')}")
+            print(f"Strategies evaluated: {len(result.get('recommendations', {}))}")
+            for strategy, data in result.get('recommendations', {}).items():
+                if data:
+                    print(f"{strategy}: {data}")
+        else:
+            print("No results returned from fortress hedging system.")
     elif command == "snipe":
         portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else 10000
         logger.info(f"Running intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
