@@ -94,6 +94,8 @@ def evaluate_option_trade(ticker, current_price, stock_confidence):
     option = find_atm_option(ticker, current_price)
     if option is None:
         return None
+    if option is None:
+        return None
     
     premium = option['premium']
     bid = option['bid']
