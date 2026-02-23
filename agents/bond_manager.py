@@ -1,5 +1,9 @@
 import yfinance as yf
-from alpaca_trade_api import REST
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
+from alpaca.trading.enums import OrderSide, TimeInForce
+import os
+from dotenv import load_dotenv
 import logging
 
 # Constants
@@ -7,8 +11,13 @@ RISK_ON_BOND_PCT = 0.15
 RISK_OFF_BOND_PCT = 0.40
 BONDS_TICKER = "TLT"
 
-# Initialize Alpaca API
-alpaca = REST()
+# Load environment variables
+load_dotenv()
+api_key = os.getenv("APCA_API_KEY_ID")
+secret_key = os.getenv("APCA_API_SECRET_KEY")
+
+# Initialize Alpaca Trading Client
+client = TradingClient(api_key, secret_key, paper=True)
 
 def get_market_regime():
     vix_data = yf.Ticker("^VIX").history(period="1d")
@@ -36,7 +45,7 @@ def calculate_bond_target(portfolio_value, market_regime):
 
 def get_current_bond_position():
     try:
-        position = alpaca.get_position(BONDS_TICKER)
+        position = client.get_open_position(BONDS_TICKER)
         return position.qty, position.market_value
     except Exception:
         return 0, 0

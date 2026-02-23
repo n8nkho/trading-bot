@@ -1,5 +1,9 @@
 import yfinance as yf
-from alpaca_trade_api import REST
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
+from alpaca.trading.enums import OrderSide, TimeInForce
+import os
+from dotenv import load_dotenv
 import logging
 from datetime import datetime, timedelta
 
@@ -9,8 +13,13 @@ VIX_HIGH_THRESHOLD = 25
 INSURANCE_ALLOCATION_PCT = 0.01
 EXPIRATION_DAYS = 30
 
-# Initialize Alpaca API
-alpaca = REST()
+# Load environment variables
+load_dotenv()
+api_key = os.getenv("APCA_API_KEY_ID")
+secret_key = os.getenv("APCA_API_SECRET_KEY")
+
+# Initialize Alpaca Trading Client
+client = TradingClient(api_key, secret_key, paper=True)
 
 def get_current_vix():
     try:
@@ -24,7 +33,7 @@ def get_current_vix():
 def should_buy_insurance(portfolio_value, current_vix):
     if current_vix < VIX_LOW_THRESHOLD:
         # Check for existing VIX position
-        positions = alpaca.list_positions()
+        positions = client.get_open_positions()
         has_vix_position = any(pos.symbol == "SPY" for pos in positions)
         insurance_cost = portfolio_value * INSURANCE_ALLOCATION_PCT
         if not has_vix_position:
@@ -62,7 +71,7 @@ def manage_insurance():
         logging.error("Failed to fetch current VIX.")
         return
 
-    portfolio_value = alpaca.get_account().portfolio_value
+    portfolio_value = client.get_account().portfolio_value
     buy_insurance, reason = should_buy_insurance(portfolio_value, current_vix)
     if buy_insurance:
         insurance_position = calculate_insurance_position(portfolio_value)
