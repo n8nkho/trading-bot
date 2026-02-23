@@ -1,81 +1,10 @@
 {% extends "base.html" %}
-
 {% block content %}
-<div class="container-fluid">
-    <div class="row mb-4">
-        <div class="col-12">
-            <h1 class="display-4 mb-4">
-                <i class="bi bi-briefcase"></i> Current Positions
-            </h1>
-        </div>
-    </div>
-
-    <div class="row">
-        <div class="col-12">
-            <div class="card bg-dark border-secondary">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">Open Positions</h5>
-                    <span class="badge bg-primary">{{ positions|length }} positions</span>
-                </div>
-                <div class="card-body">
-                    {% if positions %}
-                    <div class="table-responsive">
-                        <table class="table table-dark table-striped table-hover">
-                            <thead>
-                                <tr>
-                                    <th><i class="bi bi-tag"></i> Ticker</th>
-                                    <th><i class="bi bi-box-arrow-in-down"></i> Entry Price</th>
-                                    <th><i class="bi bi-currency-dollar"></i> Current Price</th>
-                                    <th><i class="bi bi-cash"></i> P&L $</th>
-                                    <th><i class="bi bi-percent"></i> P&L %</th>
-                                    <th><i class="bi bi-123"></i> Quantity</th>
-                                    <th><i class="bi bi-clock"></i> Entry Time</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for pos in positions %}
-                                <tr class="{% if pos.pnl|default(0) >= 0 %}table-success{% else %}table-danger{% endif %}">
-                                    <td><strong>{{ pos.ticker }}</strong></td>
-                                    <td>${{ "{:.2f}".format(pos.entry_price|default(0)) }}</td>
-                                    <td>${{ "{:.2f}".format(pos.current_price|default(0)) }}</td>
-                                    <td>
-                                        {% if pos.pnl|default(0) >= 0 %}
-                                            <span class="text-success">+${{ "{:.2f}".format(pos.pnl|default(0)) }}</span>
-                                        {% else %}
-                                            <span class="text-danger">-${{ "{:.2f}".format((pos.pnl|default(0))|abs) }}</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if pos.pnl_pct|default(0) >= 0 %}
-                                            <span class="text-success">+{{ "{:.2f}".format(pos.pnl_pct|default(0)) }}%</span>
-                                        {% else %}
-                                            <span class="text-danger">{{ "{:.2f}".format(pos.pnl_pct|default(0)) }}%</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>{{ pos.qty }}</td>
-                                    <td>
-                                        <small class="text-muted">{{ pos.entry_time }}</small>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                    {% else %}
-                    <div class="text-center py-5">
-                        <i class="bi bi-inbox display-1 text-muted"></i>
-                        <p class="lead text-muted mt-3">No open positions</p>
-                        <p class="text-muted">Positions will appear here when the bot enters trades.</p>
-                    </div>
-                    {% endif %}
-                </div>
-                <div class="card-footer text-muted">
-                    <small>
-                        <i class="bi bi-arrow-clockwise"></i> Auto-refresh every 30 seconds
-                    </small>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
+<h1>Open Positions</h1>
+<table class="table table-dark">
+<tr><th>Ticker</th><th>Entry</th><th>Current</th><th>P&L</th></tr>
+{% for p in positions %}
+<tr><td>{{ p.ticker }}</td><td>${{ p.entry }}</td><td>${{ p.current }}</td><td>{{ p.pnl }}</td></tr>
+{% endfor %}
+</table>
 {% endblock %}

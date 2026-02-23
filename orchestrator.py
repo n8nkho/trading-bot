@@ -739,6 +739,28 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         return result
 
 
+def run_fortress():
+    """Run complete fortress hedging system."""
+    from agents.fortress_orchestrator import fortress_daily_check
+    
+    logger.info("=" * 80)
+    logger.info("FORTRESS HEDGING SYSTEM")
+    logger.info("=" * 80)
+    
+    try:
+        result = fortress_daily_check()
+        
+        if result:
+            logger.info("Fortress check complete")
+            logger.info(f"Market regime: {result.get('market_conditions', {}).get('regime', 'N/A')}")
+            logger.info(f"Strategies evaluated: {len(result.get('recommendations', {}))}")
+        
+        return result
+    except Exception as e:
+        logger.error(f"Fortress error: {e}")
+        return None
+
+
 def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
     """
     Synchronous wrapper for async run_daily_screening_async().
@@ -1260,6 +1282,8 @@ if __name__ == "__main__":
             else:
                 print(f"Reason: Outside market hours")
     
+    elif command == "fortress":
+        run_fortress()
     elif command == "costs":
         # ANSI color codes for colorful output
         GREEN = '\033[92m'

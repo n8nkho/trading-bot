@@ -1,132 +1,41 @@
 {% extends "base.html" %}
-
 {% block content %}
-<div class="container-fluid">
-    <!-- Hero Stats Section -->
-    <div class="row mb-4">
-        <div class="col-12">
-            <h1 class="display-4 mb-4">
-                <i class="bi bi-speedometer2"></i> Dashboard
-            </h1>
-        </div>
-    </div>
-
-    <!-- Main Stats Cards -->
-    <div class="row g-4 mb-4">
-        <div class="col-12 col-md-6 col-lg-3">
-            <div class="card stat-card bg-primary text-white h-100">
-                <div class="card-body">
-                    <h6 class="card-subtitle mb-2 text-white-50">
-                        <i class="bi bi-wallet2"></i> Portfolio Value
-                    </h6>
-                    <h2 class="card-title mb-0">${{ "{:.2f}".format(portfolio_value|default(0)) }}</h2>
-                </div>
-            </div>
-        </div>
-        
-        <div class="col-12 col-md-6 col-lg-3">
-            <div class="card stat-card {% if today_pnl|default(0) >= 0 %}bg-success{% else %}bg-danger{% endif %} text-white h-100">
-                <div class="card-body">
-                    <h6 class="card-subtitle mb-2 text-white-50">
-                        <i class="bi bi-graph-up"></i> Today's P&L
-                    </h6>
-                    <h2 class="card-title mb-0">
-                        {% if today_pnl|default(0) >= 0 %}+{% endif %}${{ "{:.2f}".format(today_pnl|default(0)) }}
-                    </h2>
-                </div>
-            </div>
-        </div>
-        
-        <div class="col-12 col-md-6 col-lg-3">
-            <div class="card stat-card bg-info text-white h-100">
-                <div class="card-body">
-                    <h6 class="card-subtitle mb-2 text-white-50">
-                        <i class="bi bi-briefcase"></i> Open Positions
-                    </h6>
-                    <h2 class="card-title mb-0">{{ open_positions }}</h2>
-                </div>
-            </div>
-        </div>
-        
-        <div class="col-12 col-md-6 col-lg-3">
-            <div class="card stat-card bg-warning text-dark h-100">
-                <div class="card-body">
-                    <h6 class="card-subtitle mb-2 text-dark-50">
-                        <i class="bi bi-trophy"></i> Win Rate (30d)
-                    </h6>
-                    <h2 class="card-title mb-0">{{ "{:.1f}".format(win_rate|default(0)) }}%</h2>
-                </div>
+<h1>Dashboard Overview</h1>
+<div class="row my-4">
+    <div class="col-md-3">
+        <div class="card bg-secondary">
+            <div class="card-body text-center">
+                <h5>Portfolio</h5>
+                <h2>${{ "%.2f"|format(portfolio_value) }}</h2>
             </div>
         </div>
     </div>
-
-    <!-- Status Section -->
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="card bg-dark border-secondary">
-                <div class="card-body">
-                    <h5 class="card-title mb-3">
-                        <i class="bi bi-info-circle"></i> System Status
-                    </h5>
-                    <div class="d-flex flex-wrap gap-3">
-                        <div>
-                            <span class="text-muted">Market:</span>
-                            {% if market_status == "OPEN" %}
-                                <span class="badge bg-success">
-                                    <i class="bi bi-check-circle"></i> OPEN
-                                </span>
-                            {% else %}
-                                <span class="badge bg-danger">
-                                    <i class="bi bi-x-circle"></i> CLOSED
-                                </span>
-                            {% endif %}
-                        </div>
-                        
-                        <div>
-                            <span class="text-muted">Bot Status:</span>
-                            {% if system_status == "ACTIVE" %}
-                                <span class="badge bg-success">
-                                    <i class="bi bi-check-circle"></i> ACTIVE
-                                </span>
-                            {% else %}
-                                <span class="badge bg-warning">
-                                    <i class="bi bi-pause-circle"></i> STOPPED
-                                </span>
-                            {% endif %}
-                        </div>
-                        
-                        <div>
-                            <span class="text-muted">Circuit Breaker:</span>
-                            <span class="badge bg-success">
-                                <i class="bi bi-check-circle"></i> OK
-                            </span>
-                        </div>
-                    </div>
-                </div>
+    <div class="col-md-3">
+        <div class="card {% if today_pnl >= 0 %}bg-success{% else %}bg-danger{% endif %}">
+            <div class="card-body text-center">
+                <h5>Today P&L</h5>
+                <h2>${{ "%.2f"|format(today_pnl) }}</h2>
             </div>
         </div>
     </div>
-
-    <!-- Recent Activity -->
-    <div class="row">
-        <div class="col-12">
-            <div class="card bg-dark border-secondary">
-                <div class="card-header">
-                    <h5 class="mb-0">
-                        <i class="bi bi-clock-history"></i> Recent Activity
-                    </h5>
-                </div>
-                <div class="card-body">
-                    <p class="text-muted">
-                        <i class="bi bi-info-circle"></i> 
-                        View detailed positions and trade history in the Positions tab.
-                    </p>
-                    <a href="/positions" class="btn btn-primary">
-                        <i class="bi bi-arrow-right"></i> View Positions
-                    </a>
-                </div>
+    <div class="col-md-3">
+        <div class="card bg-secondary">
+            <div class="card-body text-center">
+                <h5>Positions</h5>
+                <h2>{{ open_positions }}</h2>
             </div>
         </div>
     </div>
+    <div class="col-md-3">
+        <div class="card bg-secondary">
+            <div class="card-body text-center">
+                <h5>Win Rate</h5>
+                <h2>{{ "%.1f"|format(win_rate) }}%</h2>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="alert {% if market_open %}alert-success{% else %}alert-danger{% endif %}">
+    Market: {% if market_open %}OPEN{% else %}CLOSED{% endif %}
 </div>
 {% endblock %}
