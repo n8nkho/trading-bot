@@ -102,6 +102,7 @@ def evaluate_options_entry(ticker, current_price, metrics):
     else:
         logging.info(f"{ticker}: Stock trade selected over option")
         return create_skip_decision(ticker, "Stock trade selected over option")
+def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
     """
     Evaluate entry decisions for screened candidates.
     
