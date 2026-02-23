@@ -35,8 +35,8 @@ def monitor_positions(positions):
         positions: List of position dicts with:
             - ticker: Stock symbol
             - entry_price: Entry price per share
-            - qty: Number of shares
-            - entry_time: Entry timestamp (ISO format string or datetime)
+            - qty or shares: Number of shares
+            - entry_time or entry_date: Entry timestamp (ISO format string or datetime)
             - tiers_sold: Optional dict tracking which tiers have been sold
             
     Returns:
@@ -46,12 +46,12 @@ def monitor_positions(positions):
     
     decisions = []
     
-    for position in positions:
-        ticker = position['ticker']
+    for pos in positions:
+        ticker = pos['ticker']
         logging.info(f"Monitoring position: {ticker}")
         
         try:
-            decision = evaluate_exit(position)
+            decision = evaluate_exit(pos)
             decisions.append(decision)
             
             logging.info(f"{ticker}: {decision['action']} - {decision['reason']}")
@@ -81,15 +81,17 @@ def evaluate_exit(position):
     Evaluate exit conditions for a single position.
     
     Args:
-        position: Position dict with ticker, entry_price, qty, entry_time, tiers_sold
+        position: Position dict with ticker, entry_price, qty/shares, entry_time/entry_date, tiers_sold
         
     Returns:
         Decision dict with action, reason, sell_qty, current_price, pnl_pct
     """
     ticker = position['ticker']
     entry_price = position['entry_price']
-    qty = position['qty']
-    entry_time = position['entry_time']
+    # Handle both 'qty' and 'shares' keys
+    qty = position.get('qty') or position.get('shares', 0)
+    # Handle both 'entry_time' and 'entry_date' keys
+    entry_time = position.get('entry_time') or position.get('entry_date')
     tiers_sold = position.get('tiers_sold', {'tier1': False, 'tier2': False, 'tier3': False})
     
     # Parse entry time

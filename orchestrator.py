@@ -880,9 +880,12 @@ def load_positions():
             return []
         
         with open(POSITIONS_FILE, 'r') as f:
-            data = json.load(f)
+            positions = json.load(f)
         
-        positions = data.get('positions', [])
+        # Handle both list format and dict format for backwards compatibility
+        if isinstance(positions, dict):
+            positions = positions.get('positions', [])
+        
         logger.info(f"Loaded {len(positions)} positions from {POSITIONS_FILE}")
         return positions
         
@@ -905,9 +908,9 @@ def add_position(position):
         # Add new position
         positions.append(position)
         
-        # Save back to file
+        # Save back to file as a list
         with open(POSITIONS_FILE, 'w') as f:
-            json.dump({'positions': positions, 'last_updated': datetime.now().isoformat()}, f, indent=2)
+            json.dump(positions, f, indent=2)
         
         logger.info(f"Added position: {position['ticker']} - {position['shares']} shares @ ${position['entry_price']:.2f}")
         
@@ -929,9 +932,9 @@ def remove_position(ticker):
         # Remove position
         positions = [p for p in positions if p['ticker'] != ticker]
         
-        # Save back to file
+        # Save back to file as a list
         with open(POSITIONS_FILE, 'w') as f:
-            json.dump({'positions': positions, 'last_updated': datetime.now().isoformat()}, f, indent=2)
+            json.dump(positions, f, indent=2)
         
         logger.info(f"Removed position: {ticker}")
         
@@ -954,14 +957,22 @@ def update_position_quantity(ticker, qty_sold):
         # Update position
         for pos in positions:
             if pos['ticker'] == ticker:
-                old_qty = pos['shares']
-                pos['shares'] = old_qty - qty_sold
-                logger.info(f"Updated position: {ticker} - {old_qty} -> {pos['shares']} shares")
+                # Handle both 'shares' and 'qty' keys
+                old_qty = pos.get('shares') or pos.get('qty', 0)
+                new_qty = old_qty - qty_sold
+                
+                # Update both keys if they exist
+                if 'shares' in pos:
+                    pos['shares'] = new_qty
+                if 'qty' in pos:
+                    pos['qty'] = new_qty
+                
+                logger.info(f"Updated position: {ticker} - {old_qty} -> {new_qty} shares")
                 break
         
-        # Save back to file
+        # Save back to file as a list
         with open(POSITIONS_FILE, 'w') as f:
-            json.dump({'positions': positions, 'last_updated': datetime.now().isoformat()}, f, indent=2)
+            json.dump(positions, f, indent=2)
         
     except Exception as e:
         logger.error(f"Error updating position quantity: {type(e).__name__}: {str(e)}")
