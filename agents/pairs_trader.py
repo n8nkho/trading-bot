@@ -22,7 +22,7 @@ PREDEFINED_PAIRS = [
 
 def get_price_history(ticker, days=60):
     try:
-        data = yf.download(ticker, period=f'{days}d')
+        data = yf.Ticker(ticker).history(period=f'{days}d')
         return data['Close']
     except Exception as e:
         logging.error(f"Error fetching price history for {ticker}: {e}")
