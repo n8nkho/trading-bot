@@ -1494,27 +1494,6 @@ def run_fortress():
                 if data:
                     logger.info(f"{strategy}: {data}")
         
-        return result
-        
-    except Exception as e:
-        logger.error(f"Fortress error: {e}")
-        import traceback
-        traceback.print_exc()
-        portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else 10000
-        print(f"\nRunning intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
-        opportunities = scan_intraday_opportunities(portfolio_value)
-        
-        print("\n" + "=" * 80)
-        print("INTRADAY SNIPER RESULTS")
-        print("=" * 80)
-        print(f"Opportunities found: {len(opportunities)}")
-        
-        if opportunities:
-            for opp in opportunities:
-                print(f"\n{opp['ticker']} @ ${opp['entry_price']:.2f}")
-                print(f"  Metrics: {opp['metrics']}")
-        else:
-            print("\nNo opportunities found")
     elif command == "snipe":
         portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else 10000
         logger.info(f"Running intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
