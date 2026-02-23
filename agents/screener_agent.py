@@ -54,7 +54,7 @@ def run_screener():
     candidates = []
     for stock in watchlist:
         ticker = stock['ticker']
-        logging.info(f"Scanning {ticker}")
+        logging.info(f"Scanning {ticker}...")
 
         try:
             # Fetch Yahoo Finance data
@@ -78,7 +78,7 @@ def run_screener():
                 continue
                 
             drop_pct = (latest_open - latest_close) / latest_open * 100
-            logging.info(f"{ticker}: Drop percentage: {drop_pct:.2f}%")
+            logging.info(f"  Drop: {drop_pct:.2f}%, RSI: {rsi:.2f}, Volume: {volume_ratio:.2f}x")
             
             # Calculate RSI with validation
             if len(stock_data) < 15:
@@ -103,19 +103,20 @@ def run_screener():
             meets_volume_criteria = volume_ratio > params['volume_ratio_min']
             
             if not meets_drop_criteria:
-                logging.info(f"{ticker}: Does not meet drop criteria (drop: {drop_pct:.1f}%, need {params['drop_min']}% to {params['drop_max']}%)")
+                logging.info(f"  ❌ Rejected: Does not meet drop criteria (drop: {drop_pct:.1f}%, need {params['drop_min']}% to {params['drop_max']}%)")
                 continue
             
             if not meets_rsi_criteria:
-                logging.info(f"{ticker}: Does not meet RSI criteria (rsi: {rsi:.1f}, need < {params['rsi_threshold']})")
+                logging.info(f"  ❌ Rejected: Does not meet RSI criteria (rsi: {rsi:.1f}, need < {params['rsi_threshold']})")
                 continue
                 
             if not meets_volume_criteria:
-                logging.info(f"{ticker}: Does not meet volume criteria (vol_ratio: {volume_ratio:.1f}, need > {params['volume_ratio_min']})")
+                logging.info(f"  ❌ Rejected: Does not meet volume criteria (vol_ratio: {volume_ratio:.1f}, need > {params['volume_ratio_min']})")
                 continue
 
             # Stock meets ALL criteria - fetch news and analyze with LLM
-            logging.info(f"{ticker}: MEETS ALL CRITERIA - Fetching news headlines...")
+            logging.info(f"  ✅ Passes filters")
+            logging.info(f"  MEETS ALL CRITERIA - Fetching news headlines...")
             news_headlines = get_news_headlines(ticker, 3)
             logging.info(f"{ticker}: Found {len(news_headlines)} news headlines")
 
