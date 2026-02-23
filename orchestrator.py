@@ -25,6 +25,7 @@ from agents.exit_monitor import monitor_positions as monitor_exit_conditions
 from agents.risk_guardian import check_risk_limits, get_risk_status
 from agents.performance_analyzer import track_decision, load_current_params
 from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mode
+from agents.fortress_orchestrator import fortress_daily_check, generate_fortress_report
 from agents.document_analyst import quick_fundamental_check
 from agents.intraday_sniper import scan_intraday_opportunities
 from utils.grok_sentiment import check_twitter_sentiment
@@ -1135,6 +1136,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py tune                       - Auto-tune parameters")
         print("  python orchestrator.py review                     - Weekly performance review")
         print("  python orchestrator.py architect                  - Run meta-architect improvement cycle")
+        print("  python orchestrator.py fortress                   - Run complete hedging system")
         print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
         print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
         sys.exit(1)
@@ -1452,7 +1454,35 @@ if __name__ == "__main__":
                 for agent in result['agents_failed']:
                     print(f"  - {agent['agent_name']}: {agent.get('reason', agent.get('error', 'Unknown'))}")
     
-    elif command == "snipe":
+    elif command == "fortress":
+        run_fortress()
+def run_fortress():
+    """Run complete fortress hedging system."""
+    logger.info("=" * 80)
+    logger.info("FORTRESS HEDGING SYSTEM")
+    logger.info("=" * 80)
+    
+    try:
+        # Run daily check
+        result = fortress_daily_check()
+        
+        if result:
+            logger.info("Fortress check complete")
+            logger.info(f"Market regime: {result.get('market_conditions', {}).get('regime', 'N/A')}")
+            logger.info(f"Strategies evaluated: {len(result.get('recommendations', {}))}")
+            
+            # Show recommendations
+            recs = result.get('recommendations', {})
+            for strategy, data in recs.items():
+                if data:
+                    logger.info(f"{strategy}: {data}")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Fortress error: {e}")
+        import traceback
+        traceback.print_exc()
         portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else 10000
         print(f"\nRunning intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
         opportunities = scan_intraday_opportunities(portfolio_value)
