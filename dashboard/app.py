@@ -38,13 +38,23 @@ DATA_DIR = Path('../data')
 def load_positions():
     """Load current positions from positions.json"""
     try:
-        positions_file = DATA_DIR / 'positions.json'
+        positions_file = Path('/home/ubuntu/trading-bot/data/positions.json')
         if positions_file.exists():
             with open(positions_file, 'r') as f:
-                return json.load(f)
+                positions = json.load(f)
+                logging.debug(f"Loaded positions: {positions}")
+                return positions
+        else:
+            logging.warning("Positions file not found, returning empty list.")
+            return []
+    except FileNotFoundError:
+        logging.error("Positions file not found.")
+        return []
+    except json.JSONDecodeError as e:
+        logging.error(f"Error decoding JSON from positions file: {e}")
         return []
     except Exception as e:
-        logging.error(f"Error loading positions: {e}")
+        logging.error(f"Unexpected error loading positions: {e}")
         return []
 
 def load_decisions_log():
@@ -81,8 +91,14 @@ def get_portfolio_value():
                 # Use entry price as fallback
                 total_value += pos.get('entry_price', 0) * qty
         
-        # Add cash (assume starting with 10000, subtract invested)
-        # This is simplified - in production, track cash separately
+        # Fetch cash from Alpaca API if available
+        try:
+            # Placeholder for Alpaca API call to get cash balance
+            cash_balance = 10000  # Replace with actual API call
+            total_value += cash_balance
+        except Exception as e:
+            logging.warning(f"Could not fetch cash balance from Alpaca API: {e}")
+        
         return total_value
     except Exception as e:
         logging.error(f"Error calculating portfolio value: {e}")
