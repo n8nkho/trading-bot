@@ -89,8 +89,8 @@ def run_all_hedge_strategies(portfolio_value):
     recommendations = {}
     try:
         recommendations['vix_insurance'] = should_buy_insurance(portfolio_value, get_current_vix())
-        recommendations['bond_target'] = calculate_bond_target(portfolio_value, get_market_regime())
-        recommendations['commodity_hedge'] = commodity_hedge_strategy(portfolio_value)
+        recommendations['bonds'] = {'target': calculate_bond_target(portfolio_value, get_market_regime())}
+        recommendations['commodities'] = {'action': commodity_hedge_strategy(portfolio_value)}
         recommendations['theta_spreads'] = theta_strategy(portfolio_value)
         recommendations['dividend_capture'] = dividend_capture_strategy(portfolio_value)
         recommendations['pairs_trading'] = pairs_trading_strategy(portfolio_value)
