@@ -1078,6 +1078,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py review                     - Weekly performance review")
         print("  python orchestrator.py architect                  - Run meta-architect improvement cycle")
         print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
+        print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
         sys.exit(1)
     
     command = sys.argv[1].lower()
@@ -1409,6 +1410,21 @@ if __name__ == "__main__":
                 print(f"  Metrics: {opp['metrics']}")
         else:
             print("\nNo opportunities found")
-        print(f"Unknown command: {command}")
+    elif command == "snipe":
+        portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else 10000
+        logger.info(f"Running intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
+        opportunities = scan_intraday_opportunities(portfolio_value)
+        
+        logger.info("=" * 80)
+        logger.info("INTRADAY SNIPER RESULTS")
+        logger.info("=" * 80)
+        logger.info(f"Opportunities found: {len(opportunities)}")
+        
+        if opportunities:
+            for opp in opportunities:
+                logger.info(f"{opp['ticker']} @ ${opp['entry_price']:.2f}")
+                logger.info(f"  Metrics: {opp['metrics']}")
+        else:
+            logger.info("No opportunities found")
         print("Use 'screen', 'monitor', 'status', 'costs', 'watchdog', 'preload', 'tune', 'review', or 'architect'")
         sys.exit(1)
