@@ -88,12 +88,37 @@ def run_all_hedge_strategies(portfolio_value):
     """Run all hedge strategies and collect recommendations."""
     recommendations = {}
     try:
-        recommendations['vix_insurance'] = should_buy_insurance(portfolio_value, get_current_vix())
+        # VIX Insurance
+        should_buy, reason = should_buy_insurance(portfolio_value, get_current_vix())
+        if should_buy:
+            insurance = calculate_insurance_position(portfolio_value)
+            recommendations['vix_insurance'] = insurance
+        else:
+            recommendations['vix_insurance'] = {'action': 'HOLD', 'reason': reason}
+
+        # Bonds
         recommendations['bonds'] = {'target': calculate_bond_target(portfolio_value, get_market_regime())}
-        recommendations['commodities'] = {'action': commodity_hedge_strategy(portfolio_value)}
-        recommendations['theta_spreads'] = theta_strategy(portfolio_value)
-        recommendations['dividend_capture'] = dividend_capture_strategy(portfolio_value)
-        recommendations['pairs_trading'] = pairs_trading_strategy(portfolio_value)
+
+        # Commodities
+        result = commodity_hedge_strategy(portfolio_value)
+        if isinstance(result, tuple):
+            action, reason = result
+            recommendations['commodities'] = {'action': action, 'reason': reason}
+        else:
+            recommendations['commodities'] = result
+
+        # Theta Spreads
+        result = theta_strategy(portfolio_value)
+        recommendations['theta_spreads'] = result or {'action': 'NONE'}
+
+        # Dividend Capture
+        result = dividend_capture_strategy(portfolio_value)
+        recommendations['dividend_capture'] = result or {'action': 'NONE'}
+
+        # Pairs Trading
+        result = pairs_trading_strategy(portfolio_value)
+        recommendations['pairs_trading'] = result or {'action': 'NONE'}
+
     except Exception as e:
         logging.error(f"Error running hedge strategies: {e}")
     return recommendations
