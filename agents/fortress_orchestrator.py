@@ -11,6 +11,7 @@ import logging
 from datetime import datetime
 
 # Constants
+BUDGET_MODE = True  # Set False when can afford VIX
 RISK_ON_ALLOCATION = {
     'stocks': 0.30,
     'options': 0.10,
@@ -47,7 +48,17 @@ NEUTRAL_ALLOCATION = {
     'pairs': 0.05
 }
 
-# Configure logging
+BUDGET_RISK_OFF_ALLOCATION = {
+    'stocks': 0.15,
+    'options': 0.05,
+    'bonds': 0.40,  # Increased from 35%
+    'forex': 0.15,
+    'commodities': 0.17,  # Increased from 15%
+    'theta_spreads': 0.02,
+    'dividend': 0.05,
+    'pairs': 0.08  # Increased from 5%
+    # No VIX insurance!
+}
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def get_portfolio_status():
@@ -88,13 +99,25 @@ def run_all_hedge_strategies(portfolio_value):
     """Run all hedge strategies and collect recommendations."""
     recommendations = {}
     try:
-        # VIX Insurance
-        should_buy, reason = should_buy_insurance(portfolio_value, get_current_vix())
-        if should_buy:
-            insurance = calculate_insurance_position(portfolio_value)
-            recommendations['vix_insurance'] = insurance
+        if BUDGET_MODE:
+            # Skip VIX insurance
+            recommendations['vix_insurance'] = {'action': 'SKIP', 'reason': 'Budget mode - using other hedges'}
+            
+            # Increase other hedges to compensate:
+            # - Increase bond allocation by 5%
+            # - Increase pairs trading by 3%
+            # - Increase commodity hedge by 2%
+            recommendations['bonds'] = {'target': calculate_bond_target(portfolio_value, get_market_regime()) * 1.05}
+            recommendations['pairs_trading'] = {'action': 'INCREASE', 'reason': 'Budget mode - increased allocation'}
+            recommendations['commodities'] = {'action': 'INCREASE', 'reason': 'Budget mode - increased allocation'}
         else:
-            recommendations['vix_insurance'] = {'action': 'HOLD', 'reason': reason}
+            # VIX Insurance
+            should_buy, reason = should_buy_insurance(portfolio_value, get_current_vix())
+            if should_buy:
+                insurance = calculate_insurance_position(portfolio_value)
+                recommendations['vix_insurance'] = insurance
+            else:
+                recommendations['vix_insurance'] = {'action': 'HOLD', 'reason': reason}
 
         # Bonds
         recommendations['bonds'] = {'target': calculate_bond_target(portfolio_value, get_market_regime())}
@@ -133,6 +156,8 @@ def generate_fortress_report(portfolio_value):
         'target_allocations': target_allocations,
         'strategies': strategies
     }
+    report_note = "Budget mode: Using stop losses + diversification instead of VIX insurance"
+    report['note'] = report_note
     return json.dumps(report, indent=4)
 
 def fortress_daily_check():
