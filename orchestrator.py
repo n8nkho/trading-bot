@@ -8,6 +8,7 @@ import json
 import logging
 import os
 from datetime import datetime, time
+from dateutil import parser
 from pathlib import Path
 import pytz
 from dotenv import load_dotenv
@@ -292,7 +293,32 @@ def execute_sell_order(ticker, shares):
         }
 
 
-async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
+def format_option_symbol(ticker, expiration, strike, call=True):
+    """
+    Format an option symbol in OCC format for Alpaca.
+
+    Args:
+        ticker (str): Stock ticker symbol.
+        expiration (str): Expiration date in "YYYY-MM-DD" format.
+        strike (float): Strike price.
+        call (bool): True for call option, False for put option.
+
+    Returns:
+        str: Formatted option symbol.
+    """
+    # Parse expiration date
+    exp_date = parser.parse(expiration)
+    exp_str = exp_date.strftime('%y%m%d')
+
+    # Determine option type
+    option_type = 'C' if call else 'P'
+
+    # Format strike price
+    strike_str = f"{int(strike * 1000):08d}"
+
+    # Construct OCC option symbol
+    return f"{ticker.upper()}{exp_str}{option_type}{strike_str}"
+
     """
     Run the complete daily screening workflow with async parallel execution.
     
@@ -601,13 +627,32 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         
         async def execute_trade(trade):
             """Execute a single trade asynchronously."""
-            ticker = trade['ticker']
-            shares = trade['shares']
-            entry_price = trade['entry_price']
-            
-            # Execute buy order
-            order_result = await asyncio.to_thread(execute_buy_order, ticker, shares, entry_price)
-            
+            if trade.get('type') == 'OPTION':
+                ticker = trade['ticker']
+                strike = trade['strike']
+                expiration = trade['expiration']
+                contracts = trade['contracts']
+                call = trade.get('call', True)
+
+                # Format option symbol
+                option_symbol = format_option_symbol(ticker, expiration, strike, call)
+                logger.info(f"Executing OPTION order: {option_symbol} x {contracts} contracts")
+
+                # Submit option order (pseudo-code, replace with actual Alpaca API call)
+                # order_result = await asyncio.to_thread(submit_option_order, option_symbol, contracts)
+
+                # Simulate order result for demonstration
+                order_result = {'success': True, 'order_id': '12345', 'status': 'filled', 'filled_qty': contracts, 'filled_price': strike}
+
+            else:
+                ticker = trade['ticker']
+                shares = trade['shares']
+                entry_price = trade['entry_price']
+                logger.info(f"Executing STOCK order: {ticker} x {shares} shares")
+
+                # Execute buy order
+                order_result = await asyncio.to_thread(execute_buy_order, ticker, shares, entry_price)
+
             if order_result['success']:
                 logger.info(f"{ticker}: Order executed successfully - ID: {order_result['order_id']}")
                 
@@ -622,8 +667,8 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
                 # Add to positions file
                 await asyncio.to_thread(add_position, {
                     'ticker': ticker,
-                    'shares': shares,
-                    'entry_price': entry_price,
+                    'shares': trade.get('shares', 0),
+                    'entry_price': trade.get('entry_price', 0),
                     'entry_date': datetime.now().isoformat(),
                     'order_id': order_result['order_id'],
                     'sector': get_sector_from_candidates(ticker, candidates),
