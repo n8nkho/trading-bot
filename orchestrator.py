@@ -25,6 +25,7 @@ from agents.risk_guardian import check_risk_limits, get_risk_status
 from agents.performance_analyzer import track_decision, load_current_params
 from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mode
 from agents.document_analyst import quick_fundamental_check
+from agents.intraday_sniper import scan_intraday_opportunities
 from utils.grok_sentiment import check_twitter_sentiment
 from utils.cost_calculator import (
     get_daily_costs,
@@ -1076,6 +1077,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py tune                       - Auto-tune parameters")
         print("  python orchestrator.py review                     - Weekly performance review")
         print("  python orchestrator.py architect                  - Run meta-architect improvement cycle")
+        print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
         sys.exit(1)
     
     command = sys.argv[1].lower()
@@ -1391,7 +1393,22 @@ if __name__ == "__main__":
                 for agent in result['agents_failed']:
                     print(f"  - {agent['agent_name']}: {agent.get('reason', agent.get('error', 'Unknown'))}")
     
-    else:
+    elif command == "snipe":
+        portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else 10000
+        print(f"\nRunning intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
+        opportunities = scan_intraday_opportunities(portfolio_value)
+        
+        print("\n" + "=" * 80)
+        print("INTRADAY SNIPER RESULTS")
+        print("=" * 80)
+        print(f"Opportunities found: {len(opportunities)}")
+        
+        if opportunities:
+            for opp in opportunities:
+                print(f"\n{opp['ticker']} @ ${opp['entry_price']:.2f}")
+                print(f"  Metrics: {opp['metrics']}")
+        else:
+            print("\nNo opportunities found")
         print(f"Unknown command: {command}")
         print("Use 'screen', 'monitor', 'status', 'costs', 'watchdog', 'preload', 'tune', 'review', or 'architect'")
         sys.exit(1)
