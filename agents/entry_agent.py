@@ -2,6 +2,7 @@ import logging
 import yfinance as yf
 from datetime import datetime
 import pytz
+import numpy as np
 
 logging.basicConfig(
     filename='logs/entry.log',
@@ -18,7 +19,89 @@ STABILIZATION_FACTOR = 1.02  # Price must be 2% above low
 ENTRY_WINDOW_START = (14, 30)  # 2:30 PM ET
 ENTRY_WINDOW_END = (15, 45)  # 3:45 PM ET
 
-def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
+def evaluate_options_entry(ticker, current_price, metrics):
+    """
+    Evaluate options entry for a given ticker.
+    
+    Args:
+        ticker: Stock ticker symbol
+        current_price: Current stock price
+        metrics: Additional metrics for decision making
+        
+    Returns:
+        Decision dict with action, reason, position_size, contracts, option details
+    """
+    logging.info(f"Evaluating options entry for {ticker}")
+    
+    # Fetch options chain
+    stock = yf.Ticker(ticker)
+    options_dates = stock.options
+    if not options_dates:
+        logging.warning(f"{ticker}: No options data available")
+        return create_skip_decision(ticker, "No options data available")
+    
+    # Select expiration date 30-45 days out
+    expiration_date = next((date for date in options_dates if 30 <= (datetime.strptime(date, '%Y-%m-%d') - datetime.now()).days <= 45), None)
+    if not expiration_date:
+        logging.warning(f"{ticker}: No suitable expiration date found")
+        return create_skip_decision(ticker, "No suitable expiration date found")
+    
+    options_chain = stock.option_chain(expiration_date)
+    calls = options_chain.calls
+    
+    # Calculate ATM strike
+    atm_strike = min(calls['strike'], key=lambda x: abs(x - current_price))
+    
+    # Filter for ATM or slightly OTM calls
+    calls = calls[(calls['strike'] >= atm_strike) & (calls['strike'] <= atm_strike * 1.05)]
+    
+    # Filter for delta 0.5-0.7
+    calls = calls[(calls['delta'] >= 0.5) & (calls['delta'] <= 0.7)]
+    
+    # Filter for liquidity (bid-ask spread < 10% of premium)
+    calls = calls[(calls['ask'] - calls['bid']) / calls['bid'] < 0.1]
+    
+    # Filter for IV rank < 50%
+    calls = calls[calls['impliedVolatility'] < 0.5]
+    
+    if calls.empty:
+        logging.warning(f"{ticker}: No suitable options found")
+        return create_skip_decision(ticker, "No suitable options found")
+    
+    # Select the best option based on criteria
+    best_option = calls.iloc[0]
+    premium = best_option['ask']
+    strike = best_option['strike']
+    breakeven = strike + premium
+    
+    # Calculate potential returns
+    stock_return = (current_price - strike) / strike
+    option_return = (breakeven - current_price) / premium
+    
+    # Decision based on better return
+    if option_return > stock_return:
+        # Calculate position sizing
+        max_premium = 500
+        contracts = int(max_premium / premium)
+        
+        logging.info(f"{ticker}: Option trade selected - Strike: {strike}, Expiration: {expiration_date}, Premium: {premium}, Contracts: {contracts}")
+        
+        return {
+            'ticker': ticker,
+            'action': 'BUY_OPTION',
+            'reason': f'Option trade selected: Strike={strike}, Expiration={expiration_date}, Premium={premium}',
+            'position_size': contracts * premium * 100,
+            'contracts': contracts,
+            'option_details': {
+                'strike': strike,
+                'expiration': expiration_date,
+                'premium': premium
+            },
+            'timestamp': datetime.now().isoformat()
+        }
+    else:
+        logging.info(f"{ticker}: Stock trade selected over option")
+        return create_skip_decision(ticker, "Stock trade selected over option")
     """
     Evaluate entry decisions for screened candidates.
     
@@ -62,6 +145,17 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
     logging.info(f"Entry evaluation complete: {buy_count} BUY, {len(decisions) - buy_count} SKIP")
     
     return decisions
+
+def create_skip_decision(ticker, reason):
+    """Create a SKIP decision dict"""
+    return {
+        'ticker': ticker,
+        'action': 'SKIP',
+        'reason': reason,
+        'position_size': 0,
+        'shares': 0,
+        'timestamp': datetime.now().isoformat()
+    }
 
 def evaluate_single_entry(candidate, portfolio_value):
     """
