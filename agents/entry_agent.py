@@ -43,7 +43,7 @@ def get_options_chain(ticker, dte_target=35):
             return None
         
         options_chain = stock.option_chain(expiration_date)
-        return options_chain.calls
+        return options_chain.calls, expiration_date
     except Exception as e:
         logging.error(f"Error fetching options chain for {ticker}: {type(e).__name__}: {str(e)}")
         return None
@@ -60,8 +60,11 @@ def find_atm_option(ticker, current_price, dte=35):
     Returns:
         Dict with option details or None if not suitable
     """
-    calls = get_options_chain(ticker, dte)
-    if calls is None or calls.empty:
+    result = get_options_chain(ticker, dte)
+    if result is None:
+        return None
+    calls, expiration = result
+    if calls.empty:
         return None
     
     atm_strike = min(calls['strike'], key=lambda x: abs(x - current_price))
@@ -73,7 +76,7 @@ def find_atm_option(ticker, current_price, dte=35):
         'bid': option['bid'],
         'ask': option['ask'],
         'volume': option['volume'],
-        'expiration': option['expiration']
+        'expiration': expiration
     }
 
 def evaluate_option_trade(ticker, current_price, stock_confidence):
