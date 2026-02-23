@@ -319,6 +319,8 @@ def format_option_symbol(ticker, expiration, strike, call=True):
     # Construct OCC option symbol
     return f"{ticker.upper()}{exp_str}{option_type}{strike_str}"
 
+
+async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
     """
     Run the complete daily screening workflow with async parallel execution.
     
