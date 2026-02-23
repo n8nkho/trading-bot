@@ -53,7 +53,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 def get_portfolio_status():
     """Connect to Alpaca and get portfolio status."""
     client = TradingClient(os.getenv('APCA_API_KEY_ID'), os.getenv('APCA_API_SECRET_KEY'))
-    account = client.get_account_details()
+    account = client.get_account()
     positions = client.get_all_positions()
     total_value = float(account.equity)
     return {
