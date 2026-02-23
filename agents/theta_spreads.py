@@ -20,24 +20,38 @@ def get_spy_price():
 
 def design_bull_put_spread(spy_price):
     try:
-        # Placeholder for fetching options chain
-        # options_chain = fetch_options_chain("SPY", TARGET_DTE)
+        ticker = yf.Ticker("SPY")
+        expirations = ticker.options
+        target_date = datetime.now() + timedelta(days=TARGET_DTE)
+        expiration = min(expirations, key=lambda date: abs(datetime.strptime(date, '%Y-%m-%d') - target_date))
         
+        options_chain = ticker.option_chain(expiration).puts
         sell_strike = round(spy_price * 0.95, 2)
+        sell_option = options_chain[options_chain['strike'] == sell_strike]
+        
+        if sell_option.empty:
+            logging.error("No suitable sell option found.")
+            return None
+        
+        sell_premium = sell_option['lastPrice'].values[0]
         buy_strike = sell_strike - SPREAD_WIDTH
+        buy_option = options_chain[options_chain['strike'] == buy_strike]
         
-        # Placeholder for premiums
-        sell_premium = 1.0  # Example premium
-        buy_premium = 0.5   # Example premium
+        if buy_option.empty:
+            logging.error("No suitable buy option found.")
+            return None
         
+        buy_premium = buy_option['lastPrice'].values[0]
         net_credit = sell_premium - buy_premium
+        max_risk = SPREAD_WIDTH - net_credit
         
         return {
             "sell_strike": sell_strike,
             "buy_strike": buy_strike,
             "sell_premium": sell_premium,
             "buy_premium": buy_premium,
-            "net_credit": net_credit
+            "net_credit": net_credit,
+            "max_risk": max_risk
         }
     except Exception as e:
         logging.error(f"Error designing bull put spread: {e}")
@@ -53,8 +67,8 @@ def theta_strategy(portfolio_value):
         if spread_details is None:
             return None
         
-        spread_cost = SPREAD_WIDTH - spread_details['net_credit']
-        quantity = int((portfolio_value * 0.03) / spread_cost)
+        max_risk = spread_details['max_risk']
+        quantity = min(int((portfolio_value * 0.03) / max_risk), 3)
         
         logging.info(f"Recommended bull put spread: {spread_details}, Quantity: {quantity}")
         
@@ -65,3 +79,10 @@ def theta_strategy(portfolio_value):
     except Exception as e:
         logging.error(f"Error in theta strategy: {e}")
         return None
+def should_open_spread():
+    try:
+        # Simple readiness check
+        return True, "Ready"
+    except Exception as e:
+        logging.error(f"Error in readiness check: {e}")
+        return False, str(e)
