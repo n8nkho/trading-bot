@@ -67,7 +67,7 @@ def rebalance_bonds(portfolio_value):
 
 def bonds_performance():
     try:
-        position = alpaca.get_position(BONDS_TICKER)
+        position = client.get_open_position(BONDS_TICKER)
         entry_price = position.avg_entry_price
         current_price = yf.Ticker(BONDS_TICKER).history(period="1d")['Close'].iloc[-1]
         pnl = (current_price - entry_price) * position.qty

@@ -56,7 +56,7 @@ def calculate_insurance_position(portfolio_value):
     }
 
 def check_insurance_payout():
-    positions = alpaca.list_positions()
+    positions = client.get_open_positions()
     payout = 0
     for pos in positions:
         if pos.symbol == "SPY" and pos.side == "short":
