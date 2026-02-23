@@ -19,7 +19,100 @@ STABILIZATION_FACTOR = 1.02  # Price must be 2% above low
 ENTRY_WINDOW_START = (14, 30)  # 2:30 PM ET
 ENTRY_WINDOW_END = (15, 45)  # 3:45 PM ET
 
-def evaluate_options_entry(ticker, current_price, metrics):
+def get_options_chain(ticker, dte_target=35):
+    """
+    Fetch the options chain for a given ticker and find the expiration closest to the target DTE.
+    
+    Args:
+        ticker: Stock ticker symbol
+        dte_target: Target days to expiration
+        
+    Returns:
+        DataFrame of call options or None if not available
+    """
+    try:
+        stock = yf.Ticker(ticker)
+        options_dates = stock.options
+        if not options_dates:
+            logging.warning(f"{ticker}: No options data available")
+            return None
+        
+        expiration_date = next((date for date in options_dates if 30 <= (datetime.strptime(date, '%Y-%m-%d') - datetime.now()).days <= 45), None)
+        if not expiration_date:
+            logging.warning(f"{ticker}: No suitable expiration date found")
+            return None
+        
+        options_chain = stock.option_chain(expiration_date)
+        return options_chain.calls
+    except Exception as e:
+        logging.error(f"Error fetching options chain for {ticker}: {type(e).__name__}: {str(e)}")
+        return None
+
+def evaluate_call_option(ticker, current_price, target_dte=35):
+    """
+    Evaluate call options for a given ticker.
+    
+    Args:
+        ticker: Stock ticker symbol
+        current_price: Current stock price
+        target_dte: Target days to expiration
+        
+    Returns:
+        Dict with option details or None if not suitable
+    """
+    calls = get_options_chain(ticker, target_dte)
+    if calls is None or calls.empty:
+        return None
+    
+    atm_strike = min(calls['strike'], key=lambda x: abs(x - current_price))
+    option = calls[calls['strike'] == atm_strike].iloc[0]
+    
+    premium = option['ask']
+    bid = option['bid']
+    ask = option['ask']
+    breakeven = atm_strike + premium
+    bid_ask_spread_pct = (ask - bid) / premium
+    leverage = current_price / premium
+    
+    return {
+        'strike': atm_strike,
+        'expiration': option['expiration'],
+        'premium': premium,
+        'bid': bid,
+        'ask': ask,
+        'breakeven': breakeven,
+        'bid_ask_spread_pct': bid_ask_spread_pct,
+        'leverage': leverage,
+        'volume': option['volume']
+    }
+
+def compare_stock_vs_option(ticker, current_price, metrics):
+    """
+    Compare stock and option trades for a given ticker.
+    
+    Args:
+        ticker: Stock ticker symbol
+        current_price: Current stock price
+        metrics: Additional metrics for decision making
+        
+    Returns:
+        "STOCK" or "OPTION" with details
+    """
+    stock_return = (metrics['target_price'] - current_price) / current_price
+    option_details = evaluate_call_option(ticker, current_price)
+    
+    if option_details is None:
+        return "STOCK", None
+    
+    option_return = (option_details['breakeven'] - current_price) / option_details['premium']
+    
+    if (option_details['bid_ask_spread_pct'] < 0.15 and
+        option_details['premium'] < 500 and
+        option_details['volume'] > 100 and
+        option_return > stock_return * 3):
+        return "OPTION", option_details
+    else:
+        return "STOCK", None
     """
     Evaluate options entry for a given ticker.
     
@@ -119,6 +212,44 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
     decisions = []
     
     for candidate in candidates:
+        ticker = candidate['ticker']
+        logging.info(f"Evaluating entry for {ticker}")
+        
+        try:
+            current_price = candidate['current_price']
+            trade_type, option_details = compare_stock_vs_option(ticker, current_price, candidate)
+            
+            if trade_type == "OPTION":
+                contracts = min(3, int(500 / (option_details['premium'] * 100)))
+                total_cost = contracts * option_details['premium'] * 100
+                
+                decision = {
+                    'ticker': ticker,
+                    'type': 'OPTION',
+                    'strike': option_details['strike'],
+                    'expiration': option_details['expiration'],
+                    'premium': option_details['premium'],
+                    'contracts': contracts,
+                    'cost': total_cost,
+                    'breakeven': option_details['breakeven'],
+                    'timestamp': datetime.now().isoformat()
+                }
+                logging.info(f"{ticker}: OPTION decision - {decision}")
+            else:
+                decision = evaluate_single_entry(candidate, portfolio_value)
+                logging.info(f"{ticker}: STOCK decision - {decision}")
+            
+            decisions.append(decision)
+        except Exception as e:
+            logging.error(f"Error evaluating {ticker}: {type(e).__name__}: {str(e)}")
+            decisions.append({
+                'ticker': ticker,
+                'action': 'SKIP',
+                'reason': f'Error during evaluation: {str(e)}',
+                'position_size': 0,
+                'shares': 0,
+                'timestamp': datetime.now().isoformat()
+            })
         ticker = candidate['ticker']
         logging.info(f"Evaluating entry for {ticker}")
         
