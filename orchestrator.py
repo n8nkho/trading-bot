@@ -1456,6 +1456,23 @@ if __name__ == "__main__":
     
     elif command == "fortress":
         run_fortress()
+    elif command == "snipe":
+        portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else 10000
+        logger.info(f"Running intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
+        opportunities = scan_intraday_opportunities(portfolio_value)
+        
+        logger.info("=" * 80)
+        logger.info("INTRADAY SNIPER RESULTS")
+        logger.info("=" * 80)
+        logger.info(f"Opportunities found: {len(opportunities)}")
+        
+        if opportunities:
+            for opp in opportunities:
+                logger.info(f"{opp['ticker']} @ ${opp['entry_price']:.2f}")
+                logger.info(f"  Metrics: {opp['metrics']}")
+        else:
+            logger.info("No opportunities found")
+
 def run_fortress():
     """Run complete fortress hedging system."""
     logger.info("=" * 80)
