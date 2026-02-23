@@ -123,6 +123,7 @@ def check_option_exit(position):
     reason = f"No option exit conditions met (Profit: {profit_pct:.2f}%, DTE: {dte})"
     logging.info(f"{ticker}: {reason}")
     return create_hold_decision(ticker, reason, current_premium, profit_pct)
+def monitor_positions(positions):
     """
     Monitor open positions and generate exit decisions.
     
