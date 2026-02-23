@@ -27,7 +27,57 @@ TIER_1_SELL_PCT = 0.50  # Sell 50% at tier 1
 TIER_2_SELL_PCT = 0.30  # Sell 30% at tier 2
 TIER_3_SELL_PCT = 0.20  # Sell remaining 20% at tier 3
 
-def check_option_exit(position):
+def monitor_positions(positions):
+    """
+    Monitor open positions and generate exit decisions.
+    
+    Args:
+        positions: List of position dicts with:
+            - ticker: Stock symbol
+            - entry_price: Entry price per share
+            - qty or shares: Number of shares
+            - entry_time or entry_date: Entry timestamp (ISO format string or datetime)
+            - tiers_sold: Optional dict tracking which tiers have been sold
+            
+    Returns:
+        List of exit decision dicts with action and reasoning
+    """
+    logging.info(f"Starting exit monitoring for {len(positions)} positions")
+    
+    decisions = []
+    
+    for pos in positions:
+        ticker = pos['ticker']
+        logging.info(f"Monitoring position: {ticker} ({pos.get('type', 'STOCK')})")
+        
+        try:
+            if pos.get('type') == 'OPTION':
+                decision = check_option_exit(pos)
+            else:
+                decision = evaluate_exit(pos)
+            decisions.append(decision)
+            
+            logging.info(f"{ticker}: {decision['action']} - {decision['reason']}")
+            
+        except Exception as e:
+            logging.error(f"Error monitoring {ticker}: {type(e).__name__}: {str(e)}")
+            decisions.append({
+                'ticker': ticker,
+                'action': 'HOLD',
+                'reason': f'Error during evaluation: {str(e)}',
+                'current_price': None,
+                'pnl_pct': None,
+                'timestamp': datetime.now().isoformat()
+            })
+    
+    action_summary = {}
+    for d in decisions:
+        action = d['action']
+        action_summary[action] = action_summary.get(action, 0) + 1
+    
+    logging.info(f"Exit monitoring complete: {action_summary}")
+    
+    return decisions
     """
     Evaluate exit conditions for an option position.
     
