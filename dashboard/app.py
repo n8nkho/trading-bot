@@ -110,15 +110,22 @@ def get_market_status():
         et_tz = pytz.timezone('America/New_York')
         now_et = datetime.now(et_tz)
         
+        # Log current day and hour
+        logging.debug(f"Current day: {now_et.weekday()}, Current hour: {now_et.hour}")
+        
         # Check if weekend
         if now_et.weekday() >= 5:
+            logging.debug("Market is closed: Weekend")
             return False
         
         # Check market hours
         market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
         market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
         
-        return market_open <= now_et <= market_close
+        is_open = market_open <= now_et <= market_close
+        logging.debug(f"Market open calculation: {is_open}")
+        
+        return is_open
     except Exception as e:
         logging.error(f"Error checking market status: {e}")
         return False
