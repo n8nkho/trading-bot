@@ -30,6 +30,7 @@ from agents.document_analyst import quick_fundamental_check
 from agents.intraday_sniper import scan_intraday_opportunities
 from agents.momentum_trader import momentum_strategy
 from utils.grok_sentiment import check_twitter_sentiment
+from agents.trump_trader import trump_strategy
 from utils.cost_calculator import (
     get_daily_costs,
     get_monthly_projection,
@@ -824,7 +825,26 @@ def run_momentum():
     except Exception as e:
         logger.error(f"Momentum error: {e}")
         return None
-async def monitor_positions_async():
+def run_trump_trader():
+    """Run Trump policy correlation trading."""
+    from agents.trump_trader import trump_strategy
+    
+    logger.info("=" * 80)
+    logger.info("TRUMP POLICY TRADER")
+    logger.info("=" * 80)
+    
+    try:
+        result = trump_strategy()
+        
+        if result:
+            logger.info(f"Trump signal detected: {result}")
+        else:
+            logger.info("No Trump policy signals detected")
+            
+        return result
+    except Exception as e:
+        logger.error(f"Trump trader error: {e}")
+        return None
     """
     Monitor open positions and generate exit signals (async version).
     
@@ -1211,6 +1231,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py fortress                   - Run complete hedging system")
         print("  python orchestrator.py momentum                  - Run momentum day trading")
         print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
+        print("  python orchestrator.py trump                      - Monitor Trump policy signals")
         print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
         sys.exit(1)
     
@@ -1547,6 +1568,8 @@ if __name__ == "__main__":
             print("No results returned from fortress hedging system.")
     elif command == "momentum":
         run_momentum()
+    elif command == "trump":
+        run_trump_trader()
     elif command == "snipe":
         portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else 10000
         logger.info(f"Running intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
