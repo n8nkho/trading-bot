@@ -28,9 +28,7 @@ from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mod
 from agents.fortress_orchestrator import fortress_daily_check, generate_fortress_report
 from agents.document_analyst import quick_fundamental_check
 from agents.intraday_sniper import scan_intraday_opportunities
-from agents.momentum_trader import momentum_strategy
 from utils.grok_sentiment import check_twitter_sentiment
-from agents.trump_trader import trump_strategy
 from utils.cost_calculator import (
     get_daily_costs,
     get_monthly_projection,
@@ -805,46 +803,7 @@ def run_fortress():
         traceback.print_exc()
         run_fortress()
 
-def run_momentum():
-    """Run momentum day trading strategy."""
-    from agents.momentum_trader import momentum_strategy
-    
-    logger.info("=" * 80)
-    logger.info("MOMENTUM DAY TRADER")
-    logger.info("=" * 80)
-    
-    try:
-        result = momentum_strategy()
-        
-        if result:
-            logger.info(f"Momentum trades executed: {result}")
-        else:
-            logger.info("No momentum setups found")
-            
-        return result
-    except Exception as e:
-        logger.error(f"Momentum error: {e}")
-        return None
-def run_trump_trader():
-    """Run Trump policy correlation trading."""
-    from agents.trump_trader import trump_strategy
-    
-    logger.info("=" * 80)
-    logger.info("TRUMP POLICY TRADER")
-    logger.info("=" * 80)
-    
-    try:
-        result = trump_strategy()
-        
-        if result:
-            logger.info(f"Trump signal detected: {result}")
-        else:
-            logger.info("No Trump policy signals detected")
-            
-        return result
-    except Exception as e:
-        logger.error(f"Trump trader error: {e}")
-        return None
+async def monitor_positions_async():
     """
     Monitor open positions and generate exit signals (async version).
     
@@ -1005,158 +964,6 @@ def monitor_positions():
         dict: Position monitoring results
     """
     return asyncio.run(monitor_positions_async())
-
-async def monitor_positions_async():
-    """
-    Monitor open positions and generate exit signals (async version).
-    
-    Workflow:
-    1. Load open positions from data/positions.json
-    2. Check if market is open
-    3. Run exit monitoring for each position in parallel
-    4. Execute exit orders in parallel
-    5. Save exit signals to data/exit_signals_YYYYMMDD.json
-    
-    Returns:
-        dict: {
-            'timestamp': ISO timestamp,
-            'positions_monitored': int,
-            'exit_signals': list of exit decision dicts,
-            'market_open': bool
-        }
-    """
-    logger.info("=" * 80)
-    logger.info("STARTING POSITION MONITORING")
-    logger.info("=" * 80)
-    
-    start_time = datetime.now()
-    
-    try:
-        # Check if market is open
-        market_open = is_market_hours()
-        
-        if not market_open:
-            logger.info("Market is closed. Skipping position monitoring.")
-            result = {
-                'timestamp': datetime.now().isoformat(),
-                'market_open': False,
-                'positions_monitored': 0,
-                'exit_signals': []
-            }
-            return result
-        
-        # Load open positions
-        positions = load_positions()
-        
-        if len(positions) == 0:
-            logger.info("No open positions to monitor.")
-            result = {
-                'timestamp': datetime.now().isoformat(),
-                'market_open': True,
-                'positions_monitored': 0,
-                'exit_signals': []
-            }
-            return result
-        
-        logger.info(f"Monitoring {len(positions)} open positions...")
-        
-        # Run exit monitoring (async)
-        exit_signals = await asyncio.to_thread(monitor_exit_conditions, positions)
-        
-        # Count actions
-        action_counts = {}
-        for signal in exit_signals:
-            action = signal['action']
-            action_counts[action] = action_counts.get(action, 0) + 1
-        
-        logger.info(f"Exit monitoring complete: {action_counts}")
-        
-        # Execute sell orders for exit signals (in parallel)
-        logger.info("Executing exit orders...")
-        
-        async def execute_exit(signal):
-            """Execute a single exit order asynchronously."""
-            if signal['action'] not in ['SELL_ALL', 'SELL_HALF']:
-                return None
-            
-            ticker = signal['ticker']
-            sell_qty = signal.get('sell_qty', 0)
-            
-            if sell_qty <= 0:
-                return None
-            
-            # Execute sell order
-            order_result = await asyncio.to_thread(execute_sell_order, ticker, sell_qty)
-            
-            if order_result['success']:
-                logger.info(f"{ticker}: Exit order executed - ID: {order_result['order_id']}")
-                
-                signal['order_id'] = order_result['order_id']
-                signal['order_status'] = order_result['status']
-                signal['filled_qty'] = order_result['filled_qty']
-                signal['filled_price'] = order_result['filled_price']
-                signal['executed'] = True
-                signal['execution_time'] = datetime.now().isoformat()
-                
-                # Update positions file
-                if signal['action'] == 'SELL_ALL':
-                    await asyncio.to_thread(remove_position, ticker)
-                else:  # SELL_HALF
-                    await asyncio.to_thread(update_position_quantity, ticker, sell_qty)
-                
-                return ('success', signal)
-            else:
-                logger.error(f"{ticker}: Exit order failed - {order_result['error']}")
-                signal['executed'] = False
-                signal['execution_error'] = order_result['error']
-                return ('failure', signal)
-        
-        # Execute all exits in parallel
-        exit_results = await asyncio.gather(*[execute_exit(s) for s in exit_signals])
-        
-        executed_exits = [signal for result in exit_results if result and result[0] == 'success' for _, signal in [result]]
-        exit_failures = [signal for result in exit_results if result and result[0] == 'failure' for _, signal in [result]]
-        
-        # Compile results
-        end_time = datetime.now()
-        duration = (end_time - start_time).total_seconds()
-        
-        result = {
-            'timestamp': end_time.isoformat(),
-            'duration_seconds': duration,
-            'market_open': True,
-            'positions_monitored': len(positions),
-            'exit_signals': exit_signals,
-            'executed_exits': executed_exits,
-            'exit_failures': exit_failures,
-            'action_summary': action_counts
-        }
-        
-        logger.info("=" * 80)
-        logger.info(f"POSITION MONITORING COMPLETE: {len(executed_exits)} exits executed, {len(exit_failures)} failed")
-        logger.info(f"Duration: {duration:.2f} seconds")
-        logger.info("=" * 80)
-        
-        # Save exit signals
-        save_exit_signals(result)
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Error in position monitoring: {type(e).__name__}: {str(e)}")
-        logger.error(f"Traceback:", exc_info=True)
-        
-        # Return error result
-        result = {
-            'timestamp': datetime.now().isoformat(),
-            'error': str(e),
-            'error_type': type(e).__name__,
-            'market_open': is_market_hours(),
-            'positions_monitored': 0,
-            'exit_signals': []
-        }
-        save_exit_signals(result)
-        return result
 
 
 def load_positions():
@@ -1381,9 +1188,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py review                     - Weekly performance review")
         print("  python orchestrator.py architect                  - Run meta-architect improvement cycle")
         print("  python orchestrator.py fortress                   - Run complete hedging system")
-        print("  python orchestrator.py momentum                  - Run momentum day trading")
         print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
-        print("  python orchestrator.py trump                      - Monitor Trump policy signals")
         print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
         sys.exit(1)
     
@@ -1718,10 +1523,6 @@ if __name__ == "__main__":
                     print(f"{strategy}: {data}")
         else:
             print("No results returned from fortress hedging system.")
-    elif command == "momentum":
-        run_momentum()
-    elif command == "trump":
-        run_trump_trader()
     elif command == "snipe":
         portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else 10000
         logger.info(f"Running intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
