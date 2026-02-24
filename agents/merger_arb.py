@@ -1,61 +1,105 @@
 import requests
-from datetime import datetime, timedelta
+import yfinance as yf
+from datetime import datetime
 import logging
 
 # Configure logging
 logging.basicConfig(filename='logs/merger_arb.log', level=logging.INFO)
 
-def scan_merger_announcements():
-    """
-    Scrape SEC Edgar for 8-K filings to find merger announcements in the last 30 days.
-    Parse details like target, acquirer, offer price, and expected close date.
-    Return a list of active merger deals.
-    """
-    # Placeholder for actual implementation
-    # Use SEC Edgar API to fetch and parse 8-K filings
-    return []
+ACTIVE_MERGERS = [
+    # Format: (target, acquirer, offer_price, expected_close_date)
+    # User will manually add deals as they're announced
+    # Example: ('ATVI', 'MSFT', 95.00, '2024-10-13')
+]
 
 def calculate_merger_spread(target_ticker, offer_price):
     """
-    Calculate the merger spread and annualized return based on the offer price and current target price.
+    Calculate the merger spread based on the offer price and current target price.
     
     Args:
         target_ticker (str): The ticker of the target company.
         offer_price (float): The offer price for the target company.
     
     Returns:
-        dict: {'spread_percent': float, 'annualized_return_percent': float}
+        float: Spread percentage
     """
-    # Placeholder for actual implementation
-    current_price = 100  # Fetch current price from a market data API
-    spread = (offer_price - current_price) / current_price
-    expected_close_date = datetime.now() + timedelta(days=180)  # Example close date
-    annualized_return = (spread / ((expected_close_date - datetime.now()).days / 365)) * 100
-    return {'spread_percent': spread * 100, 'annualized_return_percent': annualized_return}
+    stock = yf.Ticker(target_ticker)
+    current_price = stock.history(period="1d")['Close'].iloc[-1]
+    spread = ((offer_price - current_price) / current_price) * 100
+    logging.info(f"Calculated spread for {target_ticker}: {spread:.2f}%")
+    return spread
 
-def assess_deal_risk(target, acquirer):
+def calculate_annualized_return(spread_pct, days_to_close):
     """
-    Assess the risk of a merger deal based on regulatory approval, financing, and shareholder approval.
+    Calculate the annualized return based on the spread percentage and days to close.
+    
+    Args:
+        spread_pct (float): The spread percentage.
+        days_to_close (int): The number of days until the expected close date.
+    
+    Returns:
+        float: Annualized return percentage
+    """
+    annualized_return = (spread_pct / days_to_close) * 365
+    logging.info(f"Calculated annualized return: {annualized_return:.2f}%")
+    return annualized_return
+
+def assess_deal_quality(spread_pct, days_to_close):
+    """
+    Assess the quality of a merger deal.
+    
+    Args:
+        spread_pct (float): The spread percentage.
+        days_to_close (int): The number of days until the expected close date.
+    
+    Returns:
+        str: Deal quality ('GREAT', 'GOOD', 'POOR')
+    """
+    if spread_pct > 5 and days_to_close < 120:
+        quality = "GREAT"
+    elif spread_pct > 3 and days_to_close < 180:
+        quality = "GOOD"
+    else:
+        quality = "POOR"
+    logging.info(f"Assessed deal quality: {quality}")
+    return quality
+
+def merger_arb_entry(target, acquirer, offer_price, close_date, portfolio_value):
+    """
+    Recommend entry for a merger arbitrage opportunity.
     
     Args:
         target (str): The target company.
         acquirer (str): The acquiring company.
+        offer_price (float): The offer price for the target company.
+        close_date (str): The expected close date in 'YYYY-MM-DD' format.
+        portfolio_value (float): The total value of the portfolio.
     
     Returns:
-        str: Risk score ('LOW', 'MEDIUM', 'HIGH')
+        dict: Trade recommendation
     """
-    # Placeholder for actual implementation
-    return 'LOW'
-
-def find_spinoff_opportunities():
-    """
-    Scan for announced spinoffs and identify parent companies that are often undervalued before the spinoff.
+    spread_pct = calculate_merger_spread(target, offer_price)
+    days_to_close = (datetime.strptime(close_date, '%Y-%m-%d') - datetime.now()).days
+    annualized_return = calculate_annualized_return(spread_pct, days_to_close)
+    quality = assess_deal_quality(spread_pct, days_to_close)
     
-    Returns:
-        list: Companies with spinoffs in the next 90 days.
-    """
-    # Placeholder for actual implementation
-    return []
+    if quality in ["GREAT", "GOOD"]:
+        position_size = portfolio_value * 0.15
+        recommendation = {
+            'target': target,
+            'acquirer': acquirer,
+            'offer_price': offer_price,
+            'spread_pct': spread_pct,
+            'annualized_return': annualized_return,
+            'quality': quality,
+            'position_size': position_size,
+            'exit_spread': 1.0
+        }
+        logging.info(f"Trade recommendation: {recommendation}")
+        return recommendation
+    else:
+        logging.info(f"No trade recommendation for {target}. Deal quality: {quality}")
+        return None
 
 def merger_arb_strategy(portfolio_value):
     """
@@ -67,12 +111,28 @@ def merger_arb_strategy(portfolio_value):
     Returns:
         list: Trade recommendations.
     """
-    # Placeholder for actual implementation
-    return []
+    recommendations = []
+    for deal in ACTIVE_MERGERS:
+        target, acquirer, offer_price, close_date = deal
+        recommendation = merger_arb_entry(target, acquirer, offer_price, close_date, portfolio_value)
+        if recommendation:
+            recommendations.append(recommendation)
+    logging.info(f"Total recommendations: {len(recommendations)}")
+    return recommendations
 
-def monitor_deal_breaks():
+def add_merger_deal(target, acquirer, offer_price, close_date):
     """
-    Monitor for merger terminations and exit immediately on break news.
+    Add a new merger deal to the active mergers list.
+    
+    Args:
+        target (str): The target company.
+        acquirer (str): The acquiring company.
+        offer_price (float): The offer price for the target company.
+        close_date (str): The expected close date in 'YYYY-MM-DD' format.
     """
-    # Placeholder for actual implementation
-    pass
+    try:
+        datetime.strptime(close_date, '%Y-%m-%d')
+        ACTIVE_MERGERS.append((target, acquirer, offer_price, close_date))
+        logging.info(f"Added new merger deal: {target} acquired by {acquirer} at {offer_price}, closing on {close_date}")
+    except ValueError:
+        logging.error("Invalid date format for close_date. Use 'YYYY-MM-DD'.")
