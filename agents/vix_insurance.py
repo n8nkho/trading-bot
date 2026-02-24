@@ -18,8 +18,13 @@ load_dotenv()
 api_key = os.getenv("APCA_API_KEY_ID")
 secret_key = os.getenv("APCA_API_SECRET_KEY")
 
-# Initialize Alpaca Trading Client
-client = TradingClient(api_key, secret_key, paper=True)
+def get_client():
+    """Get Alpaca trading client."""
+    import os
+    from alpaca.trading.client import TradingClient
+    api_key = os.getenv('ALPACA_API_KEY')
+    secret_key = os.getenv('ALPACA_SECRET_KEY')
+    return TradingClient(api_key, secret_key, paper=True)
 
 def get_current_vix():
     try:
@@ -33,6 +38,7 @@ def get_current_vix():
 def should_buy_insurance(portfolio_value, current_vix):
     if current_vix < VIX_LOW_THRESHOLD:
         # Check for existing VIX position
+        client = get_client()
         positions = client.get_open_positions()
         has_vix_position = any(pos.symbol == "SPY" for pos in positions)
         insurance_cost = portfolio_value * INSURANCE_ALLOCATION_PCT
@@ -56,6 +62,7 @@ def calculate_insurance_position(portfolio_value):
     }
 
 def check_insurance_payout():
+    client = get_client()
     positions = client.get_open_positions()
     payout = 0
     for pos in positions:
@@ -71,6 +78,7 @@ def manage_insurance():
         logging.error("Failed to fetch current VIX.")
         return
 
+    client = get_client()
     portfolio_value = client.get_account().portfolio_value
     buy_insurance, reason = should_buy_insurance(portfolio_value, current_vix)
     if buy_insurance:
