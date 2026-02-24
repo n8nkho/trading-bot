@@ -824,6 +824,7 @@ def run_momentum():
     except Exception as e:
         logger.error(f"Momentum error: {e}")
         return None
+async def monitor_positions_async():
     """
     Monitor open positions and generate exit signals (async version).
     
