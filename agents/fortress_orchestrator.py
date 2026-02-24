@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 
 # Constants
-BUDGET_MODE = True  # Set False when can afford VIX
+BUDGET_MODE = True  # No VIX insurance
 RISK_ON_ALLOCATION = {
     'stocks': 0.30,
     'options': 0.10,
@@ -180,3 +180,4 @@ def fortress_weekly_rebalance():
     rebalance_plan = {}  # Placeholder for actual rebalance logic
     logging.info("Weekly rebalance plan generated.")
     return rebalance_plan
+BUDGET_MODE = True

@@ -1,0 +1,36 @@
+============================================================
+🏥 BOT HEALTH CHECK
+============================================================
+
+1. PROCESS STATUS:
+   ❌ Dashboard: STOPPED
+   ✅ Ollama: RUNNING
+
+2. AUTOMATION STATUS:
+   ✅ Cron jobs: CONFIGURED
+   📋 Active jobs: 7
+
+3. DATA STATUS:
+   ✅ Positions: 2 bytes
+   ✅ Decisions Log: 279 bytes
+   ✅ Watchlist: 689 bytes
+
+4. RECENT ACTIVITY:
+   ⚠️  Screener: 2 hours ago
+   ⚠️  Sniper: 3 hours ago
+   ⚠️  Monitor: 3 hours ago
+
+5. SYSTEM RESOURCES:
+   Disk: 46GB used / 206GB total (22.4%)
+   ✅ Disk space: OK
+
+6. CURRENT POSITIONS:
+   💤 No open positions
+
+7. PERFORMANCE (if available):
+   📈 Win rate (last 20): 0.0%
+
+8. COMPREHENSIVE COSTS:
+   ⏳ No API calls logged today
+Health check complete!
+============================================================

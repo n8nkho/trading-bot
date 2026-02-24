@@ -1,0 +1,107 @@
+efeefe4 fix: update imports in fortress_app.py to include sys and os modules
+538e65a feat: implement backend for fortress dashboard with Flask API endpoints
+9041c3e feat: add fortress_app dashboard module
+99e44cb feat: implement budget mode for hedge strategies and update allocations
+0d46a8b feat: complete fortress hedging system - VIX, bonds, commodities, theta, dividend, pairs
+053c713 fix: correct Alpaca method name in get_portfolio_status() function
+09190da fix: add missing block for 'elif command == "fortress"' in orchestrator.py
+2f9dee0 refactor: Move run_fortress function definition before main execution block
+e7bf1f2 refactor: reorganize command handling for fortress and snipe functions
+5b1865d fix: remove misplaced elif block to resolve syntax error in orchestrator.py
+61d55e1 fix: correct search/replace block in orchestrator.py for snipe command
+2c87622 fix: resolve syntax error by moving 'elif' for 'snipe' command inside main block
+467bf78 feat: add fortress command to orchestrator for hedging system execution
+b636613 fix: update get_portfolio_status() to use correct Alpaca API methods
+ba6a007 feat: Update run_all_hedge_strategies() to handle varied return types
+79884b6 fix: update recommendations keys in run_all_hedge_strategies function
+68d5859 feat: implement master hedging controller with multiple strategies
+fb97e88 feat: add fortress orchestrator agent implementation
+8dcd0d5 fix: update get_price_history to return Series of close prices only
+2cc5009 feat: implement market-neutral pairs trading strategy in pairs_trader.py
+b917153 feat: add pairs trader agent implementation
+95650c2 feat: implement dividend capture strategy with calendar and recommendations
+7fbccc8 feat: add dividend capture agent implementation
+9584c84 feat: Implement bull put spread design and theta strategy functions
+0d63706 feat: implement simple bull put spread strategy with error handling
+e5d318d feat: add theta_spreads agent implementation
+8d8047c feat: implement Gold/Silver hedge trading strategy in commodity_trader.py
+f693467 feat: add commodity trader agent implementation
+654db3e fix: replace undefined 'alpaca' references with 'client' in scripts
+eca361e fix: update Alpaca API imports and calls to use new library syntax
+6877421 feat: add vix insurance and bond manager modules for crash protection
+adfce85 feat: add bond manager and VIX insurance agent modules
+1bd5e72 feat: add economic calendar utility to check news impact on trading
+f4870b2 feat: add economic calendar utility module
+7707dba feat: implement ultra-conservative forex scalping bot in forex_sniper.py
+f1a6d59 feat: implement ultra-conservative forex scalper agent in forex_sniper.py
+31b6b63 feat: add forex_sniper agent script
+d8f0b84 fix: handle None case for option in evaluate_option_trade function
+9b99d08 feat: Update get_options_chain to return expiration date and modify usage
+59b41ef feat: define create_skip_decision and evaluate_single_entry functions
+e794c54 feat: add option evaluation and decision-making logic in entry agent
+52b0f8d feat: add options trading support to orchestrator
+662999b feat: Add option order handling and formatting in orchestrator.py
+0e035c6 fix: add missing function definitions to exit_monitor
+dc5dc55 fix: resolve IndentationError by adding placeholder to check_option_exit function
+19acc7a fix: move position handling into check_option_exit function to resolve errors
+f9e108c fix: resolve IndentationError by adding placeholder to check_option_exit function
+3f646d8 refactor: remove duplicate orphaned code for check_option_exit function
+e25f081 feat: define monitor_positions function to resolve undefined name errors
+7bddc19 feat: define check_option_exit function to evaluate option exit conditions
+195730a feat: define monitor_positions function to handle exit decisions
+d9c1d76 feat: add option exit management with comprehensive logging and conditions
+230ad73 feat: Add options trading capability to entry_agent.py with evaluation logic
+9c36027 fix: Define evaluate_entry function and resolve undefined variables
+d89e5e6 fix: resolve undefined names for ticker and current_price in entry_agent.py
+0bd509d fix: define evaluate_entry function to resolve undefined name errors
+9158038 feat: Enhance entry_agent.py with options trading evaluation function
+a0a7d18 fix: define rsi and volume_ratio before logging in screener_agent.py
+2391aa2 feat: add detailed logging for stock screening process in screener_agent.py
+aa2edda fix: Correct market status detection and add logging for debugging
+22ed41e fix: correct position file loading from list instead of dict
+c9eccfc fix: Improve load_positions() error handling and update get_portfolio_value() logic
+2e62c73 feat: add 'snipe' command to orchestrator for intraday trading opportunities
+a4ddd5e feat: add 'snipe' command to orchestrator for intraday trading opportunities
+a9ab318 refactor: remove WebSocket/SSE features and simplify to basic HTTP routes
+824e922 fix: update grok sentiment model from grok-2-mini to grok-3-mini
+0362030 fix: add error handling for missing keys in costs command
+d4a6d25 feat: add cost tracking command with colorful comprehensive report
+3851179 refactor: update check_health.py to use new cost_calculator module
+935f8cd feat: add comprehensive cost tracking system with API and OCI pricing
+8f76068 fix: remove unused vision_analyst imports and integrate vision into screener
+bac74a6 feat: integrate FREE local pattern detection into screener_agent
+4bb2d3b fix: add robust error handling to pattern_to_signal() and ensure current_price in patterns dict
+bfbb09d feat: replace Claude Vision API with FREE local pattern detection
+d620d94 fix: use Claude Haiku for vision analysis and improve error handling
+2c2a0e9 feat: add API costs and savings section to check_health.py
+18afa79 feat: add health check script for monitoring system status
+7d055ec feat: add API cost tracker with caching savings monitoring
+44e933c feat: add prompt caching to vision analyst for 90% cost reduction
+d53522e feat: add MCP server integration for real-time market data and social sentiment
+c20544c refactor: use asyncio for parallel agent execution with 5x speedup
+8e9f4a8 feat: Implement Server-Sent Events and WebSocket for real-time updates
+1f7d194 feat: add document analyst agent for fundamental analysis
+9f722a5 feat: add Claude Vision analyst for technical chart pattern recognition
+b6b8f9f feat: add meta-architect agent for autonomous self-improvement
+7c6c921 feat: add llama_watchdog agent for monitoring and optimizing Ollama performance
+f6a1214 fix: correct Jinja2 string formatting syntax in templates
+ce2b932 fix: add default filter to today_pnl comparisons in home template
+7edbeaf fix: add default filters to prevent template comparison errors
+b263da7 feat: create dashboard HTML templates with Bootstrap 5 dark theme
+741fb28 feat: add Flask dashboard backend with monitoring routes and health checks
+308ed3b fix: add missing portfolio_value parameter to evaluate_quick_entry
+18863d7 feat: add intraday sniper agent for fast scalping opportunities
+2e2ebce refactor: remove duplicate function definitions in orchestrator.py
+c8c7b43 feat: add Alpaca paper trading execution with order management
+050cfa9 feat: add Alpaca paper trading execution with safety checks
+1207d8a feat: add self-improving performance analyzer with auto-tuning
+734d61b feat: add production-ready orchestrator with screening and monitoring workflows
+e3e0d8b feat: add risk_guardian agent for portfolio protection with circuit breaker
+2a48ab5 feat: add minimal Twitter sentiment checker using Grok API
+f4c721d feat: add exit monitor agent with tiered take profits and news analysis
+bb72d03 feat: add entry agent with buy decision logic and position sizing
+12ab5a4 fix: check screening criteria before LLM analysis and handle missing news titles
+3c1138b fix: increase data fetch period from 10d to 1mo for RSI calculation
+f7bac41 fix: improve error logging and add detailed debugging to screener_agent
+6140371 build: Implement complete stock screener for fundamental value trading
+4a13ab2 Initial zero-cost setup with Python 3.12
