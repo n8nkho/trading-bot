@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""Simple wrapper to run momentum and Trump strategies."""
+"""Run all trading strategies."""
 import sys
 sys.path.insert(0, '/home/ubuntu/trading-bot')
 
 from agents.momentum_trader import momentum_strategy
 from agents.trump_trader import trump_strategy
+from agents.smart_money_trader import smart_money_strategy
+from agents.merger_arb import merger_arb_strategy
+from agents.inefficiency_trader import inefficiency_strategy
 
 if len(sys.argv) < 2:
-    print("Usage: python run_strategies.py [momentum|trump]")
-    print("  momentum - Scan for day trading breakouts")
-    print("  trump    - Monitor Trump policy signals")
+    print("Usage: python run_strategies.py [strategy]")
+    print("\nAvailable strategies:")
+    print("  momentum      - Day trading breakouts")
+    print("  trump         - Trump policy signals")
+    print("  smartmoney    - Institutional order flow")
+    print("  mergerarb     - Merger arbitrage")
+    print("  inefficiency  - Market inefficiencies")
     sys.exit(1)
 
 strategy = sys.argv[1]
@@ -26,6 +33,27 @@ elif strategy == "trump":
     print("TRUMP POLICY TRADER")
     print("=" * 60)
     result = trump_strategy(10000)
+    print(f"\nResult: {result}")
+    
+elif strategy == "smartmoney":
+    print("=" * 60)
+    print("SMART MONEY TRADER (Order Flow)")
+    print("=" * 60)
+    result = smart_money_strategy(10000)
+    print(f"\nResult: {result}")
+    
+elif strategy == "mergerarb":
+    print("=" * 60)
+    print("MERGER ARBITRAGE")
+    print("=" * 60)
+    result = merger_arb_strategy(10000)
+    print(f"\nResult: {result}")
+    
+elif strategy == "inefficiency":
+    print("=" * 60)
+    print("INEFFICIENCY TRADER")
+    print("=" * 60)
+    result = inefficiency_strategy(10000)
     print(f"\nResult: {result}")
     
 else:
