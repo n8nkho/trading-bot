@@ -1,4 +1,5 @@
 import logging
+import pandas as pd
 from datetime import datetime, time
 import yfinance as yf
 import pandas as pd
@@ -70,6 +71,20 @@ def get_liquid_stocks():
         logger.info(f"Using fallback list of {len(fallback)} stocks")
         return fallback
 
+
+def get_sp500_tickers():
+    """
+    Return a list of the top 100 most liquid S&P 500 tickers.
+    """
+    return [
+        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'TSLA', 'META', 'BRK.B',
+        'UNH', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'MA', 'HD', 'CVX', 'MRK',
+        'ABBV', 'KO', 'AVGO', 'PEP', 'COST', 'TMO', 'MCD', 'CSCO', 'ACN',
+        'LLY', 'DHR', 'ABT', 'NKE', 'DIS', 'TXN', 'VZ', 'ADBE', 'WMT',
+        'CRM', 'NFLX', 'ORCL', 'AMD', 'INTC', 'CMCSA', 'PFE', 'PM', 'BA',
+        'QCOM', 'T', 'UNP', 'HON', 'IBM', 'GE', 'INTU', 'SBUX', 'CAT',
+        'PLTR', 'COIN', 'HOOD', 'SOFI', 'RIVN', 'LCID', 'NIO'
+    ]
 
 def scan_for_breakouts(stock_list):
     """
@@ -202,17 +217,17 @@ def momentum_strategy():
     current_time = datetime.now().time()
     
     # Only scan during market hours (9:30 AM - 10:30 AM ET for morning breakouts)
+    tickers = get_sp500_tickers()
     if time(9, 30) <= current_time <= time(10, 30):
         logger.info("=" * 60)
         logger.info("MOMENTUM STRATEGY: Starting morning breakout scan")
         logger.info("=" * 60)
         
         # Step 1: Get liquid stocks (cached, only fetches once)
-        liquid_stocks = get_liquid_stocks()
-        logger.info(f"Scanning universe of {len(liquid_stocks)} liquid stocks")
+        logger.info(f"Scanning universe of {len(tickers)} S&P 500 stocks")
         
         # Step 2: Scan for 3-8% breakouts
-        breakouts = scan_for_breakouts(liquid_stocks)
+        breakouts = scan_for_breakouts(tickers)
         logger.info(f"Found {len(breakouts)} breakouts (3-8% moves)")
         
         # Step 3 & 4: Evaluate and execute trades
