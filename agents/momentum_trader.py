@@ -9,67 +9,6 @@ from functools import lru_cache
 logging.basicConfig(filename='logs/momentum.log', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-@lru_cache(maxsize=1)
-def get_liquid_stocks():
-    """
-    Get a list of liquid stocks from S&P 500 and Russell 2000.
-    Returns ~500-700 stocks with volume > 5M shares.
-    Cached to avoid repeated API calls.
-    """
-    logger.info("Fetching liquid stocks from S&P 500 and Russell 2000...")
-    liquid_stocks = []
-    
-    try:
-        # Get S&P 500 tickers
-        sp500_url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-        sp500_table = pd.read_html(sp500_url)[0]
-        sp500_tickers = sp500_table['Symbol'].tolist()
-        logger.info(f"Found {len(sp500_tickers)} S&P 500 tickers")
-        
-        # Get Russell 2000 tickers (top 200 by market cap)
-        # Note: Full Russell 2000 list requires paid data, using approximation
-        russell_url = 'https://en.wikipedia.org/wiki/Russell_2000_Index'
-        try:
-            russell_tables = pd.read_html(russell_url)
-            russell_tickers = []
-            for table in russell_tables:
-                if 'Ticker' in table.columns or 'Symbol' in table.columns:
-                    col = 'Ticker' if 'Ticker' in table.columns else 'Symbol'
-                    russell_tickers.extend(table[col].tolist())
-            russell_tickers = russell_tickers[:200]  # Top 200
-            logger.info(f"Found {len(russell_tickers)} Russell 2000 tickers")
-        except Exception as e:
-            logger.warning(f"Could not fetch Russell 2000: {e}")
-            russell_tickers = []
-        
-        # Combine and deduplicate
-        all_tickers = list(set(sp500_tickers + russell_tickers))
-        logger.info(f"Total unique tickers: {len(all_tickers)}")
-        
-        # Filter by volume > 5M shares
-        for ticker in all_tickers:
-            try:
-                stock = yf.Ticker(ticker)
-                info = stock.info
-                avg_volume = info.get('averageVolume', 0)
-                
-                if avg_volume > 5_000_000:
-                    liquid_stocks.append(ticker)
-                    
-            except Exception as e:
-                logger.debug(f"Error checking {ticker}: {e}")
-                continue
-        
-        logger.info(f"Filtered to {len(liquid_stocks)} liquid stocks (volume > 5M)")
-        return liquid_stocks
-        
-    except Exception as e:
-        logger.error(f"Error fetching liquid stocks: {e}")
-        # Fallback to major liquid stocks
-        fallback = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 
-                   'AMD', 'COIN', 'HOOD', 'PLTR', 'SOFI', 'RIVN', 'LCID']
-        logger.info(f"Using fallback list of {len(fallback)} stocks")
-        return fallback
 
 
 def get_sp500_tickers():
