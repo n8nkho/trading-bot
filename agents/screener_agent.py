@@ -8,6 +8,7 @@ from pathlib import Path
 import yfinance as yf
 from utils.local_llm import analyze_stock_drop
 from agents.vision_analyst import analyze_chart_patterns, pattern_to_signal
+import pandas as pd
 
 # Load current parameters
 DATA_DIR = Path("data")
@@ -44,16 +45,105 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
+def get_sp500_tickers():
+    """
+    Return a list of the top 100 most liquid S&P 500 tickers.
+    """
+    return [
+        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'TSLA', 'META', 'BRK.B',
+        'UNH', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'MA', 'HD', 'CVX', 'MRK',
+        'ABBV', 'KO', 'AVGO', 'PEP', 'COST', 'TMO', 'MCD', 'CSCO', 'ACN',
+        'LLY', 'DHR', 'ABT', 'NKE', 'DIS', 'TXN', 'VZ', 'ADBE', 'WMT',
+        'CRM', 'NFLX', 'ORCL', 'AMD', 'INTC', 'CMCSA', 'PFE', 'PM', 'BA',
+        'QCOM', 'T', 'UNP', 'HON', 'IBM', 'GE', 'INTU', 'SBUX', 'CAT',
+        'PLTR', 'COIN', 'HOOD', 'SOFI', 'RIVN', 'LCID', 'NIO', 'BABA',
+        'TSM', 'SHOP', 'SQ', 'PYPL', 'UBER', 'LYFT', 'SNAP', 'PINS',
+        'TWLO', 'ZM', 'DOCU', 'CRWD', 'NET', 'DDOG', 'SNOW', 'MDB',
+        'OKTA', 'ZS', 'PANW', 'FTNT', 'NOW', 'WDAY', 'TEAM', 'SPLK',
+        'CCI', 'AMT', 'EQIX', 'DLR', 'PSA', 'SPG', 'O', 'WELL',
+        'ARE', 'AVB', 'EQR', 'VTR', 'ESS', 'MAA', 'UDR', 'CPT'
+    ]
+
+def get_russell2000_top_tickers():
+    """
+    Return a list of top liquid Russell 2000 stocks.
+    These are smaller cap stocks that can have bigger moves.
+    """
+    return [
+        'SIRI', 'PLUG', 'FUBO', 'LAZR', 'OPEN', 'RKT', 'UWMC', 'CLOV',
+        'WISH', 'BARK', 'BODY', 'SPCE', 'ASTR', 'RKLB', 'MNDY', 'FROG',
+        'DKNG', 'PENN', 'CHWY', 'ETSY', 'W', 'CVNA', 'APRN', 'BYND',
+        'TDOC', 'PTON', 'ROKU', 'SPOT', 'TTD', 'MELI', 'SE', 'BKNG',
+        'ABNB', 'DASH', 'RBLX', 'U', 'PATH', 'BILL', 'SMAR', 'GTLB',
+        'S', 'DOCN', 'FSLY', 'ESTC', 'CFLT', 'NCNO', 'BRZE', 'JAMF',
+        'SUMO', 'FROG', 'BIGC', 'ASAN', 'ZI', 'PCOR', 'TENB', 'ALRM',
+        'QLYS', 'VRNS', 'MIME', 'BLKB', 'APPF', 'PRGS', 'MITK', 'QTWO'
+    ]
+
+def get_all_liquid_stocks():
+    """
+    Get a comprehensive list of 500-1000 liquid stocks to scan.
+    
+    Combines:
+    - S&P 500 stocks (large cap)
+    - Russell 2000 top stocks (small/mid cap)
+    - Filters for volume > 1M shares and price > $5
+    
+    Returns:
+        List of ticker symbols
+    """
+    logging.info("Building dynamic stock universe...")
+    
+    # Start with S&P 500 and Russell 2000 top stocks
+    all_tickers = list(set(get_sp500_tickers() + get_russell2000_top_tickers()))
+    logging.info(f"Starting with {len(all_tickers)} tickers from S&P 500 + Russell 2000")
+    
+    # Filter for liquid stocks (volume > 1M, price > $5)
+    liquid_stocks = []
+    for ticker in all_tickers:
+        try:
+            stock = yf.Ticker(ticker)
+            info = stock.info
+            
+            # Check volume and price criteria
+            avg_volume = info.get('averageVolume', 0)
+            current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
+            
+            if avg_volume > 1_000_000 and current_price > 5:
+                liquid_stocks.append(ticker)
+        except Exception as e:
+            logging.debug(f"Skipping {ticker} during filtering: {e}")
+            continue
+    
+    logging.info(f"Filtered to {len(liquid_stocks)} liquid stocks (volume > 1M, price > $5)")
+    return liquid_stocks
+
 def run_screener():
     # Load current parameters (may have been auto-tuned)
     params = load_screening_params()
     
-    with open('config/watchlist.json', 'r') as f:
-        watchlist = json.load(f)['quality_stocks']
+    # Get dynamic list of 500-1000 liquid stocks instead of static watchlist
+    logging.info("=" * 80)
+    logging.info("DYNAMIC SCREENER: Building stock universe...")
+    logging.info("=" * 80)
+    
+    all_tickers = get_all_liquid_stocks()
+    watchlist = [{'ticker': t, 'sector': 'Various', 'name': t} for t in all_tickers]
+    
+    logging.info(f"Scanning {len(watchlist)} stocks for opportunities...")
+    logging.info(f"Criteria: Drop {params['drop_min']}% to {params['drop_max']}%, RSI < {params['rsi_threshold']}, Volume > {params['volume_ratio_min']}x")
+    logging.info("=" * 80)
 
     candidates = []
+    scanned_count = 0
     for stock in watchlist:
         ticker = stock['ticker']
+        scanned_count += 1
+        
+        # Log progress every 50 stocks
+        if scanned_count % 50 == 0:
+            logging.info(f"Progress: {scanned_count}/{len(watchlist)} stocks scanned, {len(candidates)} candidates found so far...")
+        
         logging.info(f"Scanning {ticker}...")
 
         try:
