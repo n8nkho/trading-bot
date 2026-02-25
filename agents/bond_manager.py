@@ -78,6 +78,7 @@ def rebalance_bonds(portfolio_value):
 
 def bonds_performance():
     try:
+        client = get_client()
         position = client.get_open_position(BONDS_TICKER)
         entry_price = position.avg_entry_price
         current_price = yf.Ticker(BONDS_TICKER).history(period="1d")['Close'].iloc[-1]
