@@ -108,6 +108,7 @@ def run_all_hedge_strategies(portfolio_value):
             # - Increase bond allocation by 5%
             # - Increase pairs trading by 3%
             # - Increase commodity hedge by 2%
+            from agents.bond_manager import calculate_bond_target, get_market_regime
             recommendations['bonds'] = {'target': calculate_bond_target(portfolio_value, get_market_regime()) * 1.05}
             recommendations['pairs_trading'] = {'action': 'INCREASE', 'reason': 'Budget mode - increased allocation'}
             recommendations['commodities'] = {'action': 'INCREASE', 'reason': 'Budget mode - increased allocation'}
@@ -115,6 +116,7 @@ def run_all_hedge_strategies(portfolio_value):
             # VIX Insurance
             from agents.vix_insurance import should_buy_insurance, calculate_insurance_position
 
+            from agents.vix_insurance import get_current_vix
             should_buy, reason = should_buy_insurance(portfolio_value, get_current_vix())
             if should_buy:
                 insurance = calculate_insurance_position(portfolio_value)
@@ -123,7 +125,7 @@ def run_all_hedge_strategies(portfolio_value):
                 recommendations['vix_insurance'] = {'action': 'HOLD', 'reason': reason}
 
         # Bonds
-        from agents.bond_manager import calculate_bond_target
+        from agents.bond_manager import calculate_bond_target, get_market_regime
 
         recommendations['bonds'] = {'target': calculate_bond_target(portfolio_value, get_market_regime())}
 
