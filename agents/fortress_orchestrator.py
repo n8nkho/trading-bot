@@ -1,4 +1,3 @@
-from alpaca.trading.client import TradingClient
 import os
 import json
 import logging
@@ -58,6 +57,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 def get_portfolio_status():
     """Connect to Alpaca and get portfolio status."""
     from alpaca.trading.client import TradingClient
+    from alpaca.trading.client import TradingClient
     client = TradingClient(os.getenv('APCA_API_KEY_ID'), os.getenv('APCA_API_SECRET_KEY'))
     account = client.get_account()
     positions = client.get_all_positions()
@@ -114,9 +114,7 @@ def run_all_hedge_strategies(portfolio_value):
             recommendations['commodities'] = {'action': 'INCREASE', 'reason': 'Budget mode - increased allocation'}
         else:
             # VIX Insurance
-            from agents.vix_insurance import should_buy_insurance, calculate_insurance_position
-
-            from agents.vix_insurance import get_current_vix
+            from agents.vix_insurance import should_buy_insurance, calculate_insurance_position, get_current_vix
             should_buy, reason = should_buy_insurance(portfolio_value, get_current_vix())
             if should_buy:
                 insurance = calculate_insurance_position(portfolio_value)
