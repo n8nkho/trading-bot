@@ -35,12 +35,12 @@ elif strategy == "trump":
     result = trump_strategy(10000)
     print(f"\nResult: {result}")
     
-elif strategy == "smartmoney":
-    print("=" * 60)
-    print("SMART MONEY TRADER (Order Flow)")
-    print("=" * 60)
-    result = smart_money_strategy(10000)
-    print(f"\nResult: {result}")
+# elif strategy == "smartmoney":
+#     print("=" * 60)
+#     print("SMART MONEY TRADER (Order Flow)")
+#     print("=" * 60)
+#     result = smart_money_strategy(10000)
+#     print(f"\nResult: {result}")
     
 elif strategy == "mergerarb":
     print("=" * 60)

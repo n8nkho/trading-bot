@@ -125,7 +125,7 @@ def detect_order_blocks(ticker, days=60):
         high_max = window['High'].max()
         low_min = window['Low'].min()
         range_pct = (high_max - low_min) / low_min
-        if float(range_pct) < 0.02:
+        if range_pct < 0.02:
             close_max = data['Close'].iloc[i+3:i+6].max()
             last_close = window['Close'].iloc[-1]
             if (close_max - last_close) / last_close > 0.05:
