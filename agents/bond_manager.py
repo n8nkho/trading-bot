@@ -50,6 +50,7 @@ def calculate_bond_target(portfolio_value, market_regime):
 
 def get_current_bond_position():
     client = get_client()
+    client = get_client()
     try:
         client = get_client()
         client = get_client()
