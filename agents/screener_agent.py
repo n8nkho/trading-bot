@@ -313,3 +313,4 @@ if __name__ == "__main__":
     filename = f"data/screening_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(filename, 'w') as f:
         json.dump(results, f, indent=2)
+PAPER_TRADING_MODE = True  # Bypass slow LLM for now
