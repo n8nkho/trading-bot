@@ -25,7 +25,7 @@ from agents.exit_monitor import monitor_positions as monitor_exit_conditions
 from agents.risk_guardian import check_risk_limits, get_risk_status
 from agents.performance_analyzer import track_decision, load_current_params
 from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mode
-from agents.fortress_orchestrator import fortress_daily_check, generate_fortress_report
+# from agents.fortress_orchestrator import fortress_daily_check, generate_fortress_report
 from agents.document_analyst import quick_fundamental_check
 from agents.intraday_sniper import scan_intraday_opportunities
 from utils.grok_sentiment import check_twitter_sentiment
