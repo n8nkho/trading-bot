@@ -205,16 +205,28 @@ def run_screener():
                 logging.info(f"  ❌ Rejected: Does not meet volume criteria (vol_ratio: {volume_ratio:.1f}, need > {params['volume_ratio_min']})")
                 continue
 
-            # Stock meets ALL criteria - fetch news and analyze with LLM
+            # Stock meets ALL criteria
             logging.info(f"  ✅ Passes filters")
-            logging.info(f"  MEETS ALL CRITERIA - Fetching news headlines...")
-            news_headlines = get_news_headlines(ticker, 3)
-            logging.info(f"{ticker}: Found {len(news_headlines)} news headlines")
+            
+            if PAPER_TRADING_MODE:
+                # Skip slow LLM analysis for paper trading
+                logging.info(f"  QUALIFIED - bypassing LLM in paper trading mode")
+                analysis = {
+                    'decision': 'BUY',
+                    'confidence': 0.85,  # High confidence from filters
+                    'reasoning': f'Passes all filters: {drop_pct:.1f}% drop, RSI {rsi:.1f}, volume {volume_ratio:.1f}x'
+                }
+                news_headlines = []
+            else:
+                # Normal LLM analysis
+                logging.info(f"  MEETS ALL CRITERIA - Fetching news headlines...")
+                news_headlines = get_news_headlines(ticker, 3)
+                logging.info(f"{ticker}: Found {len(news_headlines)} news headlines")
 
-            # Analyze stock drop with LLM
-            logging.info(f"{ticker}: Analyzing stock drop with LLM...")
-            analysis = analyze_stock_drop(ticker, news_headlines, {'drop_pct': drop_pct, 'rsi': rsi})
-            logging.info(f"{ticker}: Analysis complete")
+                # Analyze stock drop with LLM
+                logging.info(f"{ticker}: Analyzing stock drop with LLM...")
+                analysis = analyze_stock_drop(ticker, news_headlines, {'drop_pct': drop_pct, 'rsi': rsi})
+                logging.info(f"{ticker}: Analysis complete")
 
             # Run FREE local pattern detection for technical confirmation
             logging.info(f"{ticker}: Running FREE pattern detection...")
