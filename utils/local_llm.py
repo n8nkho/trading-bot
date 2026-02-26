@@ -2,7 +2,7 @@ import subprocess
 import json
 import re
 
-def call_ollama(prompt, model="llama3.1:8b", timeout=60):
+def call_ollama(prompt, model="khf-fast:latest", timeout=60):
     """Call local Ollama model - increased timeout for ARM CPU"""
     try:
         result = subprocess.run(
@@ -28,7 +28,7 @@ News: {news_text}
 Is this UNFAIR (overreaction) or FAIR (legitimate)?
 Return JSON: {{"classification": "UNFAIR/FAIR", "confidence": 0.8, "reasoning": "why"}}"""
 
-    response = call_ollama(prompt, model="llama3.1:8b", timeout=90)
+    response = call_ollama(prompt, model="khf-fast:latest", timeout=90)
     
     try:
         match = re.search(r'\{[^{}]*\}', response, re.DOTALL)
