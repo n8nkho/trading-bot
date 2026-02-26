@@ -41,22 +41,22 @@ SERVICES = {
     }
 }
 
-# Cron jobs to verify (log file patterns)
+# Cron jobs to verify (direct log file paths)
 CRON_JOBS = {
-    'daily_screening': {
-        'log_pattern': 'screening_*.log',
+    'screener': {
+        'log_file': LOG_DIR / 'screener.log',
         'description': 'Daily stock screening',
         'max_age_hours': 26  # Should run daily, allow some buffer
     },
-    'position_monitoring': {
-        'log_pattern': 'monitoring_*.log',
+    'monitor': {
+        'log_file': LOG_DIR / 'monitor.log',
         'description': 'Position monitoring',
         'max_age_hours': 2  # Should run hourly during market hours
     },
-    'fortress_check': {
-        'log_pattern': 'fortress_*.log',
-        'description': 'Fortress orchestrator',
-        'max_age_hours': 26
+    'sniper': {
+        'log_file': LOG_DIR / 'sniper.log',
+        'description': 'Sniper trading',
+        'max_age_hours': 2
     }
 }
 
@@ -164,28 +164,37 @@ def restart_service(service_name, config):
         logging.error(f"Error restarting service '{service_name}': {e}")
         return False
 
-def get_latest_log_file(pattern):
+def is_log_fresh(log_file, max_age_hours):
     """
-    Find the most recent log file matching pattern
+    Check if log file is fresh (within max_age_hours)
     
     Args:
-        pattern: Glob pattern for log files
+        log_file: Path to log file
+        max_age_hours: Maximum age in hours
         
     Returns:
-        Path object or None if no files found
+        bool: True if fresh, False if stale
     """
     try:
-        log_files = list(CRON_LOGS_DIR.glob(pattern))
-        if not log_files:
-            return None
+        if not log_file or not log_file.exists():
+            return False
         
-        # Return most recently modified
-        latest = max(log_files, key=lambda p: p.stat().st_mtime)
-        return latest
+        mod_time = datetime.fromtimestamp(log_file.stat().st_mtime)
+        age = datetime.now() - mod_time
+        max_age = timedelta(hours=max_age_hours)
+        
+        is_fresh = age <= max_age
+        
+        if is_fresh:
+            logging.debug(f"Log file '{log_file.name}' is fresh (age: {age})")
+        else:
+            logging.warning(f"Log file '{log_file.name}' is stale (age: {age}, max: {max_age})")
+            
+        return is_fresh
         
     except Exception as e:
-        logging.error(f"Error finding log files for pattern '{pattern}': {e}")
-        return None
+        logging.error(f"Error checking log freshness for '{log_file}': {e}")
+        return False
 
 def is_log_fresh(log_file, max_age_hours):
     """
@@ -232,12 +241,7 @@ def verify_cron_jobs():
     
     for job_name, config in CRON_JOBS.items():
         try:
-            log_file = get_latest_log_file(config['log_pattern'])
-            
-            if not log_file:
-                logging.warning(f"Cron job '{job_name}': No log files found for pattern '{config['log_pattern']}'")
-                stale_jobs.append(job_name)
-                continue
+            log_file = config['log_file']
             
             if not is_log_fresh(log_file, config['max_age_hours']):
                 logging.warning(f"Cron job '{job_name}': Log is stale (file: {log_file.name})")
