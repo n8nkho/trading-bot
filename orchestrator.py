@@ -64,7 +64,7 @@ PORTFOLIO_VALUE = 50000  # Default portfolio value
 
 # Auto-execution configuration (Paper Trading Only)
 PAPER_TRADING_AUTO_EXECUTE = True  # Auto-execute qualified trades
-MAX_AUTO_TRADES_PER_DAY = 3
+MAX_AUTO_TRADES_PER_DAY = 6
 MIN_CONFIDENCE_FOR_AUTO = 0.70
 AUTO_POSITION_SIZE = 500  # $500 per trade
 AUTO_STOP_LOSS_PCT = 5.0  # 5% stop loss
