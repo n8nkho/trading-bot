@@ -3,6 +3,8 @@ import yfinance as yf
 from datetime import datetime, timedelta
 import sys
 import os
+import json
+from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -15,17 +17,10 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-# Exit Configuration
-STOP_LOSS_PCT = -0.02  # -2% stop loss
-TAKE_PROFIT_T1_PCT = 0.015  # +1.5% take profit tier 1
-TAKE_PROFIT_T2_PCT = 0.03  # +3% take profit tier 2
-TAKE_PROFIT_T3_PCT = 0.05  # +5% take profit tier 3
-MAX_HOLD_DAYS = 3  # Maximum hold period
-
-# Tier sell percentages
-TIER_1_SELL_PCT = 0.50  # Sell 50% at tier 1
-TIER_2_SELL_PCT = 0.30  # Sell 30% at tier 2
-TIER_3_SELL_PCT = 0.20  # Sell remaining 20% at tier 3
+# Exit Configuration for Auto-Executed Trades
+STOP_LOSS_PCT = -0.05  # -5% stop loss
+PROFIT_TARGET_PCT = 0.10  # +10% profit target
+MAX_HOLD_DAYS = 5  # Maximum hold period (time stop)
 
 def check_option_exit(position):
     pass
@@ -233,8 +228,13 @@ def evaluate_exit(position):
     """
     Evaluate exit conditions for a single position.
     
+    Simplified exit rules for auto-executed trades:
+    1. Stop loss: -5%
+    2. Profit target: +10%
+    3. Time stop: 5 days
+    
     Args:
-        position: Position dict with ticker, entry_price, qty/shares, entry_time/entry_date, tiers_sold
+        position: Position dict with ticker, entry_price, qty/shares, entry_time/entry_date
         
     Returns:
         Decision dict with action, reason, sell_qty, current_price, pnl_pct
@@ -245,7 +245,6 @@ def evaluate_exit(position):
     qty = position.get('qty') or position.get('shares', 0)
     # Handle both 'entry_time' and 'entry_date' keys
     entry_time = position.get('entry_time') or position.get('entry_date')
-    tiers_sold = position.get('tiers_sold', {'tier1': False, 'tier2': False, 'tier3': False})
     
     # Parse entry time
     if isinstance(entry_time, str):
@@ -265,68 +264,33 @@ def evaluate_exit(position):
     
     logging.info(f"{ticker}: Entry: ${entry_price:.2f}, Current: ${current_price:.2f}, P&L: {pnl_pct*100:.2f}%")
     
-    # Check 1: Stop Loss (-2%)
+    # Check 1: Stop Loss (-5%)
     if pnl_pct <= STOP_LOSS_PCT:
-        reason = f"Stop loss triggered: {pnl_pct*100:.2f}% <= {STOP_LOSS_PCT*100:.2f}%"
+        reason = f"Stop loss hit: {pnl_pct*100:.2f}% <= {STOP_LOSS_PCT*100:.2f}%"
         logging.warning(f"{ticker}: {reason}")
         return create_exit_decision(
             ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct, 
             stop_loss=True
         )
     
-    # Check 2: Time Limit (3 days)
+    # Check 2: Profit Target (+10%)
+    if pnl_pct >= PROFIT_TARGET_PCT:
+        reason = f"Profit target hit: {pnl_pct*100:.2f}% >= {PROFIT_TARGET_PCT*100:.2f}%"
+        logging.info(f"{ticker}: {reason}")
+        return create_exit_decision(
+            ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct,
+            profit_target=True
+        )
+    
+    # Check 3: Time Stop (5 days)
     days_held = (datetime.now() - entry_time.replace(tzinfo=None)).days
     if days_held >= MAX_HOLD_DAYS:
-        reason = f"Time limit reached: {days_held} days >= {MAX_HOLD_DAYS} days"
+        reason = f"Time stop: held {days_held} days >= {MAX_HOLD_DAYS} days"
         logging.info(f"{ticker}: {reason}")
         return create_exit_decision(
             ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct,
             time_limit=True
         )
-    
-    # Check 3: Negative News
-    news_check = check_negative_news(ticker)
-    if news_check['has_negative_news']:
-        reason = f"Negative news detected: {news_check['summary']}"
-        logging.warning(f"{ticker}: {reason}")
-        return create_exit_decision(
-            ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct,
-            negative_news=True
-        )
-    
-    # Check 4: Tiered Take Profits
-    # Tier 3: +5% (sell remaining 20%)
-    if pnl_pct >= TAKE_PROFIT_T3_PCT and not tiers_sold['tier3']:
-        sell_qty = int(qty * TIER_3_SELL_PCT)
-        if sell_qty > 0:
-            reason = f"Take profit tier 3: {pnl_pct*100:.2f}% >= {TAKE_PROFIT_T3_PCT*100:.2f}%"
-            logging.info(f"{ticker}: {reason}")
-            return create_exit_decision(
-                ticker, 'SELL_20%', reason, sell_qty, current_price, pnl_pct,
-                tier='tier3'
-            )
-    
-    # Tier 2: +3% (sell 30%)
-    if pnl_pct >= TAKE_PROFIT_T2_PCT and not tiers_sold['tier2']:
-        sell_qty = int(qty * TIER_2_SELL_PCT)
-        if sell_qty > 0:
-            reason = f"Take profit tier 2: {pnl_pct*100:.2f}% >= {TAKE_PROFIT_T2_PCT*100:.2f}%"
-            logging.info(f"{ticker}: {reason}")
-            return create_exit_decision(
-                ticker, 'SELL_30%', reason, sell_qty, current_price, pnl_pct,
-                tier='tier2'
-            )
-    
-    # Tier 1: +1.5% (sell 50%)
-    if pnl_pct >= TAKE_PROFIT_T1_PCT and not tiers_sold['tier1']:
-        sell_qty = int(qty * TIER_1_SELL_PCT)
-        if sell_qty > 0:
-            reason = f"Take profit tier 1: {pnl_pct*100:.2f}% >= {TAKE_PROFIT_T1_PCT*100:.2f}%"
-            logging.info(f"{ticker}: {reason}")
-            return create_exit_decision(
-                ticker, 'SELL_50%', reason, sell_qty, current_price, pnl_pct,
-                tier='tier1'
-            )
     
     # No exit conditions met - HOLD
     reason = f"No exit conditions met (P&L: {pnl_pct*100:.2f}%, Days: {days_held})"
@@ -399,7 +363,7 @@ Consider neutral/positive: normal market moves, analyst upgrades, product launch
         return {'has_negative_news': False, 'summary': f'Error analyzing news: {str(e)}'}
 
 def create_exit_decision(ticker, action, reason, sell_qty, current_price, pnl_pct, 
-                        stop_loss=False, time_limit=False, negative_news=False, tier=None):
+                        stop_loss=False, time_limit=False, profit_target=False, negative_news=False, tier=None):
     """Create an exit decision dict"""
     return {
         'ticker': ticker,
@@ -410,6 +374,7 @@ def create_exit_decision(ticker, action, reason, sell_qty, current_price, pnl_pc
         'pnl_pct': pnl_pct,
         'stop_loss': stop_loss,
         'time_limit': time_limit,
+        'profit_target': profit_target,
         'negative_news': negative_news,
         'tier': tier,
         'timestamp': datetime.now().isoformat()
@@ -426,43 +391,233 @@ def create_hold_decision(ticker, reason, current_price, pnl_pct):
         'pnl_pct': pnl_pct,
         'stop_loss': False,
         'time_limit': False,
+        'profit_target': False,
         'negative_news': False,
         'tier': None,
         'timestamp': datetime.now().isoformat()
     }
 
-if __name__ == "__main__":
-    # Test with sample positions
-    import json
+def execute_market_sell(ticker, qty, entry_price, exit_price, reason):
+    """
+    Execute a market sell order and log the exit.
     
-    sample_positions = [
-        {
-            'ticker': 'AAPL',
-            'entry_price': 150.00,
-            'qty': 10,
-            'entry_time': (datetime.now() - timedelta(hours=2)).isoformat(),
-            'tiers_sold': {'tier1': False, 'tier2': False, 'tier3': False}
-        },
-        {
-            'ticker': 'MSFT',
-            'entry_price': 300.00,
-            'qty': 5,
-            'entry_time': (datetime.now() - timedelta(days=2)).isoformat(),
-            'tiers_sold': {'tier1': True, 'tier2': False, 'tier3': False}
-        },
-        {
-            'ticker': 'GOOGL',
-            'entry_price': 140.00,
-            'qty': 8,
-            'entry_time': (datetime.now() - timedelta(days=4)).isoformat(),
-            'tiers_sold': {'tier1': False, 'tier2': False, 'tier3': False}
+    Args:
+        ticker: Stock symbol
+        qty: Number of shares to sell
+        entry_price: Original entry price
+        exit_price: Current exit price
+        reason: Exit reason
+        
+    Returns:
+        Dict with execution status and details
+    """
+    try:
+        logging.info(f"{ticker}: Executing market sell order for {qty} shares at ${exit_price:.2f}")
+        
+        # Calculate P&L
+        pnl_dollars = (exit_price - entry_price) * qty
+        pnl_pct = (exit_price - entry_price) / entry_price * 100
+        
+        # Log the exit
+        exit_log = {
+            'ticker': ticker,
+            'entry_price': entry_price,
+            'exit_price': exit_price,
+            'qty': qty,
+            'pnl_dollars': pnl_dollars,
+            'pnl_pct': pnl_pct,
+            'reason': reason,
+            'timestamp': datetime.now().isoformat()
         }
-    ]
+        
+        # Save to exit log file
+        log_exit(exit_log)
+        
+        # Send SMS notification if configured
+        send_exit_notification(exit_log)
+        
+        logging.info(f"{ticker}: Exit executed - P&L: ${pnl_dollars:.2f} ({pnl_pct:.2f}%)")
+        
+        return {
+            'success': True,
+            'ticker': ticker,
+            'qty': qty,
+            'exit_price': exit_price,
+            'pnl_dollars': pnl_dollars,
+            'pnl_pct': pnl_pct
+        }
+        
+    except Exception as e:
+        logging.error(f"{ticker}: Error executing market sell: {type(e).__name__}: {str(e)}")
+        return {
+            'success': False,
+            'ticker': ticker,
+            'error': str(e)
+        }
+
+def log_exit(exit_log):
+    """
+    Log exit to data/exits.json
     
-    print("Exit Monitor Test Run")
+    Args:
+        exit_log: Dict with exit details
+    """
+    try:
+        # Ensure data directory exists
+        Path('data').mkdir(exist_ok=True)
+        
+        exits_file = 'data/exits.json'
+        
+        # Load existing exits
+        if os.path.exists(exits_file):
+            with open(exits_file, 'r') as f:
+                exits = json.load(f)
+        else:
+            exits = []
+        
+        # Append new exit
+        exits.append(exit_log)
+        
+        # Save back to file
+        with open(exits_file, 'w') as f:
+            json.dump(exits, f, indent=2)
+        
+        logging.info(f"Exit logged to {exits_file}")
+        
+    except Exception as e:
+        logging.error(f"Error logging exit: {type(e).__name__}: {str(e)}")
+
+def send_exit_notification(exit_log):
+    """
+    Send SMS notification for exit (if configured).
+    
+    Args:
+        exit_log: Dict with exit details
+    """
+    try:
+        # Check if SMS is configured
+        config_file = 'config/sms_config.json'
+        if not os.path.exists(config_file):
+            logging.info("SMS not configured, skipping notification")
+            return
+        
+        with open(config_file, 'r') as f:
+            sms_config = json.load(f)
+        
+        if not sms_config.get('enabled', False):
+            logging.info("SMS notifications disabled, skipping")
+            return
+        
+        # Format notification message
+        ticker = exit_log['ticker']
+        pnl_dollars = exit_log['pnl_dollars']
+        pnl_pct = exit_log['pnl_pct']
+        reason = exit_log['reason']
+        
+        message = f"EXIT: {ticker} - ${pnl_dollars:.2f} ({pnl_pct:.2f}%) - {reason}"
+        
+        # Send SMS (implementation depends on SMS provider)
+        # For now, just log it
+        logging.info(f"SMS notification: {message}")
+        
+        # TODO: Implement actual SMS sending using Twilio or similar
+        # from twilio.rest import Client
+        # client = Client(sms_config['account_sid'], sms_config['auth_token'])
+        # client.messages.create(
+        #     body=message,
+        #     from_=sms_config['from_number'],
+        #     to=sms_config['to_number']
+        # )
+        
+    except Exception as e:
+        logging.error(f"Error sending SMS notification: {type(e).__name__}: {str(e)}")
+
+def process_exit_decisions(decisions):
+    """
+    Process exit decisions and execute market sell orders.
+    
+    Args:
+        decisions: List of exit decision dicts
+        
+    Returns:
+        List of execution results
+    """
+    results = []
+    
+    for decision in decisions:
+        if decision['action'] == 'HOLD':
+            continue
+        
+        ticker = decision['ticker']
+        sell_qty = decision['sell_qty']
+        current_price = decision['current_price']
+        reason = decision['reason']
+        
+        # Get entry price from position (need to load positions)
+        positions = load_positions()
+        position = next((p for p in positions if p['ticker'] == ticker), None)
+        
+        if not position:
+            logging.error(f"{ticker}: Position not found, cannot execute exit")
+            continue
+        
+        entry_price = position['entry_price']
+        
+        # Execute market sell
+        result = execute_market_sell(ticker, sell_qty, entry_price, current_price, reason)
+        results.append(result)
+    
+    return results
+
+def load_positions():
+    """Load positions from data/positions.json"""
+    try:
+        positions_file = 'data/positions.json'
+        if os.path.exists(positions_file):
+            with open(positions_file, 'r') as f:
+                return json.load(f)
+        return []
+    except Exception as e:
+        logging.error(f"Error loading positions: {type(e).__name__}: {str(e)}")
+        return []
+
+if __name__ == "__main__":
+    # Load actual positions from data/positions.json
+    positions = load_positions()
+    
+    if not positions:
+        print("No positions found in data/positions.json")
+        print("\nUsing sample positions for testing...")
+        positions = [
+            {
+                'ticker': 'AAPL',
+                'entry_price': 150.00,
+                'qty': 10,
+                'entry_time': (datetime.now() - timedelta(hours=2)).isoformat()
+            },
+            {
+                'ticker': 'MSFT',
+                'entry_price': 300.00,
+                'qty': 5,
+                'entry_time': (datetime.now() - timedelta(days=2)).isoformat()
+            },
+            {
+                'ticker': 'GOOGL',
+                'entry_price': 140.00,
+                'qty': 8,
+                'entry_time': (datetime.now() - timedelta(days=6)).isoformat()
+            }
+        ]
+    
+    print("Exit Monitor - Auto-Executed Trades")
+    print("=" * 60)
+    print(f"Stop Loss: {STOP_LOSS_PCT*100:.1f}%")
+    print(f"Profit Target: {PROFIT_TARGET_PCT*100:.1f}%")
+    print(f"Time Stop: {MAX_HOLD_DAYS} days")
     print("=" * 60)
     
-    decisions = monitor_positions(sample_positions)
+    # Monitor positions
+    decisions = monitor_positions(positions)
     
     print("\nExit Decisions:")
     print("-" * 60)
@@ -475,11 +630,25 @@ if __name__ == "__main__":
             print(f"  P&L: {decision['pnl_pct']*100:.2f}%")
         if decision['sell_qty'] > 0:
             print(f"  Sell Quantity: {decision['sell_qty']} shares")
-        if decision['tier']:
-            print(f"  Tier: {decision['tier']}")
     
     # Save decisions to file
     filename = f"data/exit_decisions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    Path('data').mkdir(exist_ok=True)
     with open(filename, 'w') as f:
         json.dump(decisions, f, indent=2)
     print(f"\nDecisions saved to {filename}")
+    
+    # Process exits (execute market sells)
+    print("\nProcessing Exits:")
+    print("-" * 60)
+    results = process_exit_decisions(decisions)
+    
+    for result in results:
+        if result['success']:
+            print(f"\n✓ {result['ticker']}: Sold {result['qty']} shares at ${result['exit_price']:.2f}")
+            print(f"  P&L: ${result['pnl_dollars']:.2f} ({result['pnl_pct']:.2f}%)")
+        else:
+            print(f"\n✗ {result['ticker']}: Failed - {result['error']}")
+    
+    print("\n" + "=" * 60)
+    print("Exit monitoring complete")
