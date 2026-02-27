@@ -62,6 +62,14 @@ DATA_DIR.mkdir(exist_ok=True)
 POSITIONS_FILE = DATA_DIR / "positions.json"
 PORTFOLIO_VALUE = 50000  # Default portfolio value
 
+# Auto-execution configuration (Paper Trading Only)
+PAPER_TRADING_AUTO_EXECUTE = True  # Auto-execute qualified trades
+MAX_AUTO_TRADES_PER_DAY = 3
+MIN_CONFIDENCE_FOR_AUTO = 0.70
+AUTO_POSITION_SIZE = 500  # $500 per trade
+AUTO_STOP_LOSS_PCT = 5.0  # 5% stop loss
+AUTO_PROFIT_TARGET_PCT = 10.0  # 10% profit target
+
 # Market hours (Eastern Time)
 MARKET_OPEN = time(9, 30)   # 9:30 AM ET
 MARKET_CLOSE = time(16, 0)  # 4:00 PM ET
@@ -483,6 +491,20 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         # Update candidates with analyzed results
         candidates = analyzed_candidates
         
+        # Step 2.5: Auto-execute qualified trades (if enabled)
+        auto_execution_result = None
+        if PAPER_TRADING_AUTO_EXECUTE:
+            logger.info("Step 2.5: Auto-executing qualified trades...")
+            auto_execution_result = await execute_auto_trades(candidates, portfolio_value)
+            
+            if auto_execution_result['executed']:
+                logger.info(f"Auto-executed {len(auto_execution_result['executed'])} trades")
+                for trade in auto_execution_result['executed']:
+                    logger.info(f"  ✓ {trade['ticker']}: {trade['shares']} shares @ ${trade['entry_price']:.2f}")
+            
+            if auto_execution_result['skipped']:
+                logger.info(f"Skipped {len(auto_execution_result['skipped'])} candidates")
+        
         # Step 3: Evaluate entry timing and conditions
         logger.info("Step 3: Evaluating entry conditions...")
         entry_decisions = await asyncio.to_thread(evaluate_entry, candidates, portfolio_value)
@@ -705,6 +727,7 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
             'executed_trades': executed_trades,
             'execution_failures': execution_failures,
             'rejected_trades': rejected_trades,
+            'auto_execution': auto_execution_result,
             'risk_status': get_risk_status(),
             'portfolio_value': portfolio_value,
             'account_info': account_info,
@@ -1119,6 +1142,263 @@ def get_sector_from_candidates(ticker, candidates):
     return 'Unknown'
 
 
+def get_auto_trades_today():
+    """
+    Get count of auto-executed trades today.
+    
+    Returns:
+        int: Number of auto-trades executed today
+    """
+    try:
+        date_str = datetime.now().strftime('%Y%m%d')
+        filename = DATA_DIR / f"auto_trades_{date_str}.json"
+        
+        if not filename.exists():
+            return 0
+        
+        with open(filename, 'r') as f:
+            data = json.load(f)
+        
+        return len(data.get('trades', []))
+        
+    except Exception as e:
+        logger.error(f"Error getting auto-trades count: {type(e).__name__}: {str(e)}")
+        return 0
+
+
+def log_auto_trade(trade_data):
+    """
+    Log auto-executed trade to daily file and decisions log.
+    
+    Args:
+        trade_data: Dict with trade details
+    """
+    try:
+        date_str = datetime.now().strftime('%Y%m%d')
+        filename = DATA_DIR / f"auto_trades_{date_str}.json"
+        
+        # Load existing trades
+        if filename.exists():
+            with open(filename, 'r') as f:
+                data = json.load(f)
+        else:
+            data = {'date': date_str, 'trades': []}
+        
+        # Add new trade
+        data['trades'].append(trade_data)
+        
+        # Save to file
+        with open(filename, 'w') as f:
+            json.dump(data, f, indent=2)
+        
+        # Also log to decisions_log.jsonl
+        decisions_log = DATA_DIR / "decisions_log.jsonl"
+        with open(decisions_log, 'a') as f:
+            log_entry = {
+                'timestamp': datetime.now().isoformat(),
+                'type': 'AUTO_TRADE',
+                'ticker': trade_data['ticker'],
+                'action': 'BUY',
+                'shares': trade_data['shares'],
+                'entry_price': trade_data['entry_price'],
+                'position_size': trade_data['position_size'],
+                'stop_loss': trade_data['stop_loss'],
+                'profit_target': trade_data['profit_target'],
+                'confidence': trade_data['confidence'],
+                'reasoning': trade_data['reasoning']
+            }
+            f.write(json.dumps(log_entry) + '\n')
+        
+        logger.info(f"Auto-trade logged: {trade_data['ticker']}")
+        
+    except Exception as e:
+        logger.error(f"Error logging auto-trade: {type(e).__name__}: {str(e)}")
+
+
+async def execute_auto_trades(candidates, portfolio_value):
+    """
+    Auto-execute qualified trades in paper trading mode.
+    
+    Args:
+        candidates: List of analyzed candidates
+        portfolio_value: Current portfolio value
+        
+    Returns:
+        dict: {
+            'executed': list of executed trades,
+            'skipped': list of skipped trades with reasons
+        }
+    """
+    logger.info("=" * 80)
+    logger.info("AUTO-EXECUTION MODE (PAPER TRADING)")
+    logger.info("=" * 80)
+    
+    # Safety check
+    if not PAPER_TRADING_AUTO_EXECUTE:
+        logger.info("Auto-execution disabled - candidates found but not executed")
+        return {'executed': [], 'skipped': []}
+    
+    if not alpaca_client:
+        logger.error("Cannot auto-execute - Alpaca client not initialized")
+        return {'executed': [], 'skipped': []}
+    
+    # Check daily limit
+    auto_trades_today = get_auto_trades_today()
+    if auto_trades_today >= MAX_AUTO_TRADES_PER_DAY:
+        logger.warning(f"Daily auto-trade limit reached: {auto_trades_today}/{MAX_AUTO_TRADES_PER_DAY}")
+        return {'executed': [], 'skipped': []}
+    
+    # Load current positions
+    current_positions = load_positions()
+    held_tickers = {pos['ticker'] for pos in current_positions}
+    
+    # Filter candidates for auto-execution
+    qualified = []
+    skipped = []
+    
+    for candidate in candidates:
+        ticker = candidate['ticker']
+        confidence = candidate.get('analysis', {}).get('confidence', 0)
+        current_price = candidate.get('current_price', 0)
+        
+        # Check confidence threshold
+        if confidence < MIN_CONFIDENCE_FOR_AUTO:
+            skipped.append({
+                'ticker': ticker,
+                'reason': f'Confidence {confidence:.2f} < {MIN_CONFIDENCE_FOR_AUTO}',
+                'confidence': confidence
+            })
+            continue
+        
+        # Check if already holding
+        if ticker in held_tickers:
+            skipped.append({
+                'ticker': ticker,
+                'reason': 'Already holding position',
+                'confidence': confidence
+            })
+            continue
+        
+        # Check if we have price data
+        if not current_price or current_price <= 0:
+            skipped.append({
+                'ticker': ticker,
+                'reason': 'No valid price data',
+                'confidence': confidence
+            })
+            continue
+        
+        # Check daily limit
+        if len(qualified) + auto_trades_today >= MAX_AUTO_TRADES_PER_DAY:
+            skipped.append({
+                'ticker': ticker,
+                'reason': f'Daily limit ({MAX_AUTO_TRADES_PER_DAY}) would be exceeded',
+                'confidence': confidence
+            })
+            continue
+        
+        qualified.append(candidate)
+    
+    logger.info(f"Qualified for auto-execution: {len(qualified)}")
+    logger.info(f"Skipped: {len(skipped)}")
+    
+    if len(qualified) == 0:
+        return {'executed': [], 'skipped': skipped}
+    
+    # Execute qualified trades
+    executed = []
+    
+    for candidate in qualified:
+        ticker = candidate['ticker']
+        current_price = candidate['current_price']
+        confidence = candidate.get('analysis', {}).get('confidence', 0)
+        reasoning = candidate.get('analysis', {}).get('reasoning', 'No reasoning provided')
+        
+        # Calculate position size
+        shares = int(AUTO_POSITION_SIZE / current_price)
+        if shares <= 0:
+            logger.warning(f"{ticker}: Cannot buy fractional shares (price: ${current_price:.2f})")
+            skipped.append({
+                'ticker': ticker,
+                'reason': 'Price too high for position size',
+                'confidence': confidence
+            })
+            continue
+        
+        position_size = shares * current_price
+        
+        # Calculate stop loss and profit target
+        stop_loss_price = current_price * (1 - AUTO_STOP_LOSS_PCT / 100)
+        profit_target_price = current_price * (1 + AUTO_PROFIT_TARGET_PCT / 100)
+        
+        logger.info("=" * 80)
+        logger.info(f"AUTO-EXECUTING: {ticker} at ${current_price:.2f}, {shares} shares")
+        logger.info(f"Position Size: ${position_size:.2f}")
+        logger.info(f"Stop Loss: ${stop_loss_price:.2f} (-{AUTO_STOP_LOSS_PCT}%)")
+        logger.info(f"Profit Target: ${profit_target_price:.2f} (+{AUTO_PROFIT_TARGET_PCT}%)")
+        logger.info(f"Confidence: {confidence:.2f}")
+        logger.info(f"Reason: {reasoning}")
+        logger.info("=" * 80)
+        
+        # Execute buy order
+        order_result = await asyncio.to_thread(execute_buy_order, ticker, shares, current_price)
+        
+        if order_result['success']:
+            logger.info(f"{ticker}: ✓ AUTO-TRADE EXECUTED - Order ID: {order_result['order_id']}")
+            
+            # Prepare trade data
+            trade_data = {
+                'ticker': ticker,
+                'shares': shares,
+                'entry_price': current_price,
+                'position_size': position_size,
+                'stop_loss': stop_loss_price,
+                'profit_target': profit_target_price,
+                'confidence': confidence,
+                'reasoning': reasoning,
+                'order_id': order_result['order_id'],
+                'order_status': order_result['status'],
+                'filled_qty': order_result['filled_qty'],
+                'filled_price': order_result['filled_price'],
+                'timestamp': datetime.now().isoformat(),
+                'grok_sentiment': candidate.get('grok_sentiment'),
+                'vision_analysis': candidate.get('vision_analysis'),
+                'fundamental_analysis': candidate.get('fundamental_analysis')
+            }
+            
+            # Log trade
+            await asyncio.to_thread(log_auto_trade, trade_data)
+            
+            # Add to positions
+            await asyncio.to_thread(add_position, {
+                'ticker': ticker,
+                'shares': shares,
+                'entry_price': current_price,
+                'entry_date': datetime.now().isoformat(),
+                'order_id': order_result['order_id'],
+                'sector': get_sector_from_candidates(ticker, candidates),
+                'stop_loss_pct': AUTO_STOP_LOSS_PCT,
+                'take_profit_pct': AUTO_PROFIT_TARGET_PCT,
+                'auto_executed': True
+            })
+            
+            executed.append(trade_data)
+            
+        else:
+            logger.error(f"{ticker}: ✗ AUTO-TRADE FAILED - {order_result['error']}")
+            skipped.append({
+                'ticker': ticker,
+                'reason': f"Execution failed: {order_result['error']}",
+                'confidence': confidence
+            })
+    
+    logger.info("=" * 80)
+    logger.info(f"AUTO-EXECUTION COMPLETE: {len(executed)} executed, {len(skipped)} skipped")
+    logger.info("=" * 80)
+    
+    return {'executed': executed, 'skipped': skipped}
+
+
 def save_daily_signals(result):
     """
     Save daily screening signals to file.
@@ -1204,7 +1484,23 @@ if __name__ == "__main__":
         print("SCREENING RESULTS")
         print("=" * 80)
         print(f"Candidates found: {result['candidates_found']}")
-        print(f"Approved trades: {len(result['approved_trades'])}")
+        
+        # Show auto-execution results
+        if result.get('auto_execution'):
+            auto_exec = result['auto_execution']
+            print(f"\nAuto-Execution (Paper Trading):")
+            print(f"  Executed: {len(auto_exec['executed'])}")
+            print(f"  Skipped: {len(auto_exec['skipped'])}")
+            
+            if auto_exec['executed']:
+                print("\n  ✓ Auto-Executed Trades:")
+                for trade in auto_exec['executed']:
+                    print(f"    {trade['ticker']}: {trade['shares']} shares @ ${trade['entry_price']:.2f}")
+                    print(f"      Stop: ${trade['stop_loss']:.2f}, Target: ${trade['profit_target']:.2f}")
+                    print(f"      Confidence: {trade['confidence']:.2f}")
+                    print(f"      Order ID: {trade['order_id']}")
+        
+        print(f"\nApproved trades: {len(result['approved_trades'])}")
         print(f"Rejected trades: {len(result['rejected_trades'])}")
         
         if result.get('executed_trades'):
