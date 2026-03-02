@@ -26,8 +26,9 @@ logger = logging.getLogger(__name__)
 MAX_POSITIONS = 5
 MAX_POSITION_SIZE_PCT = 5.0  # % of portfolio
 MAX_TOTAL_RISK_PCT = 10.0    # % of portfolio
-DAILY_LOSS_LIMIT_PCT = -2.0  # % of equity
-WEEKLY_LOSS_LIMIT_PCT = -5.0 # % of equity
+DAILY_LOSS_LIMIT_PCT = -1.5  # zero-loss push
+WEEKLY_LOSS_LIMIT_PCT = -4.0
+PER_TRADE_MAX_LOSS_PCT = -3.0  # hard cap per trade
 MAX_SECTOR_CONCENTRATION_PCT = 30.0  # % of portfolio
 
 # Circuit breaker thresholds

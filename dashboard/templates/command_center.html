@@ -321,9 +321,18 @@
         <div class="perf-stat"><div class="label">Total P&L</div><div class="num ${(data.total_pnl || 0) >= 0 ? 'pos' : 'neg'}">${pnl}</div></div>
       `;
       const screen = data.latest_screening || {};
-      document.getElementById('screening').innerHTML = screen.date
-        ? `Date: ${screen.date}<br>Candidates: ${screen.candidates_found || 0} | Approved: ${screen.approved || 0} | Auto: ${screen.auto_executed || 0}`
-        : '<span class="empty">No screening yet</span>';
+      const screenEl = document.getElementById('screening');
+      if (!screen.date) {
+        screenEl.innerHTML = '<span class="empty">No screening yet</span>';
+      } else {
+        const timePart = screen.time ? ` ${screen.time}` : '';
+        const candList = (screen.top_candidates || []).join(', ');
+        const candPart = candList ? `<br>Top candidates: ${candList}` : '';
+        screenEl.innerHTML =
+          `Date: ${screen.date}${timePart}` +
+          `<br>Candidates: ${screen.candidates_found || 0} | Approved: ${screen.approved || 0} | Auto: ${screen.auto_executed || 0}` +
+          candPart;
+      }
 
       const rows = (data.recent_trades || []).slice(0, 12);
       if (!rows.length) {

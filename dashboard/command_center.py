@@ -265,12 +265,18 @@ def get_trading_performance():
     files = sorted(glob.glob(str(pattern)), reverse=True)
     if files:
         latest = _read_json(Path(files[0]))
+        ts = latest.get("timestamp", "") or ""
+        time_str = ts[11:16] if len(ts) >= 16 else ""
+        cand_list = latest.get("candidates") or []
+        top_candidates = [c.get("ticker") for c in cand_list[:6] if isinstance(c, dict) and c.get("ticker")]
         perf["latest_screening"] = {
             "date": latest.get("timestamp", "")[:10],
+            "time": time_str,
             "candidates_found": latest.get("candidates_found", 0),
             "approved": len(latest.get("approved_trades", [])),
             "rejected": len(latest.get("rejected_trades", [])),
             "auto_executed": len((latest.get("auto_execution") or {}).get("executed", [])),
+            "top_candidates": top_candidates,
         }
 
     # Auto trades today

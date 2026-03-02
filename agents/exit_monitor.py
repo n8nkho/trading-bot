@@ -20,10 +20,12 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-# Exit Configuration for Auto-Executed Trades
-STOP_LOSS_PCT = -0.05  # -5% stop loss
-PROFIT_TARGET_PCT = 0.10  # +10% profit target
-MAX_HOLD_DAYS = 5  # Maximum hold period (time stop)
+# Zero-loss push: tight stops
+STOP_LOSS_PCT = -0.03  # -3% hard stop
+PROFIT_TARGET_PCT = 0.10  # +10% full exit
+MAX_HOLD_DAYS = 5
+# Scalp ladder: partial sells at 2%, 4%, 6%
+SCALP_LADDER_PCT = (0.02, 0.04, 0.06)
 
 def check_option_exit(position):
     ticker = position['ticker']
@@ -205,25 +207,25 @@ def evaluate_exit(position):
     
     logging.info(f"{ticker}: Entry: ${entry_price:.2f}, Current: ${current_price:.2f}, P&L: {pnl_pct*100:.2f}%")
     
-    # Check 1: Stop Loss (-5%)
     if pnl_pct <= STOP_LOSS_PCT:
-        reason = f"Stop loss hit: {pnl_pct*100:.2f}% <= {STOP_LOSS_PCT*100:.2f}%"
-        logging.warning(f"{ticker}: {reason}")
-        return create_exit_decision(
-            ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct, 
-            stop_loss=True
-        )
-    
-    # Check 2: Profit Target (+10%)
+        reason = f"Stop loss: {pnl_pct*100:.2f}%"
+        return create_exit_decision(ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct, stop_loss=True)
     if pnl_pct >= PROFIT_TARGET_PCT:
-        reason = f"Profit target hit: {pnl_pct*100:.2f}% >= {PROFIT_TARGET_PCT*100:.2f}%"
-        logging.info(f"{ticker}: {reason}")
-        return create_exit_decision(
-            ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct,
-            profit_target=True
-        )
-    
-    # Check 3: Time Stop (5 days)
+        reason = f"Profit target: {pnl_pct*100:.2f}%"
+        return create_exit_decision(ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct, profit_target=True)
+    # Scalp ladder: partial sells
+    tiers_sold = position.get('tiers_sold') or []
+    initial_qty = position.get('initial_qty') or qty
+    for tier in SCALP_LADDER_PCT:
+        if tier in tiers_sold:
+            continue
+        if pnl_pct >= tier:
+            sell_qty = max(1, round(initial_qty / len(SCALP_LADDER_PCT)))
+            sell_qty = min(sell_qty, qty)
+            if sell_qty > 0:
+                reason = f"Ladder tier +{tier*100:.0f}%"
+                return create_exit_decision(ticker, 'SELL_PARTIAL', reason, sell_qty, current_price, pnl_pct, tier=tier)
+    # Check 3: Time Stop
     days_held = (datetime.now() - entry_time.replace(tzinfo=None)).days
     if days_held >= MAX_HOLD_DAYS:
         reason = f"Time stop: held {days_held} days >= {MAX_HOLD_DAYS} days"

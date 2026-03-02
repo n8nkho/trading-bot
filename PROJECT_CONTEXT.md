@@ -67,9 +67,12 @@ PAPER_TRADING_AUTO_EXECUTE = True
 MAX_AUTO_TRADES_PER_DAY = 6
 AUTO_POSITION_SIZE = 500  # $500 per trade
 MIN_CONFIDENCE_FOR_AUTO = 0.70
-STOP_LOSS = -5%
+STOP_LOSS = -3% (zero-loss push), scalp ladder 2%/4%/6%
 PROFIT_TARGET = +10%
 ```
+
+### Rollback
+To restore pre-advanced version (before ladder/zero-loss/hedging): `git checkout backup-pre-advanced`.
 
 ### Screening Schedule (4x daily)
 ```
