@@ -126,9 +126,24 @@ def is_service_running(service_name, config):
         logging.error(f"Error checking service '{service_name}': {e}")
         return False
 
+def is_market_hours():
+    """True if 9:30-16:00 ET Mon-Fri. During trading hours, avoid disruptive restarts."""
+    try:
+        from datetime import time as dtime
+        import pytz
+        et = pytz.timezone("America/New_York")
+        now = datetime.now(et)
+        if now.weekday() >= 5:
+            return False
+        t = now.time()
+        return dtime(9, 30) <= t <= dtime(16, 0)
+    except Exception:
+        return False
+
+
 def restart_service(service_name, config):
     """
-    Attempt to restart a service
+    Attempt to restart a service. Always attempt; during trading hours, de-prioritize disruptive restarts.
     
     Args:
         service_name: Name of the service
@@ -138,6 +153,9 @@ def restart_service(service_name, config):
         bool: True if restart successful, False otherwise
     """
     try:
+        market_hours = is_market_hours()
+        if market_hours and service_name == "ollama":
+            logging.warning("De-prioritized: Ollama restart during trading hours (may disrupt screening) - attempting anyway")
         logging.info(f"Attempting to restart service '{service_name}'...")
         
         # Start service in background

@@ -13,8 +13,6 @@ BONDS_TICKER = "TLT"
 
 # Load environment variables
 load_dotenv()
-api_key = os.getenv("APCA_API_KEY_ID")
-secret_key = os.getenv("APCA_API_SECRET_KEY")
 
 def get_client():
     """Get Alpaca trading client."""
@@ -49,11 +47,7 @@ def calculate_bond_target(portfolio_value, market_regime):
     return target
 
 def get_current_bond_position():
-    client = get_client()
-    client = get_client()
-    client = get_client()
     try:
-        client = get_client()
         client = get_client()
         position = client.get_open_position(BONDS_TICKER)
         return position.qty, position.market_value

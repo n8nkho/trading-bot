@@ -1,0 +1,25 @@
+---
+description: Update HANDOFF.md when resuming or after significant work
+alwaysApply: true
+---
+
+# Handoff Updates
+
+## When to Update HANDOFF.md
+
+1. **User resumes** – When the user's message indicates they are resuming (e.g. "resume", "continue", "pick up where we left off", "back", after a new session/window), first read HANDOFF.md, then **update it** with any substantive work from the prior turn(s) in this conversation before proceeding.
+
+2. **After substantial work** – When completing a multi-step task, fixing bugs, or adding features, update HANDOFF.md with what was done and what's open/next.
+
+3. **Before ending** – If the conversation is winding down after meaningful changes, update HANDOFF.md so the next session can resume cleanly.
+
+## What to Update
+
+- **Completed this session**: Add any new fixes, features, or changes.
+- **Open / next**: Add or revise open items and next steps.
+- **Key paths**: Update if new important files were added.
+- Keep the resume prompt at the top current.
+
+## Note
+
+The user expects HANDOFF to reflect the current state when they return after a pause (e.g. 5+ minutes). Since the AI cannot detect idle time, updating HANDOFF on resume keywords and after substantial work ensures it stays current.

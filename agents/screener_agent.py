@@ -247,6 +247,7 @@ def run_screener():
                 'drop_pct': drop_pct,
                 'rsi': rsi,
                 'volume_ratio': volume_ratio,
+                'current_price': latest_close,  # Required for auto-execution and entry evaluation
                 'news': news_headlines,
                 'analysis': analysis,
                 'vision_signal': vision_signal

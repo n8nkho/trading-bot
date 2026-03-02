@@ -1,0 +1,7560 @@
+================================================================================
+ERROR DETECTIVE DIAGNOSTIC REPORT
+Generated: 2026-03-01 06:00:03
+================================================================================
+
+Total Errors Found: 684
+
+Affected Agents: 6
+  - screener: AttributeError, KeyError
+  - grok: APIError
+  - sniper: SyntaxError, ImportError, ValueError
+  - cron: ValueError
+  - monitor: SyntaxError, ImportError, ValueError
+  - llama_watchdog: SyntaxError, ImportError, ValueError
+
+--------------------------------------------------------------------------------
+CRITICAL SEVERITY ERRORS (66)
+--------------------------------------------------------------------------------
+
+File: logs/sniper.log
+Line: 1809
+Type: ImportError
+Message: ImportError: cannot import name 'evaluate_entry' from 'agents.entry_agent' (/home/ubuntu/trading-bot/agents/entry_agent.py)
+Context: ImportError: cannot import name 'evaluate_entry' from 'agents.entry_agent' (/home/ubuntu/trading-bot/agents/entry_agent.py)
+
+Suggested Fix:
+  - Check if module is installed
+  - Verify import path is correct
+  - Check for circular imports
+
+
+File: logs/sniper.log
+Line: 1858
+Type: ImportError
+Message: ImportError: cannot import name 'monitor_positions' from 'agents.exit_monitor' (/home/ubuntu/trading-bot/agents/exit_monitor.py)
+Context: ImportError: cannot import name 'monitor_positions' from 'agents.exit_monitor' (/home/ubuntu/trading-bot/agents/exit_monitor.py)
+
+Suggested Fix:
+  - Check if module is installed
+  - Verify import path is correct
+  - Check for circular imports
+
+
+File: logs/sniper.log
+Line: 1928
+Type: SyntaxError
+Message: SyntaxError: unterminated triple-quoted string literal (detected at line 480)
+Context: SyntaxError: unterminated triple-quoted string literal (detected at line 480)
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 1935
+Type: SyntaxError
+Message: SyntaxError: unterminated triple-quoted string literal (detected at line 480)
+Context: SyntaxError: unterminated triple-quoted string literal (detected at line 480)
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 1942
+Type: SyntaxError
+Message: SyntaxError: unterminated triple-quoted string literal (detected at line 480)
+Context: SyntaxError: unterminated triple-quoted string literal (detected at line 480)
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 1949
+Type: SyntaxError
+Message: SyntaxError: unterminated triple-quoted string literal (detected at line 480)
+Context: SyntaxError: unterminated triple-quoted string literal (detected at line 480)
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 1956
+Type: SyntaxError
+Message: SyntaxError: unterminated triple-quoted string literal (detected at line 480)
+Context: SyntaxError: unterminated triple-quoted string literal (detected at line 480)
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 1963
+Type: SyntaxError
+Message: SyntaxError: unterminated triple-quoted string literal (detected at line 480)
+Context: SyntaxError: unterminated triple-quoted string literal (detected at line 480)
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2039
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2043
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2047
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2051
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2055
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2059
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2063
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2067
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2071
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2075
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2079
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2083
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2087
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2091
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2095
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2099
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2103
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2107
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2111
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2115
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2119
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2123
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2127
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2131
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2135
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2139
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2143
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2147
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2151
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 2155
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 10391
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 10699
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 10703
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 10707
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 10711
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 10715
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 10719
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 10739
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 10743
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 10747
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 10751
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 10994
+Type: SyntaxError
+Message: IndentationError: unexpected indent
+Context: IndentationError: unexpected indent
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/sniper.log
+Line: 11014
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/monitor.log
+Line: 490
+Type: ImportError
+Message: ImportError: cannot import name 'evaluate_entry' from 'agents.entry_agent' (/home/ubuntu/trading-bot/agents/entry_agent.py)
+Context: ImportError: cannot import name 'evaluate_entry' from 'agents.entry_agent' (/home/ubuntu/trading-bot/agents/entry_agent.py)
+
+Suggested Fix:
+  - Check if module is installed
+  - Verify import path is correct
+  - Check for circular imports
+
+
+File: logs/monitor.log
+Line: 515
+Type: SyntaxError
+Message: SyntaxError: unterminated triple-quoted string literal (detected at line 480)
+Context: SyntaxError: unterminated triple-quoted string literal (detected at line 480)
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/monitor.log
+Line: 537
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/monitor.log
+Line: 541
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/monitor.log
+Line: 545
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/monitor.log
+Line: 549
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/monitor.log
+Line: 553
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/monitor.log
+Line: 557
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/monitor.log
+Line: 2271
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/monitor.log
+Line: 2338
+Type: SyntaxError
+Message: IndentationError: unexpected indent
+Context: IndentationError: unexpected indent
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/llama_watchdog.log
+Line: 267
+Type: ImportError
+Message: ImportError: cannot import name 'evaluate_entry' from 'agents.entry_agent' (/home/ubuntu/trading-bot/agents/entry_agent.py)
+Context: ImportError: cannot import name 'evaluate_entry' from 'agents.entry_agent' (/home/ubuntu/trading-bot/agents/entry_agent.py)
+
+Suggested Fix:
+  - Check if module is installed
+  - Verify import path is correct
+  - Check for circular imports
+
+
+File: logs/llama_watchdog.log
+Line: 274
+Type: SyntaxError
+Message: SyntaxError: unterminated triple-quoted string literal (detected at line 480)
+Context: SyntaxError: unterminated triple-quoted string literal (detected at line 480)
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/llama_watchdog.log
+Line: 278
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/llama_watchdog.log
+Line: 282
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+
+File: logs/llama_watchdog.log
+Line: 910
+Type: SyntaxError
+Message: SyntaxError: 'await' outside async function
+Context: SyntaxError: 'await' outside async function
+
+Suggested Fix:
+  - Review code syntax at specified line
+  - Check for missing brackets, quotes, or colons
+
+--------------------------------------------------------------------------------
+HIGH SEVERITY ERRORS (602)
+--------------------------------------------------------------------------------
+
+File: logs/screener.log
+Line: 1862
+Type: AttributeError
+Message: AttributeError: 'list' object has no attribute 'get'
+Time: 2026-02-23 10:45:03
+Context: 2026-02-23 10:45:03,680 - ERROR - Error loading positions: AttributeError: 'list' object has no attribute 'get'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 1912
+Type: AttributeError
+Message: AttributeError: 'list' object has no attribute 'get'
+Time: 2026-02-23 10:50:03
+Context: 2026-02-23 10:50:03,068 - ERROR - Error loading positions: AttributeError: 'list' object has no attribute 'get'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 1943
+Type: AttributeError
+Message: AttributeError: 'list' object has no attribute 'get'
+Time: 2026-02-23 10:55:03
+Context: 2026-02-23 10:55:03,354 - ERROR - Error loading positions: AttributeError: 'list' object has no attribute 'get'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 1968
+Type: AttributeError
+Message: AttributeError: 'list' object has no attribute 'get'
+Time: 2026-02-23 11:00:03
+Context: 2026-02-23 11:00:03,722 - ERROR - Error loading positions: AttributeError: 'list' object has no attribute 'get'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 2021
+Type: AttributeError
+Message: AttributeError: 'list' object has no attribute 'get'
+Time: 2026-02-23 11:05:03
+Context: 2026-02-23 11:05:03,128 - ERROR - Error loading positions: AttributeError: 'list' object has no attribute 'get'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 2048
+Type: AttributeError
+Message: AttributeError: 'list' object has no attribute 'get'
+Time: 2026-02-23 11:10:03
+Context: 2026-02-23 11:10:03,363 - ERROR - Error loading positions: AttributeError: 'list' object has no attribute 'get'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 2079
+Type: AttributeError
+Message: AttributeError: 'list' object has no attribute 'get'
+Time: 2026-02-23 11:15:03
+Context: 2026-02-23 11:15:03,734 - ERROR - Error loading positions: AttributeError: 'list' object has no attribute 'get'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 2122
+Type: AttributeError
+Message: AttributeError: 'list' object has no attribute 'get'
+Time: 2026-02-23 11:20:02
+Context: 2026-02-23 11:20:02,971 - ERROR - Error loading positions: AttributeError: 'list' object has no attribute 'get'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 2150
+Type: AttributeError
+Message: AttributeError: 'list' object has no attribute 'get'
+Time: 2026-02-23 11:25:03
+Context: 2026-02-23 11:25:03,254 - ERROR - Error loading positions: AttributeError: 'list' object has no attribute 'get'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/sniper.log
+Line: 3539
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3555
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3571
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3587
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3603
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3619
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3635
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3651
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3667
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3683
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3699
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3715
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3731
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3747
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3763
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3779
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3795
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3811
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3827
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3843
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3859
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3875
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3891
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3907
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3923
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3939
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3955
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3971
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 3987
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4003
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4019
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4035
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4051
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4067
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4083
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4099
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4115
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4131
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4147
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4163
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4179
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4195
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4211
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4227
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4243
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4259
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4275
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4291
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4307
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4323
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4339
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4355
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4371
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4387
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4403
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4419
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4435
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4451
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4467
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4483
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4499
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4515
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4531
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4547
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4563
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4579
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4595
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4611
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4627
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4643
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4659
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4675
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4691
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4707
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4723
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4739
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4755
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4771
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4787
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4803
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4819
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4835
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4851
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4867
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4883
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4899
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4915
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4931
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4947
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4963
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4979
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 4995
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5011
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5027
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5043
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5059
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5075
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5091
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5107
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5123
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5139
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5155
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5171
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5187
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5203
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5219
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5235
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5251
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5267
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5283
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5299
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5315
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5331
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5347
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5363
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5379
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5395
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5411
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5427
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5443
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5459
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5475
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5491
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5507
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5523
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5539
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5555
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5571
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5587
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5603
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5619
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5635
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5651
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5667
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5683
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5699
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5715
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5731
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5747
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5763
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5779
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5795
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5811
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5827
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5843
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5859
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5875
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5891
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5907
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5923
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5939
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5955
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5971
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 5987
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6003
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6019
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6035
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6051
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6067
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6083
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6099
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6115
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6131
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6147
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6163
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6179
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6195
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6211
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6227
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6243
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6259
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6275
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6291
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6307
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6323
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6339
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6355
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6371
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6387
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6403
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6419
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6435
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6451
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6467
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6483
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6499
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6515
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6531
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6547
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6563
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6579
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6595
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6611
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6627
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6643
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6659
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6675
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6691
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6707
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6723
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6739
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6755
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6771
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6787
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6803
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6819
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6835
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6851
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6867
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6883
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6899
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6915
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6931
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6947
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6963
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6979
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 6995
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7011
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7027
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7043
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7059
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7075
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7091
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7107
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7123
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7139
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7155
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7171
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7187
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7203
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7219
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7235
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7251
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7267
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7283
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7299
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7315
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7331
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7347
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7363
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7379
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7395
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7411
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7427
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7443
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7459
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7475
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7491
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7507
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7523
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7539
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7555
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7571
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7587
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7603
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7619
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7635
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7651
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7667
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7683
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7699
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7715
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7731
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7747
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7763
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7779
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7795
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7811
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7827
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7843
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7859
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7875
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7891
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7907
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7923
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7939
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7955
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7971
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 7987
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8003
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8019
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8035
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8051
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8067
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8083
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8099
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8115
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8131
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8147
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8163
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8179
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8195
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8211
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8227
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8243
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8259
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8275
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8291
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8307
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8323
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8339
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8355
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8371
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8387
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8403
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8419
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8435
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8451
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8467
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8483
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8499
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8515
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8531
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8547
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8563
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8579
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8595
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8611
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8627
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8643
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8659
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8675
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8691
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8707
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8723
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8739
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8755
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8771
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8787
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8803
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8819
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8835
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8851
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8867
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8883
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8899
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8915
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8931
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8947
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8963
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8979
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 8995
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9011
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9027
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9043
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9059
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9075
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9091
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9107
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9123
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9139
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9155
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9171
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9187
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9203
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9219
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9235
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9251
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9267
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9283
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9299
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9315
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9331
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9347
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9363
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9379
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9395
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9411
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9427
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9443
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9459
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9475
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9491
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9507
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9523
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9539
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9555
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9571
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9587
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9603
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9619
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9635
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9651
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9667
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9683
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9699
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9715
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9731
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9747
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9763
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9779
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9795
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9811
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9827
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9843
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9859
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9875
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9891
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9907
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9923
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9939
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9955
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9971
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 9987
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10003
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10019
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10035
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10051
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10067
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10083
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10099
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10115
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10131
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10147
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10163
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10179
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10195
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10211
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10227
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10243
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10259
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10275
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10291
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10307
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10323
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10339
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10355
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10371
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10387
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10407
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10423
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10439
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10455
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10471
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10487
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10503
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10519
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10535
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10551
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10567
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10583
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10599
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10615
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10631
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10647
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10663
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10679
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10695
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10735
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10767
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10783
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10799
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10815
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10831
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10847
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10863
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10879
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10895
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10911
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10927
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10943
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10959
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10975
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 10991
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 11010
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 11030
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/sniper.log
+Line: 11046
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/cron.log
+Line: 31
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 843
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 859
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 875
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 891
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 907
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 923
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 939
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 955
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 971
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 987
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1003
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1019
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1035
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1051
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1067
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1083
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1099
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1115
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1131
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1147
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1163
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1179
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1195
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1211
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1227
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1243
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1259
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1275
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1291
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1307
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1323
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1339
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1355
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1371
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1387
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1403
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1419
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1435
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1451
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1467
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1483
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1499
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1515
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1531
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1547
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1563
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1579
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1595
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1611
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1627
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1643
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1659
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1675
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1691
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1707
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1723
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1739
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1755
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1771
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1787
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1803
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1819
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1835
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1851
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1867
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1883
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1899
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1915
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1931
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1947
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1963
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1979
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 1995
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2011
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2027
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2043
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2059
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2075
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2091
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2107
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2123
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2139
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2155
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2171
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2187
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2203
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2219
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2235
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2251
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2267
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2287
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2303
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2319
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/monitor.log
+Line: 2335
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 442
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 458
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 474
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 490
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 506
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 522
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 538
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 554
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 570
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 586
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 602
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 618
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 634
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 650
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 666
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 682
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 698
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 714
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 730
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 746
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 762
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 778
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 794
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 810
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 826
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 842
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 858
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 874
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 890
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 906
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+
+File: logs/llama_watchdog.log
+Line: 926
+Type: ValueError
+Message: ValueError: You must supply a method of authentication
+Context: ValueError: You must supply a method of authentication
+
+Suggested Fix:
+  - Review function arguments and types
+  - Add input validation
+
+--------------------------------------------------------------------------------
+MEDIUM SEVERITY ERRORS (1)
+--------------------------------------------------------------------------------
+
+File: logs/grok.log
+Line: 1
+Type: APIError
+Message: API error for AAPL: 400 Client Error: Bad Request for url: https://api.x.ai/v1/chat/completions
+Time: 2026-02-22 10:22:25
+Context: 2026-02-22 10:22:25,423 - Grok API error for AAPL: 400 Client Error: Bad Request for url: https://api.x.ai/v1/chat/completions
+
+Suggested Fix:
+  - Verify API credentials in config
+  - Check API rate limits
+  - Confirm API endpoint is accessible
+
+--------------------------------------------------------------------------------
+LOW SEVERITY ERRORS (15)
+--------------------------------------------------------------------------------
+
+File: logs/screener.log
+Line: 89
+Type: KeyError
+Message: KeyError: 'title'
+Time: 2026-02-21 12:43:28
+Context: 2026-02-21 12:43:28,445 - WARNING - Could not fetch news for AAPL: KeyError: 'title'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 100
+Type: KeyError
+Message: KeyError: 'title'
+Time: 2026-02-21 12:44:47
+Context: 2026-02-21 12:44:47,246 - WARNING - Could not fetch news for AAPL: KeyError: 'title'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 14229
+Type: KeyError
+Message: KeyError: 'current_price'
+Time: 2026-02-25 17:50:56
+Context: 2026-02-25 17:50:56,586 - ERROR - Error evaluating WDAY: KeyError: 'current_price'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 14231
+Type: KeyError
+Message: KeyError: 'current_price'
+Time: 2026-02-25 17:50:56
+Context: 2026-02-25 17:50:56,586 - ERROR - Error evaluating COIN: KeyError: 'current_price'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 15142
+Type: KeyError
+Message: KeyError: 'current_price'
+Time: 2026-02-26 03:03:34
+Context: 2026-02-26 03:03:34,577 - ERROR - Error evaluating COIN: KeyError: 'current_price'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 15144
+Type: KeyError
+Message: KeyError: 'current_price'
+Time: 2026-02-26 03:03:34
+Context: 2026-02-26 03:03:34,577 - ERROR - Error evaluating WDAY: KeyError: 'current_price'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 21968
+Type: KeyError
+Message: KeyError: 'current_price'
+Time: 2026-02-26 15:31:36
+Context: 2026-02-26 15:31:36,598 - ERROR - Error evaluating TDOC: KeyError: 'current_price'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 21970
+Type: KeyError
+Message: KeyError: 'current_price'
+Time: 2026-02-26 15:31:36
+Context: 2026-02-26 15:31:36,598 - ERROR - Error evaluating TTD: KeyError: 'current_price'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 26756
+Type: KeyError
+Message: KeyError: 'current_price'
+Time: 2026-02-27 03:08:05
+Context: 2026-02-27 03:08:05,681 - ERROR - Error evaluating PENN: KeyError: 'current_price'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 26758
+Type: KeyError
+Message: KeyError: 'current_price'
+Time: 2026-02-27 03:08:05
+Context: 2026-02-27 03:08:05,682 - ERROR - Error evaluating TTD: KeyError: 'current_price'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 26760
+Type: KeyError
+Message: KeyError: 'current_price'
+Time: 2026-02-27 03:08:05
+Context: 2026-02-27 03:08:05,682 - ERROR - Error evaluating PATH: KeyError: 'current_price'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 26762
+Type: KeyError
+Message: KeyError: 'current_price'
+Time: 2026-02-27 03:08:05
+Context: 2026-02-27 03:08:05,682 - ERROR - Error evaluating TDOC: KeyError: 'current_price'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 26764
+Type: KeyError
+Message: KeyError: 'current_price'
+Time: 2026-02-27 03:08:05
+Context: 2026-02-27 03:08:05,682 - ERROR - Error evaluating ACN: KeyError: 'current_price'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 33968
+Type: KeyError
+Message: KeyError: 'current_price'
+Time: 2026-02-27 15:02:14
+Context: 2026-02-27 15:02:14,741 - ERROR - Error evaluating PENN: KeyError: 'current_price'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+
+File: logs/screener.log
+Line: 35741
+Type: KeyError
+Message: KeyError: 'decision'
+Time: 2026-03-01 00:00:03
+Context: 2026-03-01 00:00:03,951 - ERROR - Error analyzing performance: KeyError: 'decision'
+
+Suggested Fix:
+  - Review error context and stack trace
+
+================================================================================
+END OF REPORT
+================================================================================

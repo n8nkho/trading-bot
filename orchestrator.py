@@ -28,6 +28,7 @@ from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mod
 from agents.fortress_orchestrator import fortress_daily_check, generate_fortress_report
 from agents.document_analyst import quick_fundamental_check
 from agents.intraday_sniper import scan_intraday_opportunities
+from agents.momentum_trader import momentum_strategy
 from utils.grok_sentiment import check_twitter_sentiment
 from utils.cost_calculator import (
     get_daily_costs,
@@ -445,8 +446,8 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
             
             # Handle Fundamental analysis
             if confidence >= FUNDAMENTAL_CONFIDENCE_THRESHOLD:
-                if isinstance(results[2], Exception):
-                    logger.error(f"{ticker}: Fundamental analysis failed: {results[2]}")
+                if isinstance(results[1], Exception):
+                    logger.error(f"{ticker}: Fundamental analysis failed: {results[1]}")
                     candidate['fundamental_analysis'] = None
                 else:
                     candidate['fundamental_analysis'] = fundamental_result
@@ -762,28 +763,6 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         return result
 
 
-def run_fortress():
-    """Run complete fortress hedging system."""
-    from agents.fortress_orchestrator import fortress_daily_check
-    
-    logger.info("=" * 80)
-    logger.info("FORTRESS HEDGING SYSTEM")
-    logger.info("=" * 80)
-    
-    try:
-        result = fortress_daily_check()
-        
-        if result:
-            logger.info("Fortress check complete")
-            logger.info(f"Market regime: {result.get('market_conditions', {}).get('regime', 'N/A')}")
-            logger.info(f"Strategies evaluated: {len(result.get('recommendations', {}))}")
-        
-        return result
-    except Exception as e:
-        logger.error(f"Fortress error: {e}")
-        return None
-
-
 def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
     """
     Synchronous wrapper for async run_daily_screening_async().
@@ -824,7 +803,7 @@ def run_fortress():
         logger.error(f"Fortress error: {e}")
         import traceback
         traceback.print_exc()
-        run_fortress()
+        return None
 
 async def monitor_positions_async():
     """
@@ -1469,7 +1448,6 @@ if __name__ == "__main__":
         print("  python orchestrator.py architect                  - Run meta-architect improvement cycle")
         print("  python orchestrator.py fortress                   - Run complete hedging system")
         print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
-        print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
         sys.exit(1)
     
     command = sys.argv[1].lower()
@@ -1819,6 +1797,10 @@ if __name__ == "__main__":
                     print(f"{strategy}: {data}")
         else:
             print("No results returned from fortress hedging system.")
+    elif command == "momentum":
+        print("\nRunning momentum strategy...")
+        result = momentum_strategy()
+        print(f"\nMomentum result: {result}")
     elif command == "snipe":
         portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else 10000
         logger.info(f"Running intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
@@ -1835,4 +1817,8 @@ if __name__ == "__main__":
                 logger.info(f"  Metrics: {opp['metrics']}")
         else:
             logger.info("No opportunities found")
+    else:
+        print(f"Unknown command: {command}")
+        print("  Use: screen, monitor, status, snipe, fortress, costs, watchdog, preload, tune, review, architect, momentum")
+        sys.exit(1)
 

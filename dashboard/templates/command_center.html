@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fortress Command Center</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&family=JetBrains+Mono:wght@400;500&family=Exo+2:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-deep: #06090f;
+      --bg-panel: #0d1117;
+      --bg-card: #161b22;
+      --border: #21262d;
+      --cyan: #00f5d4;
+      --cyan-dim: #00f5d440;
+      --amber: #f9c74f;
+      --amber-dim: #f9c74f30;
+      --red: #f94144;
+      --green: #43b883;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg-deep);
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      min-height: 100vh;
+      background-image: radial-gradient(ellipse 120% 80% at 50% -20%, var(--cyan-dim), transparent 50%);
+    }
+    .app {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 1.5rem;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .logo {
+      font-family: 'Orbitron', sans-serif;
+      font-weight: 800;
+      font-size: 1.4rem;
+      letter-spacing: 0.15em;
+      color: var(--cyan);
+      text-shadow: 0 0 20px var(--cyan-dim);
+    }
+    .logo span { color: var(--amber); }
+    .refresh {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--text-muted);
+      font-size: 11px;
+    }
+    .refresh button {
+      font-family: inherit;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--cyan);
+      padding: 0.4rem 0.8rem;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .refresh button:hover { background: var(--cyan-dim); color: var(--text); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 1rem;
+    }
+    .panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      overflow: hidden;
+    }
+    .panel-title {
+      font-family: 'Orbitron', sans-serif;
+      font-weight: 600;
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+      color: var(--cyan);
+      margin-bottom: 0.75rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .col-4 { grid-column: span 4; }
+    .col-6 { grid-column: span 6; }
+    .col-8 { grid-column: span 8; }
+    .col-12 { grid-column: span 12; }
+    @media (max-width: 1200px) {
+      .col-4, .col-6, .col-8 { grid-column: span 12; }
+    }
+
+    /* Health */
+    .health-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 0.75rem;
+    }
+    .health-item {
+      background: var(--bg-card);
+      border-radius: 6px;
+      padding: 0.6rem;
+      border-left: 3px solid var(--border);
+    }
+    .health-item.ok { border-left-color: var(--green); }
+    .health-item.warn { border-left-color: var(--amber); }
+    .health-item.err { border-left-color: var(--red); }
+    .health-item .label { color: var(--text-muted); font-size: 10px; text-transform: uppercase; }
+    .health-item .value { font-weight: 500; margin-top: 0.2rem; }
+
+    /* Agents */
+    .agent-list { display: flex; flex-direction: column; gap: 0.5rem; }
+    .agent-row {
+      display: grid;
+      grid-template-columns: 12px 1fr 1fr auto;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.5rem 0.6rem;
+      background: var(--bg-card);
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    .agent-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+    .agent-dot.fresh { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .agent-dot.stale { background: var(--amber); }
+    .agent-activity { font-size: 11px; color: var(--text-muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Performance */
+    .perf-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    .perf-stat {
+      background: var(--bg-card);
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    .perf-stat .label { color: var(--text-muted); font-size: 10px; text-transform: uppercase; }
+    .perf-stat .num { font-family: 'Orbitron', sans-serif; font-size: 1.2rem; color: var(--cyan); }
+    .perf-stat .num.neg { color: var(--red); }
+    .perf-stat .num.pos { color: var(--green); }
+    .trade-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .trade-table th { text-align: left; color: var(--text-muted); padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); }
+    .trade-table td { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); }
+    .trade-table tr:hover { background: var(--bg-card); }
+
+    /* News */
+    .news-list { display: flex; flex-direction: column; gap: 0.6rem; }
+    .news-card {
+      background: var(--bg-card);
+      border-radius: 6px;
+      padding: 0.75rem;
+      border-left: 3px solid var(--cyan-dim);
+    }
+    .news-card .ticker { color: var(--amber); font-weight: 600; margin-right: 0.5rem; }
+    .news-card .headline { color: var(--text); font-size: 12px; }
+    .news-card .meta { color: var(--text-muted); font-size: 10px; margin-top: 0.3rem; }
+
+    /* Recommendations */
+    .rec-list { display: flex; flex-direction: column; gap: 0.5rem; }
+    .rec-item {
+      padding: 0.75rem;
+      border-radius: 6px;
+      border-left: 4px solid var(--border);
+      background: var(--bg-card);
+    }
+    .rec-item.high { border-left-color: var(--red); }
+    .rec-item.medium { border-left-color: var(--amber); }
+    .rec-item.low { border-left-color: var(--cyan); }
+    .rec-item .title { font-weight: 600; margin-bottom: 0.3rem; }
+    .rec-item .body { font-size: 11px; color: var(--text-muted); }
+    .rec-item .action { font-size: 10px; color: var(--cyan); margin-top: 0.3rem; }
+
+    /* Feed */
+    .feed-list { max-height: 320px; overflow-y: auto; }
+    .feed-line {
+      padding: 0.35rem 0.5rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .feed-line.error { color: var(--red); }
+    .feed-line.warning { color: var(--amber); }
+    .feed-line .agent { color: var(--cyan); margin-right: 0.5rem; }
+
+    .loading { color: var(--text-muted); }
+    .empty { color: var(--text-muted); font-style: italic; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="logo">FORTRESS <span>COMMAND CENTER</span></div>
+      <div class="refresh">
+        <button type="button" id="btnRefresh">Refresh</button>
+        <span id="lastUpdate">—</span>
+      </div>
+    </header>
+
+    <div class="grid">
+      <div class="panel col-4">
+        <div class="panel-title">SYSTEM HEALTH</div>
+        <div id="health" class="health-grid loading">Loading…</div>
+      </div>
+      <div class="panel col-4">
+        <div class="panel-title">TRADING SNAPSHOT</div>
+        <div id="perfSummary" class="perf-summary loading">Loading…</div>
+      </div>
+      <div class="panel col-4">
+        <div class="panel-title">LATEST SCREENING</div>
+        <div id="screening" class="loading">Loading…</div>
+      </div>
+
+      <div class="panel col-6">
+        <div class="panel-title">AGENT ACTIVITY</div>
+        <div id="agents" class="agent-list loading">Loading…</div>
+      </div>
+      <div class="panel col-6">
+        <div class="panel-title">RECOMMENDATIONS</div>
+        <div id="recommendations" class="rec-list loading">Loading…</div>
+      </div>
+
+      <div class="panel col-8">
+        <div class="panel-title">RECENT TRADES & PERFORMANCE</div>
+        <div id="perfTable" class="loading">Loading…</div>
+      </div>
+      <div class="panel col-4">
+        <div class="panel-title">NEWS IMPACTING STRATEGY</div>
+        <div id="news" class="news-list loading">Loading…</div>
+      </div>
+
+      <div class="panel col-12">
+        <div class="panel-title">LIVE ACTIVITY FEED</div>
+        <div id="feed" class="feed-list loading">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', feed: '/api/feed' };
+
+    function setUpdated() {
+      document.getElementById('lastUpdate').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    }
+
+    function renderHealth(data) {
+      const el = document.getElementById('health');
+      if (!data || !data.services) { el.innerHTML = '<span class="empty">No data</span>'; return; }
+      const items = [];
+      items.push({ label: 'Ollama', value: data.services.ollama ? 'Running' : 'Stopped', cls: data.services.ollama ? 'ok' : 'err' });
+      items.push({ label: 'Dashboard', value: data.services.dashboard ? 'Running' : 'Stopped', cls: data.services.dashboard ? 'ok' : 'warn' });
+      items.push({ label: 'Cron', value: data.cron_configured ? data.cron_count + ' jobs' : 'None', cls: data.cron_configured ? 'ok' : 'err' });
+      if (data.disk && data.disk.pct != null) {
+        items.push({ label: 'Disk', value: data.disk.used_gb + '/' + data.disk.total_gb + ' GB (' + data.disk.pct + '%)', cls: data.disk.pct > 90 ? 'err' : data.disk.pct > 75 ? 'warn' : 'ok' });
+      }
+      if (data.risk && data.risk.circuit_breaker_active) {
+        items.push({ label: 'Circuit', value: 'Tripped', cls: 'err' });
+      }
+      if (data.data_files) {
+        items.push({ label: 'Data', value: [data.data_files.positions, data.data_files.decisions].filter(Boolean).length + ' files', cls: 'ok' });
+      }
+      if (data.unresolved_errors && data.validation_errors && data.validation_errors.length) {
+        items.push({ label: 'Validation', value: data.validation_errors.length + ' errors', cls: 'err' });
+      } else if (data.unresolved_errors) {
+        items.push({ label: 'Validation', value: 'Errors', cls: 'err' });
+      } else {
+        items.push({ label: 'Validation', value: 'OK', cls: 'ok' });
+      }
+      el.innerHTML = items.map(i => `<div class="health-item ${i.cls}"><div class="label">${i.label}</div><div class="value">${i.value}</div></div>`).join('');
+    }
+
+    function renderAgents(data) {
+      const el = document.getElementById('agents');
+      if (!data || !data.agents || !data.agents.length) { el.innerHTML = '<span class="empty">No agent data</span>'; return; }
+      el.innerHTML = data.agents.map(a => {
+        const time = a.last_run ? new Date(a.last_run).toLocaleString() : '—';
+        const activity = (a.last_activity || '').replace(/</g, '&lt;').substring(0, 80);
+        return `<div class="agent-row">
+          <span class="agent-dot ${a.status}"></span>
+          <span>${a.name}</span>
+          <span class="agent-activity" title="${activity}">${activity || '—'}</span>
+          <span class="text-muted">${time}</span>
+        </div>`;
+      }).join('');
+    }
+
+    function renderPerformance(data) {
+      const el = document.getElementById('perfSummary');
+      const tableEl = document.getElementById('perfTable');
+      if (!data) {
+        el.innerHTML = '<span class="empty">No data</span>';
+        tableEl.innerHTML = '<span class="empty">No data</span>';
+        return;
+      }
+      const pos = data.positions_count || 0;
+      const wr = data.win_rate_30d != null ? data.win_rate_30d + '%' : '—';
+      const pnl = data.total_pnl != null ? (data.total_pnl >= 0 ? '+' : '') + data.total_pnl.toFixed(2) : '—';
+      el.innerHTML = `
+        <div class="perf-stat"><div class="label">Open positions</div><div class="num">${pos}</div></div>
+        <div class="perf-stat"><div class="label">Win rate (30d)</div><div class="num">${wr}</div></div>
+        <div class="perf-stat"><div class="label">Total P&L</div><div class="num ${(data.total_pnl || 0) >= 0 ? 'pos' : 'neg'}">${pnl}</div></div>
+      `;
+      const screen = data.latest_screening || {};
+      document.getElementById('screening').innerHTML = screen.date
+        ? `Date: ${screen.date}<br>Candidates: ${screen.candidates_found || 0} | Approved: ${screen.approved || 0} | Auto: ${screen.auto_executed || 0}`
+        : '<span class="empty">No screening yet</span>';
+
+      const rows = (data.recent_trades || []).slice(0, 12);
+      if (!rows.length) {
+        tableEl.innerHTML = '<span class="empty">No recent trades</span>';
+        return;
+      }
+      tableEl.innerHTML = `
+        <table class="trade-table">
+          <thead><tr><th>Ticker</th><th>Exit</th><th>P&L</th><th>P&L %</th><th>Outcome</th></tr></thead>
+          <tbody>
+            ${rows.map(t => {
+              const pnlPct = t.pnl_pct != null ? t.pnl_pct.toFixed(2) + '%' : '—';
+              const pnlClass = (t.pnl_pct || 0) >= 0 ? 'pos' : 'neg';
+              return `<tr>
+                <td>${t.ticker || '—'}</td>
+                <td>${(t.exit_time || t.timestamp || '—').toString().slice(0,16)}</td>
+                <td class="${pnlClass}">${t.pnl != null ? t.pnl.toFixed(2) : '—'}</td>
+                <td class="${pnlClass}">${pnlPct}</td>
+                <td>${t.outcome || '—'}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>`;
+    }
+
+    function renderNews(data) {
+      const el = document.getElementById('news');
+      if (!data || !data.candidate_news && !data.headlines) { el.innerHTML = '<span class="empty">No news</span>'; return; }
+      const items = data.headlines && data.headlines.length ? data.headlines.slice(0, 8)
+        : (data.candidate_news || []).slice(0, 5).flatMap(c => (c.headlines || []).map(h => ({ ticker: c.ticker, text: typeof h === 'string' ? h : h.title || '' })));
+      if (!items.length) { el.innerHTML = '<span class="empty">No headlines</span>'; return; }
+      el.innerHTML = items.map(n => `
+        <div class="news-card">
+          <span class="ticker">${n.ticker || ''}</span>
+          <span class="headline">${(n.text || n).toString().replace(/</g, '&lt;').slice(0, 120)}</span>
+        </div>`).join('');
+    }
+
+    function renderRecommendations(data) {
+      const el = document.getElementById('recommendations');
+      if (!data || !data.items || !data.items.length) { el.innerHTML = '<span class="empty">No recommendations</span>'; return; }
+      el.innerHTML = data.items.slice(0, 8).map(r => `
+        <div class="rec-item ${r.severity}">
+          <div class="title">${(r.title || '').replace(/</g, '&lt;')}</div>
+          <div class="body">${(r.body || '').replace(/</g, '&lt;').slice(0, 200)}</div>
+          <div class="action">${(r.action || '').replace(/</g, '&lt;')}</div>
+        </div>`).join('');
+    }
+
+    function renderFeed(data) {
+      const el = document.getElementById('feed');
+      if (!data || !data.items || !data.items.length) { el.innerHTML = '<span class="empty">No activity</span>'; return; }
+      el.innerHTML = data.items.slice(-40).reverse().map(f => `
+        <div class="feed-line ${f.level}">
+          <span class="agent">[${(f.agent || '').replace(/</g, '&lt;')}]</span>
+          ${(f.text || '').replace(/</g, '&lt;').slice(0, 200)}
+        </div>`).join('');
+    }
+
+    async function loadAll() {
+      try {
+        const [health, agents, performance, news, recommendations, feed] = await Promise.all([
+          fetch(API.health).then(r => r.json()),
+          fetch(API.agents).then(r => r.json()),
+          fetch(API.performance).then(r => r.json()),
+          fetch(API.news).then(r => r.json()),
+          fetch(API.recommendations).then(r => r.json()),
+          fetch(API.feed).then(r => r.json())
+        ]);
+        renderHealth(health);
+        renderAgents(agents);
+        renderPerformance(performance);
+        renderNews(news);
+        renderRecommendations(recommendations);
+        renderFeed(feed);
+        setUpdated();
+      } catch (e) {
+        console.error(e);
+        document.querySelectorAll('.loading').forEach(el => { if (el.classList.contains('loading')) el.innerHTML = '<span class="empty">Error loading</span>'; });
+      }
+    }
+
+    document.getElementById('btnRefresh').addEventListener('click', loadAll);
+    loadAll();
+    setInterval(loadAll, 30000);
+  </script>
+</body>
+</html>

@@ -4,9 +4,14 @@ from alpaca.trading.client import TradingClient
 import os
 import json
 from datetime import datetime
+from pathlib import Path
+
+# Run from project root (for cron compatibility)
+PROJECT_ROOT = Path(__file__).resolve().parent
+os.chdir(PROJECT_ROOT)
 
 # Load env
-with open('.env') as f:
+with open(PROJECT_ROOT / '.env') as f:
     for line in f:
         if 'ALPACA' in line and not line.startswith('#'):
             key, val = line.strip().split('=', 1)
@@ -34,7 +39,7 @@ for pos in positions:
         'cost_basis': float(pos.cost_basis)
     })
 
-with open('data/positions.json', 'w') as f:
+with open(PROJECT_ROOT / 'data' / 'positions.json', 'w') as f:
     json.dump(pos_list, f, indent=2)
 
 print(f"✅ Synced {len(pos_list)} positions")

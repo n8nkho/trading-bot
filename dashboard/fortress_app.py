@@ -16,7 +16,8 @@ CORS(app)
 
 def get_all_trades():
     try:
-        with open('data/decisions_log.jsonl', 'r') as file:
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(project_root, 'data', 'decisions_log.jsonl'), 'r') as file:
             trades = [json.loads(line) for line in file]
         return trades
     except FileNotFoundError:

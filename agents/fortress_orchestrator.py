@@ -58,7 +58,7 @@ def get_portfolio_status():
     """Connect to Alpaca and get portfolio status."""
     from alpaca.trading.client import TradingClient
     from alpaca.trading.client import TradingClient
-    client = TradingClient(os.getenv('APCA_API_KEY_ID'), os.getenv('APCA_API_SECRET_KEY'))
+    client = TradingClient(os.getenv('ALPACA_API_KEY'), os.getenv('ALPACA_SECRET_KEY'), paper=True)
     account = client.get_account()
     positions = client.get_all_positions()
     total_value = float(account.equity)

@@ -15,8 +15,6 @@ EXPIRATION_DAYS = 30
 
 # Load environment variables
 load_dotenv()
-api_key = os.getenv("APCA_API_KEY_ID")
-secret_key = os.getenv("APCA_API_SECRET_KEY")
 
 def get_client():
     """Get Alpaca trading client."""

@@ -6,8 +6,11 @@ import os
 import json
 from pathlib import Path
 
-# Add parent directory to path for imports
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add parent directory to path and ensure project root is cwd (for cron/standalone runs)
+_project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_project_root))
+if os.getcwd() != str(_project_root):
+    os.chdir(_project_root)
 from utils.local_llm import call_ollama
 from agents.screener_agent import get_news_headlines
 
@@ -22,68 +25,6 @@ STOP_LOSS_PCT = -0.05  # -5% stop loss
 PROFIT_TARGET_PCT = 0.10  # +10% profit target
 MAX_HOLD_DAYS = 5  # Maximum hold period (time stop)
 
-def check_option_exit(position):
-    pass
-def monitor_positions(positions):
-    """
-    Monitor open positions and generate exit decisions.
-    
-    Args:
-        positions: List of position dicts with:
-            - ticker: Stock symbol
-            - entry_price: Entry price per share
-            - qty or shares: Number of shares
-            - entry_time or entry_date: Entry timestamp (ISO format string or datetime)
-            - tiers_sold: Optional dict tracking which tiers have been sold
-            
-    Returns:
-        List of exit decision dicts with action and reasoning
-    """
-    logging.info(f"Starting exit monitoring for {len(positions)} positions")
-    
-    decisions = []
-    
-    for pos in positions:
-        ticker = pos['ticker']
-        logging.info(f"Monitoring position: {ticker} ({pos.get('type', 'STOCK')})")
-        
-        try:
-            if pos.get('type') == 'OPTION':
-                decision = check_option_exit(pos)
-            else:
-                decision = evaluate_exit(pos)
-            decisions.append(decision)
-            
-            logging.info(f"{ticker}: {decision['action']} - {decision['reason']}")
-            
-        except Exception as e:
-            logging.error(f"Error monitoring {ticker}: {type(e).__name__}: {str(e)}")
-            decisions.append({
-                'ticker': ticker,
-                'action': 'HOLD',
-                'reason': f'Error during evaluation: {str(e)}',
-                'current_price': None,
-                'pnl_pct': None,
-                'timestamp': datetime.now().isoformat()
-            })
-    
-    action_summary = {}
-    for d in decisions:
-        action = d['action']
-        action_summary[action] = action_summary.get(action, 0) + 1
-    
-    logging.info(f"Exit monitoring complete: {action_summary}")
-    
-    return decisions
-    """
-    Evaluate exit conditions for an option position.
-    
-    Args:
-        position: Position dict with ticker, entry_premium, qty, expiration_date, type
-        
-    Returns:
-        Decision dict with action, reason, sell_qty, current_price, pnl_pct
-    """
 def check_option_exit(position):
     ticker = position['ticker']
     entry_premium = position['entry_premium']
@@ -463,10 +404,9 @@ def log_exit(exit_log):
         exit_log: Dict with exit details
     """
     try:
-        # Ensure data directory exists
-        Path('data').mkdir(exist_ok=True)
-        
-        exits_file = 'data/exits.json'
+        data_dir = Path(__file__).resolve().parent.parent / 'data'
+        data_dir.mkdir(exist_ok=True)
+        exits_file = data_dir / 'exits.json'
         
         # Load existing exits
         if os.path.exists(exits_file):
@@ -572,8 +512,9 @@ def process_exit_decisions(decisions):
 def load_positions():
     """Load positions from data/positions.json"""
     try:
-        positions_file = 'data/positions.json'
-        if os.path.exists(positions_file):
+        project_root = Path(__file__).resolve().parent.parent
+        positions_file = project_root / 'data' / 'positions.json'
+        if positions_file.exists():
             with open(positions_file, 'r') as f:
                 return json.load(f)
         return []
@@ -632,8 +573,9 @@ if __name__ == "__main__":
             print(f"  Sell Quantity: {decision['sell_qty']} shares")
     
     # Save decisions to file
-    filename = f"data/exit_decisions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    Path('data').mkdir(exist_ok=True)
+    data_dir = Path(__file__).resolve().parent.parent / 'data'
+    data_dir.mkdir(exist_ok=True)
+    filename = data_dir / f"exit_decisions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(filename, 'w') as f:
         json.dump(decisions, f, indent=2)
     print(f"\nDecisions saved to {filename}")

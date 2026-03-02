@@ -27,7 +27,7 @@ def check_twitter_sentiment(ticker, confidence_threshold=0.8):
         "BULLISH", "BEARISH", "NEUTRAL", or None if API key missing
     """
     # Check if API key exists
-    api_key = os.getenv("XAI_API_KEY")
+    api_key = os.getenv("GROK_API_KEY") or os.getenv("XAI_API_KEY")
     if not api_key:
         logging.info(f"Skipped Grok call for {ticker} - no API key")
         return None

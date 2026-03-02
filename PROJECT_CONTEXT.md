@@ -220,9 +220,9 @@ python orchestrator.py screen   # Manual screening
 python orchestrator.py forex    # Forex sniper
 python orchestrator.py status   # System status
 
-# Dashboard (from local Mac via SSH tunnel)
-ssh -L 8080:localhost:8080 ubuntu@132.226.33.49
-# Then: http://localhost:8080
+# Command Center dashboard (recommended: system health, agents, performance, news, recommendations)
+python dashboard/command_center.py   # Port 8083 (or COMMAND_CENTER_PORT=8082)
+# From local: ssh -L 8083:localhost:8083 ubuntu@132.226.33.49 then http://localhost:8083
 ```
 
 ---
@@ -310,9 +310,11 @@ ssh -L 8080:localhost:8080 ubuntu@132.226.33.49
 
 **Key Documents:**
 ```
+HANDOFF.md                   - Session handoff, resume prompt (start here when resuming)
 FORTRESS_FINAL_STATUS.md     - Complete system overview
 FORTRESS_AUDIT_GUIDE.md      - Audit and verification
 PROJECT_CONTEXT.md           - This file
+SYSTEM_REVIEW.md             - Inconsistencies audit, fixes applied
 ```
 
 ---
