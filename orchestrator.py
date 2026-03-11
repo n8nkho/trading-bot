@@ -23,13 +23,11 @@ from agents.screener_agent import run_screener
 from agents.entry_agent import evaluate_entry
 from agents.exit_monitor import monitor_positions as monitor_exit_conditions
 from agents.risk_guardian import check_risk_limits, get_risk_status
-from agents.regime_center import get_current_regime
 from agents.performance_analyzer import track_decision, load_current_params
 from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mode
 from agents.fortress_orchestrator import fortress_daily_check, generate_fortress_report
 from agents.document_analyst import quick_fundamental_check
 from agents.intraday_sniper import scan_intraday_opportunities
-from agents.momentum_trader import momentum_strategy
 from utils.grok_sentiment import check_twitter_sentiment
 from utils.cost_calculator import (
     get_daily_costs,
@@ -61,22 +59,8 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 
-CONFIG_DIR = Path("config")
-CONFIG_DIR.mkdir(exist_ok=True)
-
 POSITIONS_FILE = DATA_DIR / "positions.json"
 PORTFOLIO_VALUE = 50000  # Default portfolio value
-
-# Auto-execution configuration (Paper Trading Only)
-PAPER_TRADING_AUTO_EXECUTE = True  # Auto-execute qualified trades
-MAX_AUTO_TRADES_PER_DAY = 6
-MIN_CONFIDENCE_FOR_AUTO = 0.70
-AUTO_POSITION_SIZE = 500  # $500 per trade
-AUTO_STOP_LOSS_PCT = 3.0  # 3% stop (zero-loss push)
-AUTO_PROFIT_TARGET_PCT = 10.0
-
-# Runtime switches (toggled from Command Center)
-RUNTIME_SWITCHES_FILE = CONFIG_DIR / "runtime_switches.json"
 
 # Market hours (Eastern Time)
 MARKET_OPEN = time(9, 30)   # 9:30 AM ET
@@ -113,29 +97,6 @@ if ALPACA_API_KEY and ALPACA_SECRET_KEY:
         logger.error(f"Failed to initialize Alpaca client: {type(e).__name__}: {str(e)}")
 else:
     logger.warning("Alpaca credentials not found. Trading execution disabled.")
-
-
-def get_runtime_switches():
-    """
-    Load runtime switches (set from Command Center).
-    Returns a dict with conservative defaults if missing/invalid.
-    """
-    default = {
-        "global_trading_enabled": True,
-        "auto_equity_trading_enabled": True,
-        "options_trading_enabled": True,
-        "forex_trading_enabled": True,
-        "risk_mode": "normal",
-    }
-    try:
-        if RUNTIME_SWITCHES_FILE.exists():
-            with open(RUNTIME_SWITCHES_FILE) as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                default.update(data)
-    except Exception as e:
-        logger.warning(f"Failed to read runtime switches: {type(e).__name__}: {e}")
-    return default
 
 def get_account_info():
     """
@@ -522,20 +483,6 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         # Update candidates with analyzed results
         candidates = analyzed_candidates
         
-        # Step 2.5: Auto-execute qualified trades (if enabled)
-        auto_execution_result = None
-        if PAPER_TRADING_AUTO_EXECUTE:
-            logger.info("Step 2.5: Auto-executing qualified trades...")
-            auto_execution_result = await execute_auto_trades(candidates, portfolio_value)
-            
-            if auto_execution_result['executed']:
-                logger.info(f"Auto-executed {len(auto_execution_result['executed'])} trades")
-                for trade in auto_execution_result['executed']:
-                    logger.info(f"  ✓ {trade['ticker']}: {trade['shares']} shares @ ${trade['entry_price']:.2f}")
-            
-            if auto_execution_result['skipped']:
-                logger.info(f"Skipped {len(auto_execution_result['skipped'])} candidates")
-        
         # Step 3: Evaluate entry timing and conditions
         logger.info("Step 3: Evaluating entry conditions...")
         entry_decisions = await asyncio.to_thread(evaluate_entry, candidates, portfolio_value)
@@ -758,7 +705,6 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
             'executed_trades': executed_trades,
             'execution_failures': execution_failures,
             'rejected_trades': rejected_trades,
-            'auto_execution': auto_execution_result,
             'risk_status': get_risk_status(),
             'portfolio_value': portfolio_value,
             'account_info': account_info,
@@ -905,26 +851,36 @@ async def monitor_positions_async():
         
         async def execute_exit(signal):
             """Execute a single exit order asynchronously."""
-            if signal['action'] not in ['SELL_ALL', 'SELL_HALF', 'SELL_PARTIAL']:
+            SELL_ACTIONS = {'SELL_ALL', 'SELL_HALF', 'SELL_20%', 'SELL_30%', 'SELL_50%'}
+            if signal['action'] not in SELL_ACTIONS:
                 return None
+
             ticker = signal['ticker']
             sell_qty = signal.get('sell_qty', 0)
+
             if sell_qty <= 0:
+                logger.warning(f"{ticker}: sell_qty=0 for action={signal['action']} — skipping")
                 return None
+
+            # Execute sell order
             order_result = await asyncio.to_thread(execute_sell_order, ticker, sell_qty)
+
             if order_result['success']:
-                logger.info(f"{ticker}: Exit order executed - ID: {order_result['order_id']}")
+                logger.info(f"{ticker}: Exit order executed ({signal['action']}) - ID: {order_result['order_id']}")
+
                 signal['order_id'] = order_result['order_id']
                 signal['order_status'] = order_result['status']
                 signal['filled_qty'] = order_result['filled_qty']
                 signal['filled_price'] = order_result['filled_price']
                 signal['executed'] = True
                 signal['execution_time'] = datetime.now().isoformat()
+
+                # Update positions file
                 if signal['action'] == 'SELL_ALL':
                     await asyncio.to_thread(remove_position, ticker)
-                else:
-                    tier_hit = signal.get('tier')
-                    await asyncio.to_thread(update_position_quantity, ticker, sell_qty, tier_hit)
+                else:  # partial sell — reduce quantity
+                    await asyncio.to_thread(update_position_quantity, ticker, sell_qty)
+                
                 return ('success', signal)
             else:
                 logger.error(f"{ticker}: Exit order failed - {order_result['error']}")
@@ -1065,28 +1021,38 @@ def remove_position(ticker):
         logger.error(f"Error removing position: {type(e).__name__}: {str(e)}")
 
 
-def update_position_quantity(ticker, qty_sold, tier_hit=None):
-    """Update position after partial sale; optionally record ladder tier."""
+def update_position_quantity(ticker, qty_sold):
+    """
+    Update position quantity after partial sale.
+    
+    Args:
+        ticker: Stock ticker
+        qty_sold: Number of shares sold
+    """
     try:
+        # Load existing positions
         positions = load_positions()
+        
+        # Update position
         for pos in positions:
-            if pos['ticker'] != ticker:
-                continue
-            old_qty = pos.get('shares') or pos.get('qty', 0)
-            new_qty = old_qty - qty_sold
-            if 'shares' in pos:
-                pos['shares'] = new_qty
-            if 'qty' in pos:
-                pos['qty'] = new_qty
-            if tier_hit is not None:
-                tiers = pos.get('tiers_sold') or []
-                if tier_hit not in tiers:
-                    tiers.append(tier_hit)
-                    pos['tiers_sold'] = tiers
-            logger.info(f"Updated position: {ticker} -> {new_qty} shares" + (f" tier {tier_hit}" if tier_hit else ""))
-            break
+            if pos['ticker'] == ticker:
+                # Handle both 'shares' and 'qty' keys
+                old_qty = pos.get('shares') or pos.get('qty', 0)
+                new_qty = old_qty - qty_sold
+                
+                # Update both keys if they exist
+                if 'shares' in pos:
+                    pos['shares'] = new_qty
+                if 'qty' in pos:
+                    pos['qty'] = new_qty
+                
+                logger.info(f"Updated position: {ticker} - {old_qty} -> {new_qty} shares")
+                break
+        
+        # Save back to file as a list
         with open(POSITIONS_FILE, 'w') as f:
             json.dump(positions, f, indent=2)
+        
     except Exception as e:
         logger.error(f"Error updating position quantity: {type(e).__name__}: {str(e)}")
 
@@ -1131,297 +1097,6 @@ def get_sector_from_candidates(ticker, candidates):
         if candidate['ticker'] == ticker:
             return candidate.get('sector', 'Unknown')
     return 'Unknown'
-
-
-def get_auto_trades_today():
-    """
-    Get count of auto-executed trades today.
-    
-    Returns:
-        int: Number of auto-trades executed today
-    """
-    try:
-        date_str = datetime.now().strftime('%Y%m%d')
-        filename = DATA_DIR / f"auto_trades_{date_str}.json"
-        
-        if not filename.exists():
-            return 0
-        
-        with open(filename, 'r') as f:
-            data = json.load(f)
-        
-        return len(data.get('trades', []))
-        
-    except Exception as e:
-        logger.error(f"Error getting auto-trades count: {type(e).__name__}: {str(e)}")
-        return 0
-
-
-def log_auto_trade(trade_data):
-    """
-    Log auto-executed trade to daily file and decisions log.
-    
-    Args:
-        trade_data: Dict with trade details
-    """
-    try:
-        date_str = datetime.now().strftime('%Y%m%d')
-        filename = DATA_DIR / f"auto_trades_{date_str}.json"
-        
-        # Load existing trades
-        if filename.exists():
-            with open(filename, 'r') as f:
-                data = json.load(f)
-        else:
-            data = {'date': date_str, 'trades': []}
-        
-        # Add new trade
-        data['trades'].append(trade_data)
-        
-        # Save to file
-        with open(filename, 'w') as f:
-            json.dump(data, f, indent=2)
-        
-        # Also log to decisions_log.jsonl
-        decisions_log = DATA_DIR / "decisions_log.jsonl"
-        with open(decisions_log, 'a') as f:
-            log_entry = {
-                'timestamp': datetime.now().isoformat(),
-                'type': 'AUTO_TRADE',
-                'ticker': trade_data['ticker'],
-                'action': 'BUY',
-                'shares': trade_data['shares'],
-                'entry_price': trade_data['entry_price'],
-                'position_size': trade_data['position_size'],
-                'stop_loss': trade_data['stop_loss'],
-                'profit_target': trade_data['profit_target'],
-                'confidence': trade_data['confidence'],
-                'reasoning': trade_data['reasoning'],
-                'regime': trade_data.get('regime'),
-                'strategy_id': trade_data.get('strategy_id', 'screen_auto'),
-                'sector': trade_data.get('sector'),
-                'signal_strength': trade_data.get('signal_strength'),
-            }
-            f.write(json.dumps(log_entry) + '\n')
-        
-        logger.info(f"Auto-trade logged: {trade_data['ticker']}")
-        
-    except Exception as e:
-        logger.error(f"Error logging auto-trade: {type(e).__name__}: {str(e)}")
-
-
-async def execute_auto_trades(candidates, portfolio_value):
-    """
-    Auto-execute qualified trades in paper trading mode.
-    
-    Args:
-        candidates: List of analyzed candidates
-        portfolio_value: Current portfolio value
-        
-    Returns:
-        dict: {
-            'executed': list of executed trades,
-            'skipped': list of skipped trades with reasons
-        }
-    """
-    logger.info("=" * 80)
-    logger.info("AUTO-EXECUTION MODE (PAPER TRADING)")
-    logger.info("=" * 80)
-    
-    # Safety check
-    switches = get_runtime_switches()
-    if not switches.get("global_trading_enabled", True) or not switches.get("auto_equity_trading_enabled", True):
-        logger.info("Runtime switches disabled auto-equity trading - candidates found but not executed")
-        return {'executed': [], 'skipped': []}
-    if not PAPER_TRADING_AUTO_EXECUTE:
-        logger.info("Auto-execution disabled - candidates found but not executed")
-        return {'executed': [], 'skipped': []}
-    
-    if not alpaca_client:
-        logger.error("Cannot auto-execute - Alpaca client not initialized")
-        return {'executed': [], 'skipped': []}
-    
-    # Regime-aware risk scaling
-    regime_snapshot = get_current_regime()
-    regime_name = (regime_snapshot.get('regime') or 'NEUTRAL').upper()
-    if regime_name == "CRASH":
-        size_mult = 0.25
-        max_trades_mult = 0.25
-    elif regime_name == "RISK_OFF":
-        size_mult = 0.5
-        max_trades_mult = 0.5
-    elif regime_name == "RISK_ON":
-        size_mult = 1.25
-        max_trades_mult = 1.0
-    else:
-        size_mult = 1.0
-        max_trades_mult = 1.0
-    effective_max_trades = max(1, int(MAX_AUTO_TRADES_PER_DAY * max_trades_mult))
-    
-    # Check daily limit
-    auto_trades_today = get_auto_trades_today()
-    if auto_trades_today >= effective_max_trades:
-        logger.warning(f"Daily auto-trade limit reached: {auto_trades_today}/{effective_max_trades} (regime={regime_name})")
-        return {'executed': [], 'skipped': []}
-    
-    # Load current positions
-    current_positions = load_positions()
-    held_tickers = {pos['ticker'] for pos in current_positions}
-    
-    # Filter candidates for auto-execution
-    qualified = []
-    skipped = []
-    
-    for candidate in candidates:
-        ticker = candidate['ticker']
-        confidence = candidate.get('analysis', {}).get('confidence', 0)
-        current_price = candidate.get('current_price', 0)
-        
-        # Check confidence threshold
-        if confidence < MIN_CONFIDENCE_FOR_AUTO:
-            skipped.append({
-                'ticker': ticker,
-                'reason': f'Confidence {confidence:.2f} < {MIN_CONFIDENCE_FOR_AUTO}',
-                'confidence': confidence
-            })
-            continue
-        
-        # Check if already holding
-        if ticker in held_tickers:
-            skipped.append({
-                'ticker': ticker,
-                'reason': 'Already holding position',
-                'confidence': confidence
-            })
-            continue
-        
-        # Check if we have price data
-        if not current_price or current_price <= 0:
-            skipped.append({
-                'ticker': ticker,
-                'reason': 'No valid price data',
-                'confidence': confidence
-            })
-            continue
-        
-        # Check daily limit
-        if len(qualified) + auto_trades_today >= effective_max_trades:
-            skipped.append({
-                'ticker': ticker,
-                'reason': f'Daily limit ({effective_max_trades}) would be exceeded (regime={regime_name})',
-                'confidence': confidence
-            })
-            continue
-        
-        qualified.append(candidate)
-    
-    logger.info(f"Qualified for auto-execution: {len(qualified)}")
-    logger.info(f"Skipped: {len(skipped)}")
-    
-    if len(qualified) == 0:
-        return {'executed': [], 'skipped': skipped}
-    account_info = await asyncio.to_thread(get_account_info)
-    if not account_info:
-        logger.error("Cannot auto-execute: no account info")
-        return {'executed': [], 'skipped': skipped}
-    executed = []
-    for candidate in qualified:
-        ticker = candidate['ticker']
-        current_price = candidate['current_price']
-        confidence = candidate.get('analysis', {}).get('confidence', 0)
-        reasoning = candidate.get('analysis', {}).get('reasoning', 'No reasoning provided')
-        # Regime-scaled position size
-        position_dollars = AUTO_POSITION_SIZE * size_mult
-        shares = int(position_dollars / current_price)
-        if shares <= 0:
-            logger.warning(f"{ticker}: Cannot buy fractional shares (price: ${current_price:.2f})")
-            skipped.append({'ticker': ticker, 'reason': 'Price too high for position size', 'confidence': confidence})
-            continue
-        position_size = shares * current_price
-        positions = await asyncio.to_thread(load_positions)
-        portfolio_data = build_portfolio_data(positions, account_info['equity'])
-        new_pos = {'ticker': ticker, 'size': shares, 'value': position_size, 'sector': get_sector_from_candidates(ticker, candidates)}
-        risk = check_risk_limits(portfolio_data, new_pos)
-        if not risk.get('approved'):
-            skipped.append({'ticker': ticker, 'reason': risk.get('reason', 'Risk limit'), 'confidence': confidence})
-            continue
-        # Stop loss and profit target
-        stop_loss_price = current_price * (1 - AUTO_STOP_LOSS_PCT / 100)
-        profit_target_price = current_price * (1 + AUTO_PROFIT_TARGET_PCT / 100)
-        
-        logger.info("=" * 80)
-        logger.info(f"AUTO-EXECUTING: {ticker} at ${current_price:.2f}, {shares} shares (regime={regime_name}, size_mult={size_mult})")
-        logger.info(f"Position Size: ${position_size:.2f}")
-        logger.info(f"Stop Loss: ${stop_loss_price:.2f} (-{AUTO_STOP_LOSS_PCT}%)")
-        logger.info(f"Profit Target: ${profit_target_price:.2f} (+{AUTO_PROFIT_TARGET_PCT}%)")
-        logger.info(f"Confidence: {confidence:.2f}")
-        logger.info(f"Reason: {reasoning}")
-        logger.info("=" * 80)
-        
-        # Execute buy order
-        order_result = await asyncio.to_thread(execute_buy_order, ticker, shares, current_price)
-        
-        if order_result['success']:
-            logger.info(f"{ticker}: ✓ AUTO-TRADE EXECUTED - Order ID: {order_result['order_id']}")
-            
-            # Prepare trade data
-            trade_data = {
-                'ticker': ticker,
-                'shares': shares,
-                'entry_price': current_price,
-                'position_size': position_size,
-                'stop_loss': stop_loss_price,
-                'profit_target': profit_target_price,
-                'confidence': confidence,
-                'reasoning': reasoning,
-                'order_id': order_result['order_id'],
-                'order_status': order_result['status'],
-                'filled_qty': order_result['filled_qty'],
-                'filled_price': order_result['filled_price'],
-                'timestamp': datetime.now().isoformat(),
-                'grok_sentiment': candidate.get('grok_sentiment'),
-                'vision_analysis': candidate.get('vision_analysis'),
-                'fundamental_analysis': candidate.get('fundamental_analysis'),
-                'regime': regime_name,
-                'strategy_id': 'screen_auto',
-                'sector': get_sector_from_candidates(ticker, candidates),
-                'signal_strength': candidate.get('analysis', {}).get('score') if isinstance(candidate.get('analysis'), dict) else None,
-            }
-            
-            # Log trade
-            await asyncio.to_thread(log_auto_trade, trade_data)
-            
-            await asyncio.to_thread(add_position, {
-                'ticker': ticker,
-                'shares': shares,
-                'qty': shares,
-                'entry_price': current_price,
-                'entry_date': datetime.now().isoformat(),
-                'order_id': order_result['order_id'],
-                'sector': get_sector_from_candidates(ticker, candidates),
-                'stop_loss_pct': AUTO_STOP_LOSS_PCT,
-                'take_profit_pct': AUTO_PROFIT_TARGET_PCT,
-                'auto_executed': True,
-                'initial_qty': shares,
-                'scalp': True,
-                'tiers_sold': []
-            })
-            
-            executed.append(trade_data)
-            
-        else:
-            logger.error(f"{ticker}: ✗ AUTO-TRADE FAILED - {order_result['error']}")
-            skipped.append({
-                'ticker': ticker,
-                'reason': f"Execution failed: {order_result['error']}",
-                'confidence': confidence
-            })
-    
-    logger.info("=" * 80)
-    logger.info(f"AUTO-EXECUTION COMPLETE: {len(executed)} executed, {len(skipped)} skipped")
-    logger.info("=" * 80)
-    
-    return {'executed': executed, 'skipped': skipped}
 
 
 def save_daily_signals(result):
@@ -1494,6 +1169,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py architect                  - Run meta-architect improvement cycle")
         print("  python orchestrator.py fortress                   - Run complete hedging system")
         print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
+        print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
         sys.exit(1)
     
     command = sys.argv[1].lower()
@@ -1508,23 +1184,7 @@ if __name__ == "__main__":
         print("SCREENING RESULTS")
         print("=" * 80)
         print(f"Candidates found: {result['candidates_found']}")
-        
-        # Show auto-execution results
-        if result.get('auto_execution'):
-            auto_exec = result['auto_execution']
-            print(f"\nAuto-Execution (Paper Trading):")
-            print(f"  Executed: {len(auto_exec['executed'])}")
-            print(f"  Skipped: {len(auto_exec['skipped'])}")
-            
-            if auto_exec['executed']:
-                print("\n  ✓ Auto-Executed Trades:")
-                for trade in auto_exec['executed']:
-                    print(f"    {trade['ticker']}: {trade['shares']} shares @ ${trade['entry_price']:.2f}")
-                    print(f"      Stop: ${trade['stop_loss']:.2f}, Target: ${trade['profit_target']:.2f}")
-                    print(f"      Confidence: {trade['confidence']:.2f}")
-                    print(f"      Order ID: {trade['order_id']}")
-        
-        print(f"\nApproved trades: {len(result['approved_trades'])}")
+        print(f"Approved trades: {len(result['approved_trades'])}")
         print(f"Rejected trades: {len(result['rejected_trades'])}")
         
         if result.get('executed_trades'):
@@ -1828,25 +1488,6 @@ if __name__ == "__main__":
                     print(f"  - {agent['agent_name']}: {agent.get('reason', agent.get('error', 'Unknown'))}")
     
 
-    elif command == "fortress":
-        print("\nRunning complete fortress hedging system...")
-        result = run_fortress()
-        
-        print("\n" + "=" * 80)
-        print("FORTRESS HEDGING SYSTEM RESULTS")
-        print("=" * 80)
-        if result:
-            print(f"Market regime: {result.get('market_conditions', {}).get('regime', 'N/A')}")
-            print(f"Strategies evaluated: {len(result.get('recommendations', {}))}")
-            for strategy, data in result.get('recommendations', {}).items():
-                if data:
-                    print(f"{strategy}: {data}")
-        else:
-            print("No results returned from fortress hedging system.")
-    elif command == "momentum":
-        print("\nRunning momentum strategy...")
-        result = momentum_strategy()
-        print(f"\nMomentum result: {result}")
     elif command == "snipe":
         portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else 10000
         logger.info(f"Running intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
@@ -1863,8 +1504,4 @@ if __name__ == "__main__":
                 logger.info(f"  Metrics: {opp['metrics']}")
         else:
             logger.info("No opportunities found")
-    else:
-        print(f"Unknown command: {command}")
-        print("  Use: screen, monitor, status, snipe, fortress, costs, watchdog, preload, tune, review, architect, momentum")
-        sys.exit(1)
 

@@ -1,5 +1,3 @@
-import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import os
 import json
 import time
@@ -10,7 +8,6 @@ from pathlib import Path
 import yfinance as yf
 from utils.local_llm import analyze_stock_drop
 from agents.vision_analyst import analyze_chart_patterns, pattern_to_signal
-import pandas as pd
 
 # Load current parameters
 DATA_DIR = Path("data")
@@ -47,105 +44,57 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-def get_sp500_tickers():
-    """
-    Return a list of the top 100 most liquid S&P 500 tickers.
-    """
-    return [
-        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'TSLA', 'META', 'BRK.B',
-        'UNH', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'MA', 'HD', 'CVX', 'MRK',
-        'ABBV', 'KO', 'AVGO', 'PEP', 'COST', 'TMO', 'MCD', 'CSCO', 'ACN',
-        'LLY', 'DHR', 'ABT', 'NKE', 'DIS', 'TXN', 'VZ', 'ADBE', 'WMT',
-        'CRM', 'NFLX', 'ORCL', 'AMD', 'INTC', 'CMCSA', 'PFE', 'PM', 'BA',
-        'QCOM', 'T', 'UNP', 'HON', 'IBM', 'GE', 'INTU', 'SBUX', 'CAT',
-        'PLTR', 'COIN', 'HOOD', 'SOFI', 'RIVN', 'LCID', 'NIO', 'BABA',
-        'TSM', 'SHOP', 'SQ', 'PYPL', 'UBER', 'LYFT', 'SNAP', 'PINS',
-        'TWLO', 'ZM', 'DOCU', 'CRWD', 'NET', 'DDOG', 'SNOW', 'MDB',
-        'OKTA', 'ZS', 'PANW', 'FTNT', 'NOW', 'WDAY', 'TEAM', 'SPLK',
-        'CCI', 'AMT', 'EQIX', 'DLR', 'PSA', 'SPG', 'O', 'WELL',
-        'ARE', 'AVB', 'EQR', 'VTR', 'ESS', 'MAA', 'UDR', 'CPT'
-    ]
+def get_vix() -> float:
+    """Fetch current VIX level from Yahoo Finance."""
+    try:
+        vix = yf.Ticker("^VIX").history(period="2d")
+        if not vix.empty:
+            return float(vix["Close"].iloc[-1])
+    except Exception as e:
+        logging.warning(f"Could not fetch VIX: {e}")
+    return 20.0  # default neutral
 
-def get_russell2000_top_tickers():
-    """
-    Return a list of top liquid Russell 2000 stocks.
-    These are smaller cap stocks that can have bigger moves.
-    """
-    return [
-        'SIRI', 'PLUG', 'FUBO', 'LAZR', 'OPEN', 'RKT', 'UWMC', 'CLOV',
-        'WISH', 'BARK', 'BODY', 'SPCE', 'ASTR', 'RKLB', 'MNDY', 'FROG',
-        'DKNG', 'PENN', 'CHWY', 'ETSY', 'W', 'CVNA', 'APRN', 'BYND',
-        'TDOC', 'PTON', 'ROKU', 'SPOT', 'TTD', 'MELI', 'SE', 'BKNG',
-        'ABNB', 'DASH', 'RBLX', 'U', 'PATH', 'BILL', 'SMAR', 'GTLB',
-        'S', 'DOCN', 'FSLY', 'ESTC', 'CFLT', 'NCNO', 'BRZE', 'JAMF',
-        'SUMO', 'FROG', 'BIGC', 'ASAN', 'ZI', 'PCOR', 'TENB', 'ALRM',
-        'QLYS', 'VRNS', 'MIME', 'BLKB', 'APPF', 'PRGS', 'MITK', 'QTWO'
-    ]
 
-def get_all_liquid_stocks():
-    """
-    Get a comprehensive list of 500-1000 liquid stocks to scan.
-    
-    Combines:
-    - S&P 500 stocks (large cap)
-    - Russell 2000 top stocks (small/mid cap)
-    - Filters for volume > 1M shares and price > $5
-    
-    Returns:
-        List of ticker symbols
-    """
-    logging.info("Building dynamic stock universe...")
-    
-    # Start with S&P 500 and Russell 2000 top stocks
-    all_tickers = list(set(get_sp500_tickers() + get_russell2000_top_tickers()))
-    logging.info(f"Starting with {len(all_tickers)} tickers from S&P 500 + Russell 2000")
-    
-    # Filter for liquid stocks (volume > 1M, price > $5)
-    liquid_stocks = []
-    for ticker in all_tickers:
-        try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
-            
-            # Check volume and price criteria
-            avg_volume = info.get('averageVolume', 0)
-            current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
-            
-            if avg_volume > 1_000_000 and current_price > 5:
-                liquid_stocks.append(ticker)
-        except Exception as e:
-            logging.debug(f"Skipping {ticker} during filtering: {e}")
-            continue
-    
-    logging.info(f"Filtered to {len(liquid_stocks)} liquid stocks (volume > 1M, price > $5)")
-    return liquid_stocks
+def get_adaptive_params(base_params: dict) -> dict:
+    """Adjust screening thresholds based on VIX regime."""
+    vix = get_vix()
+    params = base_params.copy()
+    params["vix"] = vix
+    if vix >= 40:
+        params["halt"] = True
+        logging.warning(f"VIX={vix:.1f} >= 40: CRISIS MODE - halting new entries")
+    elif vix >= 25:
+        params["drop_min"] = min(params.get("drop_min", -15), -7)
+        params["rsi_threshold"] = min(params.get("rsi_threshold", 40), 35)
+        params["volume_ratio_min"] = max(params.get("volume_ratio_min", 1.5), 2.0)
+        params["halt"] = False
+        logging.info(f"VIX={vix:.1f}: ELEVATED - tightened thresholds")
+    elif vix < 15:
+        params["drop_min"] = max(params.get("drop_min", -15), -12)
+        params["rsi_threshold"] = min(params.get("rsi_threshold", 40), 38)
+        params["volume_ratio_min"] = max(params.get("volume_ratio_min", 1.5), 1.8)
+        params["halt"] = False
+        logging.info(f"VIX={vix:.1f}: LOW VOL - slightly relaxed thresholds")
+    else:
+        params["halt"] = False
+        logging.info(f"VIX={vix:.1f}: NORMAL regime")
+    return params
+
 
 def run_screener():
     # Load current parameters (may have been auto-tuned)
     params = load_screening_params()
+    params = get_adaptive_params(params)
+    if params.get("halt"):
+        logging.warning("VIX regime halt active — returning no candidates")
+        return []
     
-    # Get dynamic list of 500-1000 liquid stocks instead of static watchlist
-    logging.info("=" * 80)
-    logging.info("DYNAMIC SCREENER: Building stock universe...")
-    logging.info("=" * 80)
-    
-    all_tickers = get_all_liquid_stocks()
-    watchlist = [{'ticker': t, 'sector': 'Various', 'name': t} for t in all_tickers]
-    
-    logging.info(f"Scanning {len(watchlist)} stocks for opportunities...")
-    logging.info(f"Criteria: Drop {params['drop_min']}% to {params['drop_max']}%, RSI < {params['rsi_threshold']}, Volume > {params['volume_ratio_min']}x")
-    logging.info("=" * 80)
+    with open('config/watchlist.json', 'r') as f:
+        watchlist = json.load(f)['quality_stocks']
 
     candidates = []
-    scanned_count = 0
     for stock in watchlist:
         ticker = stock['ticker']
-        scanned_count += 1
-        
-        # Log progress every 50 stocks
-        if scanned_count % 50 == 0:
-            logging.info(f"Progress: {scanned_count}/{len(watchlist)} stocks scanned, {len(candidates)} candidates found so far...")
-        
         logging.info(f"Scanning {ticker}...")
 
         try:
@@ -247,7 +196,6 @@ def run_screener():
                 'drop_pct': drop_pct,
                 'rsi': rsi,
                 'volume_ratio': volume_ratio,
-                'current_price': latest_close,  # Required for auto-execution and entry evaluation
                 'news': news_headlines,
                 'analysis': analysis,
                 'vision_signal': vision_signal
@@ -260,25 +208,18 @@ def run_screener():
     return sorted(candidates, key=lambda x: x['analysis']['confidence'], reverse=True)
 
 def calculate_rsi(prices, n=14):
-    """Calculate the Relative Strength Index (RSI)"""
+    """Calculate RSI using Wilder's smoothing (EMA-based)."""
     try:
-        deltas = prices.diff()
-        seed = deltas[:n+1]
-        up = seed[seed >= 0].sum() / n
-        down = -seed[seed < 0].sum() / n
-        
-        if down == 0:
-            return 100.0  # If no down movement, RSI is 100
-            
-        rs = up / down
+        delta = prices.diff().dropna()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        avg_gain = gain.ewm(com=n-1, min_periods=n).mean()
+        avg_loss = loss.ewm(com=n-1, min_periods=n).mean()
+        rs = avg_gain / avg_loss.replace(0, float("inf"))
         rsi = 100 - (100 / (1 + rs))
-        
-        # Handle if rsi is a Series, get the last value
-        if hasattr(rsi, 'iloc'):
-            return rsi.iloc[-1]
-        return rsi
+        return float(rsi.iloc[-1])
     except Exception as e:
-        logging.error(f"Error calculating RSI: {type(e).__name__}: {str(e)}")
+        logging.error(f"RSI calculation error: {e}")
         raise
 
 def get_news_headlines(ticker, limit):
@@ -314,3 +255,24 @@ if __name__ == "__main__":
     filename = f"data/screening_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(filename, 'w') as f:
         json.dump(results, f, indent=2)
+
+
+def get_sp500_tickers():
+    """
+    Return a list of the top 100 most liquid S&P 500 tickers.
+    Used by earnings_drift, insider_tracker, vwap_reversion, and defensive_universe_scanner.
+    """
+    return [
+        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'TSLA', 'META', 'BRK.B',
+        'UNH', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'MA', 'HD', 'CVX', 'MRK',
+        'ABBV', 'KO', 'AVGO', 'PEP', 'COST', 'TMO', 'MCD', 'CSCO', 'ACN',
+        'LLY', 'DHR', 'ABT', 'NKE', 'DIS', 'TXN', 'VZ', 'ADBE', 'WMT',
+        'CRM', 'NFLX', 'ORCL', 'AMD', 'INTC', 'CMCSA', 'PFE', 'PM', 'BA',
+        'QCOM', 'T', 'UNP', 'HON', 'IBM', 'GE', 'INTU', 'SBUX', 'CAT',
+        'PLTR', 'COIN', 'HOOD', 'SOFI', 'RIVN', 'LCID', 'NIO',
+        'SPY', 'QQQ', 'IWM', 'GLD', 'SLV', 'TLT', 'HYG', 'LQD',
+        'MS', 'GS', 'BAC', 'WFC', 'C', 'BLK', 'SCHW', 'AXP',
+        'AMGN', 'GILD', 'BIIB', 'REGN', 'VRTX', 'ISRG', 'MDT', 'BMY',
+        'F', 'GM', 'UBER', 'LYFT', 'ABNB', 'DASH', 'SNAP', 'PINS',
+        'ZM', 'DDOG', 'NET', 'SNOW', 'MDB', 'BILL', 'CRWD', 'PANW',
+    ]

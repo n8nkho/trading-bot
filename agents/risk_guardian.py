@@ -3,6 +3,7 @@ Risk Guardian Agent - Portfolio Protection System
 Monitors and enforces risk limits to protect capital
 """
 
+import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -26,19 +27,84 @@ logger = logging.getLogger(__name__)
 MAX_POSITIONS = 5
 MAX_POSITION_SIZE_PCT = 5.0  # % of portfolio
 MAX_TOTAL_RISK_PCT = 10.0    # % of portfolio
-DAILY_LOSS_LIMIT_PCT = -1.5  # zero-loss push
-WEEKLY_LOSS_LIMIT_PCT = -4.0
-PER_TRADE_MAX_LOSS_PCT = -3.0  # hard cap per trade
+DAILY_LOSS_LIMIT_PCT = -2.0  # % of equity
+WEEKLY_LOSS_LIMIT_PCT = -5.0 # % of equity
 MAX_SECTOR_CONCENTRATION_PCT = 30.0  # % of portfolio
 
 # Circuit breaker thresholds
 CIRCUIT_BREAKER_REDUCE_THRESHOLD = 3  # consecutive losses
 CIRCUIT_BREAKER_HALT_THRESHOLD = 5    # consecutive losses
 
-# Track consecutive losses (in-memory for now)
+# Track consecutive losses (persisted to disk)
 consecutive_losses = 0
 circuit_breaker_active = False
 position_size_reduction = 1.0  # multiplier for position sizing
+
+RISK_STATE_FILE = Path("data/risk_state.json")
+
+
+def _save_risk_state():
+    state = {
+        "consecutive_losses": consecutive_losses,
+        "circuit_breaker_active": circuit_breaker_active,
+        "position_size_reduction": position_size_reduction,
+        "last_updated": datetime.now().isoformat()
+    }
+    try:
+        RISK_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(RISK_STATE_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+    except Exception as e:
+        logger.error(f"Could not save risk state: {e}")
+
+
+def _load_risk_state():
+    global consecutive_losses, circuit_breaker_active, position_size_reduction
+    try:
+        if RISK_STATE_FILE.exists():
+            with open(RISK_STATE_FILE) as f:
+                state = json.load(f)
+            consecutive_losses = state.get("consecutive_losses", 0)
+            circuit_breaker_active = state.get("circuit_breaker_active", False)
+            position_size_reduction = state.get("position_size_reduction", 1.0)
+            logger.info(f"Loaded risk state: {consecutive_losses} consecutive losses, breaker={circuit_breaker_active}")
+    except Exception as e:
+        logger.error(f"Could not load risk state: {e}")
+
+
+_load_risk_state()
+
+
+def check_portfolio_correlation(new_ticker: str, existing_tickers: list, lookback_days: int = 60, max_avg_corr: float = 0.70) -> dict:
+    """
+    Block entry if new position would increase average portfolio correlation above threshold.
+    Returns {"approved": bool, "reason": str, "avg_correlation": float}
+    """
+    if not existing_tickers:
+        return {"approved": True, "reason": "No existing positions to correlate with", "avg_correlation": 0.0}
+    try:
+        import yfinance as yf
+        import numpy as np
+        all_tickers = existing_tickers + [new_ticker]
+        data = yf.download(all_tickers, period=f"{lookback_days}d", auto_adjust=True, progress=False)["Close"]
+        if data.empty or new_ticker not in data.columns:
+            return {"approved": True, "reason": "Could not fetch correlation data", "avg_correlation": 0.0}
+        returns = data.pct_change().dropna()
+        if len(returns) < 20:
+            return {"approved": True, "reason": "Insufficient data for correlation", "avg_correlation": 0.0}
+        corr_matrix = returns.corr()
+        new_ticker_corrs = corr_matrix[new_ticker].drop(new_ticker)
+        avg_corr = float(new_ticker_corrs.abs().mean())
+        if avg_corr > max_avg_corr:
+            return {
+                "approved": False,
+                "reason": f"{new_ticker} avg correlation {avg_corr:.2f} with existing book exceeds {max_avg_corr} limit",
+                "avg_correlation": avg_corr
+            }
+        return {"approved": True, "reason": f"Correlation OK ({avg_corr:.2f})", "avg_correlation": avg_corr}
+    except Exception as e:
+        logger.warning(f"Correlation check failed, allowing trade: {e}")
+        return {"approved": True, "reason": f"Correlation check error (allowing): {e}", "avg_correlation": 0.0}
 
 
 def check_risk_limits(portfolio_data, new_position):
@@ -119,7 +185,15 @@ def check_risk_limits(portfolio_data, new_position):
     if not sector_check['approved']:
         logger.warning(sector_check['reason'])
         return sector_check
-    
+
+    # 7. Check portfolio correlation
+    existing_tickers = [p.get("ticker") for p in positions if p.get("ticker")]
+    if existing_tickers:
+        corr_check = check_portfolio_correlation(new_position["ticker"], existing_tickers)
+        if not corr_check["approved"]:
+            logger.warning(corr_check["reason"])
+            return {"approved": False, "reason": corr_check["reason"]}
+
     # All checks passed
     logger.info(f"Position approved: {new_position['ticker']} - {position_pct:.2f}% of portfolio")
     
@@ -201,12 +275,12 @@ def update_consecutive_losses(trade_result):
     if pnl < 0:
         consecutive_losses += 1
         logger.warning(f"Consecutive losses: {consecutive_losses}")
-        
+
         # Apply position size reduction
         if consecutive_losses >= CIRCUIT_BREAKER_REDUCE_THRESHOLD:
             position_size_reduction = 0.5
             logger.warning(f"Position size reduced to 50% after {consecutive_losses} consecutive losses")
-        
+
         # Activate circuit breaker halt
         if consecutive_losses >= CIRCUIT_BREAKER_HALT_THRESHOLD:
             circuit_breaker_active = True
@@ -218,6 +292,7 @@ def update_consecutive_losses(trade_result):
         consecutive_losses = 0
         position_size_reduction = 1.0
         circuit_breaker_active = False
+    _save_risk_state()
 
 
 def reset_circuit_breaker():
@@ -230,6 +305,7 @@ def reset_circuit_breaker():
     consecutive_losses = 0
     position_size_reduction = 1.0
     circuit_breaker_active = False
+    _save_risk_state()
 
 
 def get_risk_status():

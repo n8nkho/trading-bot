@@ -27,14 +27,15 @@ def check_twitter_sentiment(ticker, confidence_threshold=0.8):
         "BULLISH", "BEARISH", "NEUTRAL", or None if API key missing
     """
     # Check if API key exists
-    api_key = os.getenv("GROK_API_KEY") or os.getenv("XAI_API_KEY")
+    api_key = os.getenv("XAI_API_KEY")
     if not api_key:
         logging.info(f"Skipped Grok call for {ticker} - no API key")
         return None
     
     # Only call if confidence threshold met (saves money)
-    if confidence_threshold <= 0.8:
-        logging.info(f"Skipped Grok call for {ticker} - confidence threshold not met")
+    # FIX: was "<=0.8" which always skipped; now correctly skips LOW-confidence calls
+    if confidence_threshold < 0.7:
+        logging.info(f"Skipped Grok call for {ticker} - confidence {confidence_threshold:.2f} below threshold")
         return None
     
     # Very short prompt to minimize tokens

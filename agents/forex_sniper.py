@@ -105,10 +105,6 @@ def fetch_eur_usd_chart():
     # Implement chart fetching logic
     return []
 
-def calculate_rsi(prices, period):
-    # Implement RSI calculation
-    return 50
-
 def identify_support_resistance(prices, window):
     # Implement support/resistance identification
     return {"support": [], "resistance": []}

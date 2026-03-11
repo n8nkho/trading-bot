@@ -14,13 +14,19 @@ BONDS_TICKER = "TLT"
 # Load environment variables
 load_dotenv()
 
-def get_client():
-    """Get Alpaca trading client."""
-    import os
-    from alpaca.trading.client import TradingClient
-    api_key = os.getenv('ALPACA_API_KEY')
-    secret_key = os.getenv('ALPACA_SECRET_KEY')
-    return TradingClient(api_key, secret_key, paper=True)
+def _get_alpaca_client():
+    ak = os.getenv("APCA_API_KEY_ID") or os.getenv("ALPACA_API_KEY")
+    sk = os.getenv("APCA_API_SECRET_KEY") or os.getenv("ALPACA_SECRET_KEY")
+    if not ak or not sk:
+        logging.warning("bond_manager: Alpaca credentials not found, client disabled")
+        return None
+    try:
+        return TradingClient(ak, sk, paper=True)
+    except Exception as e:
+        logging.warning(f"bond_manager: Alpaca client init failed: {e}")
+        return None
+
+client = _get_alpaca_client()
 
 def get_market_regime():
     vix_data = yf.Ticker("^VIX").history(period="1d")
@@ -48,14 +54,12 @@ def calculate_bond_target(portfolio_value, market_regime):
 
 def get_current_bond_position():
     try:
-        client = get_client()
         position = client.get_open_position(BONDS_TICKER)
         return position.qty, position.market_value
     except Exception:
         return 0, 0
 
 def rebalance_bonds(portfolio_value):
-    client = get_client()
     market_regime = get_market_regime()
     target_allocation = calculate_bond_target(portfolio_value, market_regime)
     current_qty, current_value = get_current_bond_position()
@@ -72,7 +76,6 @@ def rebalance_bonds(portfolio_value):
 
 def bonds_performance():
     try:
-        client = get_client()
         position = client.get_open_position(BONDS_TICKER)
         entry_price = position.avg_entry_price
         current_price = yf.Ticker(BONDS_TICKER).history(period="1d")['Close'].iloc[-1]

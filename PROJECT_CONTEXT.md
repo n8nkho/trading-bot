@@ -1,7 +1,12 @@
 # Fortress Trading Bot - Complete System Context
 
+## CORE OBJECTIVE (IMMUTABLE)
+**Near-zero loss, high win rate, varied risks.** All changes must preserve: tight stop losses, strict quality filters (drop band, RSI, volume), regime-aware sizing, and capital preservation. No feature or setting may contradict this goal.
+
+---
+
 ## SYSTEM OVERVIEW
-Autonomous trading system with 29 AI agents, built over 3 sessions (Feb 23-27, 2026).
+Autonomous trading system with 29+ AI agents, built over 3 sessions (Feb 23-27, 2026).
 Paper trading on Alpaca, analysis via Ollama (local LLM), auto-execution enabled.
 
 **Status:** Production-ready for paper trading, autonomous execution enabled
@@ -35,7 +40,7 @@ Paper trading on Alpaca, analysis via Ollama (local LLM), auto-execution enabled
 │   ├── agent_manager.py       # Auto-healing overseer
 │   ├── error_detective.py     # Log scanner
 │   ├── sms_alert.py           # Critical failure alerts (Twilio)
-│   ├── smart_money_trader.py  # DISABLED (pandas bug)
+│   ├── smart_money_trader.py  # ENABLED (order flow; cron 10 AM weekdays)
 │   └── [+19 more agents]
 │
 ├── orchestrator.py      # Main controller
@@ -69,10 +74,17 @@ AUTO_POSITION_SIZE = 500  # $500 per trade
 MIN_CONFIDENCE_FOR_AUTO = 0.70
 STOP_LOSS = -3% (zero-loss push), scalp ladder 2%/4%/6%
 PROFIT_TARGET = +10%
+# Daily profit target: pause new auto-trades when today's realized P&L >= $250 or 1% equity (lock gains)
+DAILY_PROFIT_TARGET_DOLLARS = 250
+DAILY_PROFIT_TARGET_PCT = 1.0
+# Dry-spell: after 2+ runs with candidates but 0 approved, confidence threshold drops to 0.66 to capture more (still quality-focused)
+# Qualified candidates sorted by inverse-vol (confidence / (1 + |drop_pct|/100)) for quality over quantity
 ```
 
 ### Rollback
-To restore pre-advanced version (before ladder/zero-loss/hedging): `git checkout backup-pre-advanced`.
+- Pre-advanced version (before ladder/zero-loss/hedging): `git checkout backup-pre-advanced`
+- Pre-multi-strategy expansion (before earnings/insider/sector/VWAP/squeeze/flow): `git checkout pre-multi-strategy-20260303`
+- Post Command Center recommendations (6-panel: opportunity + hedging + defensive): `git checkout fallback-post-command-center-recommendations-20260305`
 
 ### Screening Schedule (4x daily)
 ```
@@ -138,6 +150,16 @@ NOW: Auto-execution enabled for Monday March 2 onwards
 # Weekly
 0 0 * * 0         - Weekly review
 0 1 * * 0         - Meta-architect analysis
+
+# Smart Money (order flow) - 10 AM weekdays
+0 10 * * 1-5      - run_strategies.py smartmoney
+
+# Regime alignment - weekdays 6:05 PM
+5 18 * * 1-5      - agents/regime_alignment.py → logs/regime_alignment.log
+# No-trade diagnostic - weekdays 6:10 PM (after opportunity analyzer)
+10 18 * * 1-5     - agents/no_trade_analyzer.py → logs/no_trade_analyzer.log
+# Pattern miner (self-improving) - Sunday 2 AM
+0 2 * * 0         - agents/pattern_miner.py → logs/pattern_miner.log
 ```
 
 ---
@@ -166,10 +188,16 @@ ALERT_TO_NUMBER=+1234567890
 
 ### Data Files
 ```
-data/positions.json         - Current open positions
-data/daily_signals_*.json   - Screening results by date
-data/decisions_log.jsonl    - All trade decisions
-data/auto_trades_*.json     - Auto-executed trades log
+data/positions.json              - Current open positions
+data/daily_signals_*.json        - Screening results by date
+data/decisions_log.jsonl         - All trade decisions
+data/auto_trades_*.json          - Auto-executed trades log
+data/daily_realized_pnl.jsonl    - Today's realized P&L (exit_monitor; used for daily profit target pause)
+data/regime_recommendations.json - Regime–strategy alignment (Command Center)
+data/no_trade_findings.json       - No-trade diagnostic (why no trades this week; Command Center)
+data/outcome_records.jsonl        - Per-candidate outcomes (safe_win/stop_hit/open) for pattern mining
+data/discovered_patterns.json    - Pattern miner output (bucket combos, safe_win rate)
+data/pattern_discovery_recommendations.json - 0-2 advisory recommendations (Command Center)
 ```
 
 ---
@@ -181,11 +209,15 @@ data/auto_trades_*.json     - Auto-executed trades log
 ✅ Market coverage (10 → 500+ stocks)
 ✅ Missing opportunities (enabled auto-execution)
 ✅ Orchestrator compatibility (removed PAPER_TRADING_MODE)
+✅ Smart Money Trader re-enabled (fixed pandas Series/array ambiguity in check_structure_break; use np.ravel for 1D)
+✅ Fortress Orchestrator: bond_manager uses get_client() only; duplicate TradingClient import removed in fortress_orchestrator
+✅ current_price KeyError: defensive .get('current_price') in entry_agent, orchestrator, exit_monitor; screener uses _safe_latest_close and skips tickers without valid price
 
 ### Active Issues
-⚠️ Smart Money Trader disabled (pandas Series ambiguity bug in lines 125-128)
-⚠️ Fortress Orchestrator disabled (bond_manager.py line 20 - client at module level)
-⚠️ Minor: WDAY, ACN occasional 'current_price' KeyError (non-critical, <1% error rate)
+(No critical known issues; see docs/LOW_RISK_IMPROVEMENTS_AND_AI_RECOMMENDATIONS.md for optional improvements.)
+
+### Smart Money Trader & Cron
+- Smart Money Trader: **enabled** (run_strategies.py smartmoney). Cron: `0 10 * * 1-5` (10 AM weekdays) → logs/smart_money.log. Re-enabled after fixing pandas Series/array bug in check_structure_break.
 
 ### Not Critical
 - ANTHROPIC_API_KEY not found (document analysis disabled - not needed)
@@ -243,8 +275,10 @@ python dashboard/command_center.py   # Port 8083 (or COMMAND_CENTER_PORT=8082)
 ### Risk Management
 - Max 6 trades/day (prevents over-trading)
 - $500 per trade (5% of account per position)
-- -5% stop loss (limits downside)
-- +10% profit target (2:1 reward/risk)
+- -3% stop loss (zero-loss push), scalp ladder 2%/4%/6%, +10% full target
+- Daily profit target: once today's realized P&L ≥ $200 or 1% equity, no new auto-trades (lock gains)
+- Inverse-vol sort: when multiple candidates qualify, prefer lower |drop_pct| (quality over quantity)
+- Regime alignment: CRASH/RISK_OFF reduce size and cap; recommendations in Command Center (regime_recommendations.json)
 - Max 30% of account at risk simultaneously
 
 ---
@@ -318,6 +352,11 @@ FORTRESS_FINAL_STATUS.md     - Complete system overview
 FORTRESS_AUDIT_GUIDE.md      - Audit and verification
 PROJECT_CONTEXT.md           - This file
 SYSTEM_REVIEW.md             - Inconsistencies audit, fixes applied
+docs/LOW_RISK_IMPROVEMENTS_AND_AI_RECOMMENDATIONS.md - Improvements and AI/agentic ideas
+docs/INTELLIGENT_AGENTS_REVIEW.md - Opportunity/hedging analyzers, defensive scanner
+docs/SELF_IMPROVING_PATTERN_DISCOVERY.md - Design for automatic discovery of new trade patterns (outcome logging → pattern miner → advisory recs)
+agents/no_trade_analyzer.py        - Why no trades this week (logs + market data); top 2-5 findings in Command Center
+data/strategic_recommendations.json - Strategic roadmap items in Command Center (e.g. self-improving pattern discovery)
 ```
 
 ---

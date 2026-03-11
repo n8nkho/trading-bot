@@ -165,15 +165,19 @@
     .trade-table tr:hover { background: var(--bg-card); }
 
     /* News */
-    .news-list { display: flex; flex-direction: column; gap: 0.6rem; }
+    .news-list { display: flex; flex-direction: column; gap: 0.6rem; max-height: 320px; overflow-y: auto; }
     .news-card {
       background: var(--bg-card);
       border-radius: 6px;
       padding: 0.75rem;
       border-left: 3px solid var(--cyan-dim);
     }
-    .news-card .ticker { color: var(--amber); font-weight: 600; margin-right: 0.5rem; }
-    .news-card .headline { color: var(--text); font-size: 12px; }
+    .news-card .news-meta { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.25rem; }
+    .news-card .ticker { color: var(--amber); font-weight: 600; }
+    .news-card .news-source { font-size: 10px; color: var(--cyan); background: var(--cyan-dim); padding: 0.1rem 0.35rem; border-radius: 3px; }
+    .news-card .headline { color: var(--text); font-size: 12px; display: block; }
+    .news-card .headline-link { color: var(--cyan); font-size: 12px; text-decoration: none; display: block; }
+    .news-card .headline-link:hover { text-decoration: underline; color: var(--text); }
     .news-card .meta { color: var(--text-muted); font-size: 10px; margin-top: 0.3rem; }
 
     /* Recommendations */
@@ -190,6 +194,9 @@
     .rec-item .title { font-weight: 600; margin-bottom: 0.3rem; }
     .rec-item .body { font-size: 11px; color: var(--text-muted); }
     .rec-item .action { font-size: 10px; color: var(--cyan); margin-top: 0.3rem; }
+    .rec-item.rec-item-opportunity { border-left-width: 4px; background: var(--bg-card); }
+    .rec-item.rec-item-hedging { border-left-width: 4px; background: var(--bg-card); border-left-color: var(--amber); }
+    .rec-item.rec-item-defensive { border-left-width: 4px; background: var(--bg-card); border-left-color: var(--green); }
 
     /* Feed */
     .feed-list { max-height: 320px; overflow-y: auto; }
@@ -203,6 +210,21 @@
     .feed-line.warning { color: var(--amber); }
     .feed-line .agent { color: var(--cyan); margin-right: 0.5rem; }
 
+
+    /* Positions + Orders tables */
+    .pos-table, .ord-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .pos-table th, .ord-table th { text-align: left; color: var(--text-muted); padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .pos-table td, .ord-table td { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .pos-table tr:hover, .ord-table tr:hover { background: var(--bg-card); }
+    .pos-pnl-pos { color: var(--green); font-weight: 600; }
+    .pos-pnl-neg { color: var(--red); font-weight: 600; }
+    .badge { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 10px; font-weight: 600; }
+    .badge-filled { background: #1a3a2a; color: var(--green); }
+    .badge-pending { background: #3a2a0a; color: var(--amber); }
+    .badge-cancelled { background: #2a1a1a; color: var(--text-muted); }
+    .badge-buy { color: var(--green); }
+    .badge-sell { color: var(--red); }
+    .panel-scroll { max-height: 260px; overflow-y: auto; }
     .loading { color: var(--text-muted); }
     .empty { color: var(--text-muted); font-style: italic; }
   </style>
@@ -236,7 +258,7 @@
         <div id="agents" class="agent-list loading">Loading…</div>
       </div>
       <div class="panel col-6">
-        <div class="panel-title">RECOMMENDATIONS</div>
+        <div class="panel-title">RECOMMENDATIONS <span id="recCount" class="text-muted"></span></div>
         <div id="recommendations" class="rec-list loading">Loading…</div>
       </div>
 
@@ -245,10 +267,29 @@
         <div id="perfTable" class="loading">Loading…</div>
       </div>
       <div class="panel col-4">
-        <div class="panel-title">NEWS IMPACTING STRATEGY</div>
+        <div class="panel-title">NEWS IMPACTING STRATEGY <span class="text-muted" style="font-size:0.7em;font-weight:400;">(Top 10, scrollable: positions → opportunities → defensive → market)</span></div>
         <div id="news" class="news-list loading">Loading…</div>
       </div>
 
+
+      <div class="panel col-12">
+        <div class="panel-title">📊 OPEN POSITIONS <span id="posCount" style="font-size:0.7em;font-weight:400;color:var(--text-muted)"></span></div>
+        <div class="panel-scroll">
+          <table class="pos-table">
+            <thead><tr><th>Ticker</th><th>Shares</th><th>Entry</th><th>Current</th><th>P&L $</th><th>P&L %</th><th>Strategy</th><th>Held</th></tr></thead>
+            <tbody id="posBody"><tr><td colspan="8" class="loading">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel col-12">
+        <div class="panel-title">📋 RECENT ORDERS <span id="ordCount" style="font-size:0.7em;font-weight:400;color:var(--text-muted)"></span></div>
+        <div class="panel-scroll">
+          <table class="ord-table">
+            <thead><tr><th>Ticker</th><th>Side</th><th>Qty</th><th>Status</th><th>Filled @</th><th>Submitted</th></tr></thead>
+            <tbody id="ordBody"><tr><td colspan="6" class="loading">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
       <div class="panel col-12">
         <div class="panel-title">LIVE ACTIVITY FEED</div>
         <div id="feed" class="feed-list loading">Loading…</div>
@@ -272,6 +313,12 @@
       items.push({ label: 'Cron', value: data.cron_configured ? data.cron_count + ' jobs' : 'None', cls: data.cron_configured ? 'ok' : 'err' });
       if (data.disk && data.disk.pct != null) {
         items.push({ label: 'Disk', value: data.disk.used_gb + '/' + data.disk.total_gb + ' GB (' + data.disk.pct + '%)', cls: data.disk.pct > 90 ? 'err' : data.disk.pct > 75 ? 'warn' : 'ok' });
+      }
+      if (data.cpu && data.cpu.pct != null) {
+        items.push({ label: 'CPU', value: data.cpu.pct + '% (load1=' + data.cpu.load1.toFixed(2) + ', cores=' + data.cpu.cores + ')', cls: data.cpu.pct > 90 ? 'err' : data.cpu.pct > 75 ? 'warn' : 'ok' });
+      }
+      if (data.memory && data.memory.used_pct != null) {
+        items.push({ label: 'RAM', value: data.memory.used_pct + '% used', cls: data.memory.used_pct > 90 ? 'err' : data.memory.used_pct > 75 ? 'warn' : 'ok' });
       }
       if (data.risk && data.risk.circuit_breaker_active) {
         items.push({ label: 'Circuit', value: 'Tripped', cls: 'err' });
@@ -320,6 +367,32 @@
         <div class="perf-stat"><div class="label">Win rate (30d)</div><div class="num">${wr}</div></div>
         <div class="perf-stat"><div class="label">Total P&L</div><div class="num ${(data.total_pnl || 0) >= 0 ? 'pos' : 'neg'}">${pnl}</div></div>
       `;
+      // Hedging snapshot
+      const hedging = data.hedging || {};
+      if (hedging && (hedging.regime || hedging.bonds_target || hedging.commodities || hedging.pairs_trading)) {
+        const commoditiesLabel = hedging.commodities
+          ? `Commodities: ${(hedging.commodities.action || 'NONE')}`
+          : null;
+        const hv = [
+          hedging.regime ? `Regime: ${hedging.regime}` : null,
+          hedging.bonds_target != null ? `Bonds target: $${hedging.bonds_target.toFixed(0)}` : null,
+          commoditiesLabel,
+          hedging.vix_insurance && hedging.vix_insurance.action ? `VIX: ${hedging.vix_insurance.action}` : null,
+          hedging.theta_spreads && hedging.theta_spreads.action ? `Theta: ${hedging.theta_spreads.action}` : null,
+          hedging.dividend_capture && hedging.dividend_capture.action ? `Dividend: ${hedging.dividend_capture.action}` : null,
+          hedging.pairs_trading && (hedging.pairs_trading.action || hedging.pairs_trading.opportunity) ? 'Pairs: active' : null,
+        ].filter(Boolean);
+        if (hv.length) {
+          el.innerHTML += `
+            <div class="perf-stat">
+              <div class="label">Hedging snapshot</div>
+              <div class="num" style="font-size:0.9rem;">
+                ${hv.join(' · ')}
+              </div>
+            </div>
+          `;
+        }
+      }
       const screen = data.latest_screening || {};
       const screenEl = document.getElementById('screening');
       if (!screen.date) {
@@ -328,58 +401,95 @@
         const timePart = screen.time ? ` ${screen.time}` : '';
         const candList = (screen.top_candidates || []).join(', ');
         const candPart = candList ? `<br>Top candidates: ${candList}` : '';
+        const universe = screen.universe_size != null ? ` | Volume screened: ${screen.universe_size}` : '';
         screenEl.innerHTML =
           `Date: ${screen.date}${timePart}` +
-          `<br>Candidates: ${screen.candidates_found || 0} | Approved: ${screen.approved || 0} | Auto: ${screen.auto_executed || 0}` +
+          `<br>Candidates: ${screen.candidates_found || 0} | Approved: ${screen.approved || 0} | Auto: ${screen.auto_executed || 0}${universe}` +
           candPart;
       }
 
       const rows = (data.recent_trades || []).slice(0, 12);
-      if (!rows.length) {
-        tableEl.innerHTML = '<span class="empty">No recent trades</span>';
-        return;
+      const strategies = data.strategies || [];
+      let html = '';
+      if (strategies.length) {
+        html += `
+          <div class="perf-stat" style="margin-bottom:0.5rem;">
+            <div class="label">Top strategies</div>
+          </div>
+          <table class="trade-table" style="margin-bottom:0.75rem;">
+            <thead><tr><th>Strategy</th><th>Trades</th><th>Win%</th><th>P&L</th></tr></thead>
+            <tbody>
+              ${strategies.slice(0, 6).map(s => `
+                <tr>
+                  <td>${(s.name || '').toString().slice(0, 24)}</td>
+                  <td>${s.trades}</td>
+                  <td>${s.win_rate != null ? s.win_rate.toFixed(1) + '%' : '—'}</td>
+                  <td class="${(s.pnl || 0) >= 0 ? 'pos' : 'neg'}">${(s.pnl >= 0 ? '+' : '') + s.pnl.toFixed(2)}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        `;
       }
-      tableEl.innerHTML = `
-        <table class="trade-table">
-          <thead><tr><th>Ticker</th><th>Exit</th><th>P&L</th><th>P&L %</th><th>Outcome</th></tr></thead>
-          <tbody>
-            ${rows.map(t => {
-              const pnlPct = t.pnl_pct != null ? t.pnl_pct.toFixed(2) + '%' : '—';
-              const pnlClass = (t.pnl_pct || 0) >= 0 ? 'pos' : 'neg';
-              return `<tr>
-                <td>${t.ticker || '—'}</td>
-                <td>${(t.exit_time || t.timestamp || '—').toString().slice(0,16)}</td>
-                <td class="${pnlClass}">${t.pnl != null ? t.pnl.toFixed(2) : '—'}</td>
-                <td class="${pnlClass}">${pnlPct}</td>
-                <td>${t.outcome || '—'}</td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>`;
+      if (rows.length) {
+        html += `
+          <table class="trade-table">
+            <thead><tr><th>Ticker</th><th>Exit</th><th>P&L</th><th>P&L %</th><th>Outcome</th></tr></thead>
+            <tbody>
+              ${rows.map(t => {
+                const pnlPct = t.pnl_pct != null ? t.pnl_pct.toFixed(2) + '%' : '—';
+                const pnlClass = (t.pnl_pct || 0) >= 0 ? 'pos' : 'neg';
+                return `<tr>
+                  <td>${t.ticker || '—'}</td>
+                  <td>${(t.exit_time || t.timestamp || '—').toString().slice(0,16)}</td>
+                  <td class="${pnlClass}">${t.pnl != null ? t.pnl.toFixed(2) : '—'}</td>
+                  <td class="${pnlClass}">${pnlPct}</td>
+                  <td>${t.outcome || '—'}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        `;
+      }
+      if (!html) {
+        html = '<span class="empty">No recent trades</span>';
+      }
+      tableEl.innerHTML = html;
     }
 
     function renderNews(data) {
       const el = document.getElementById('news');
-      if (!data || !data.candidate_news && !data.headlines) { el.innerHTML = '<span class="empty">No news</span>'; return; }
-      const items = data.headlines && data.headlines.length ? data.headlines.slice(0, 8)
-        : (data.candidate_news || []).slice(0, 5).flatMap(c => (c.headlines || []).map(h => ({ ticker: c.ticker, text: typeof h === 'string' ? h : h.title || '' })));
+      if (!data) { el.innerHTML = '<span class="empty">No news</span>'; return; }
+      const raw = (data.top_10 && data.top_10.length) ? data.top_10 : (data.top_5 || []);
+      const items = raw.length ? raw.map(n => ({ ticker: n.ticker, text: n.headline, source: n.source, url: n.url }))
+        : (data.headlines && data.headlines.length ? data.headlines.slice(0, 10).map(h => ({ ticker: h.ticker, text: h.text, source: null, url: '' }))
+          : (data.candidate_news || []).slice(0, 10).flatMap(c => (c.headlines || []).map(h => ({ ticker: c.ticker, text: typeof h === 'string' ? h : (h && h.title) || '', source: 'opportunity', url: '' }))));
       if (!items.length) { el.innerHTML = '<span class="empty">No headlines</span>'; return; }
-      el.innerHTML = items.map(n => `
-        <div class="news-card">
-          <span class="ticker">${n.ticker || ''}</span>
-          <span class="headline">${(n.text || n).toString().replace(/</g, '&lt;').slice(0, 120)}</span>
-        </div>`).join('');
+      const sourceLabel = (s) => s === 'position' ? 'Position' : s === 'opportunity' ? 'Opportunity' : s === 'defensive' ? 'Defensive' : s === 'market' ? 'Market' : '';
+      const safe = (t) => (t || '').toString().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+      el.innerHTML = items.slice(0, 10).map(n => {
+        const headline = safe((n.text || '').slice(0, 160));
+        const link = (n.url && n.url.startsWith('http')) ? `<a href="${safe(n.url)}" target="_blank" rel="noopener" class="headline-link">${headline}</a>` : `<span class="headline">${headline}</span>`;
+        return `<div class="news-card">
+          <span class="news-meta"><span class="ticker">${safe(n.ticker || '')}</span>${n.source ? `<span class="news-source">${sourceLabel(n.source)}</span>` : ''}</span>
+          ${link}
+        </div>`;
+      }).join('');
     }
 
     function renderRecommendations(data) {
       const el = document.getElementById('recommendations');
       if (!data || !data.items || !data.items.length) { el.innerHTML = '<span class="empty">No recommendations</span>'; return; }
-      el.innerHTML = data.items.slice(0, 8).map(r => `
-        <div class="rec-item ${r.severity}">
+      el.innerHTML = data.items.slice(0, 12).map(r => {
+        let typeClass = '';
+        if (r.type === 'opportunity') typeClass = ' rec-item-opportunity';
+        else if (r.type === 'hedging') typeClass = ' rec-item-hedging';
+        else if (r.type === 'defensive') typeClass = ' rec-item-defensive';
+        return `<div class="rec-item ${r.severity || 'low'}${typeClass}">
           <div class="title">${(r.title || '').replace(/</g, '&lt;')}</div>
-          <div class="body">${(r.body || '').replace(/</g, '&lt;').slice(0, 200)}</div>
+          <div class="body">${(r.body || '').replace(/</g, '&lt;').slice(0, 220)}</div>
           <div class="action">${(r.action || '').replace(/</g, '&lt;')}</div>
-        </div>`).join('');
+        </div>`;
+      }).join('');
     }
 
     function renderFeed(data) {
@@ -392,22 +502,79 @@
         </div>`).join('');
     }
 
+
+    function renderPositions(data) {
+      const tbody = document.getElementById('posBody');
+      const countEl = document.getElementById('posCount');
+      if (!data || !data.positions) { tbody.innerHTML = '<tr><td colspan="8" class="empty">No data</td></tr>'; return; }
+      const rows = data.positions;
+      countEl.textContent = '(' + rows.length + ' open)';
+      if (!rows.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty">No open positions</td></tr>'; return; }
+      tbody.innerHTML = rows.map(p => {
+        if (p.error) return `<tr><td colspan="8" style="color:var(--red)">${p.error}</td></tr>`;
+        const pnlPct = p.pnl_pct != null ? (p.pnl_pct >= 0 ? '+' : '') + p.pnl_pct.toFixed(2) + '%' : '—';
+        const pnlUsd = p.pnl_usd != null ? (p.pnl_usd >= 0 ? '+$' : '-$') + Math.abs(p.pnl_usd).toFixed(2) : '—';
+        const cls = (p.pnl_pct || 0) >= 0 ? 'pos-pnl-pos' : 'pos-pnl-neg';
+        const held = p.held_hours != null ? (p.held_hours >= 24 ? (p.held_hours/24).toFixed(1)+'d' : p.held_hours+'h') : '—';
+        return `<tr>
+          <td style="color:var(--amber);font-weight:600">${p.ticker}</td>
+          <td>${p.shares}</td>
+          <td>$${p.entry_price != null ? p.entry_price.toFixed(2) : '—'}</td>
+          <td>${p.current_price != null ? '$'+p.current_price.toFixed(2) : '—'}</td>
+          <td class="${cls}">${pnlUsd}</td>
+          <td class="${cls}">${pnlPct}</td>
+          <td style="color:var(--cyan)">${(p.strategy||'—').slice(0,18)}</td>
+          <td>${held}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    function renderOrders(data) {
+      const tbody = document.getElementById('ordBody');
+      const countEl = document.getElementById('ordCount');
+      if (!data || !data.orders) { tbody.innerHTML = '<tr><td colspan="6" class="empty">No data</td></tr>'; return; }
+      const rows = data.orders;
+      countEl.textContent = '(' + rows.length + ')';
+      if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">No recent orders</td></tr>'; return; }
+      tbody.innerHTML = rows.map(o => {
+        if (o.error) return `<tr><td colspan="6" style="color:var(--red)">${o.error}</td></tr>`;
+        const side = (o.side||'').toLowerCase();
+        const sideHtml = `<span class="badge badge-${side}">${(o.side||'').toUpperCase()}</span>`;
+        const st = (o.status||'').toLowerCase();
+        const badgeCls = st.includes('fill') ? 'filled' : st.includes('cancel') ? 'cancelled' : 'pending';
+        const statusHtml = `<span class="badge badge-${badgeCls}">${(o.status||'').toUpperCase()}</span>`;
+        return `<tr>
+          <td style="color:var(--amber);font-weight:600">${o.ticker}</td>
+          <td>${sideHtml}</td>
+          <td>${o.filled_qty||o.qty}/${o.qty}</td>
+          <td>${statusHtml}</td>
+          <td>${o.filled_avg_price != null ? '$'+o.filled_avg_price.toFixed(2) : '—'}</td>
+          <td style="color:var(--text-muted)">${(o.submitted_at||'—').slice(0,16)}</td>
+        </tr>`;
+      }).join('');
+    }
     async function loadAll() {
       try {
-        const [health, agents, performance, news, recommendations, feed] = await Promise.all([
+        const [health, agents, performance, news, recommendations, feed, positions, orders] = await Promise.all([
           fetch(API.health).then(r => r.json()),
           fetch(API.agents).then(r => r.json()),
           fetch(API.performance).then(r => r.json()),
           fetch(API.news).then(r => r.json()),
           fetch(API.recommendations).then(r => r.json()),
-          fetch(API.feed).then(r => r.json())
+          fetch(API.feed).then(r => r.json()),
+          fetch('/api/positions').then(r => r.json()),
+          fetch('/api/orders').then(r => r.json())
         ]);
         renderHealth(health);
         renderAgents(agents);
         renderPerformance(performance);
         renderNews(news);
         renderRecommendations(recommendations);
+        const recEl = document.getElementById('recCount');
+        if (recEl && recommendations && recommendations.items) recEl.textContent = '(' + recommendations.items.length + ')';
         renderFeed(feed);
+        renderPositions(positions);
+        renderOrders(orders);
         setUpdated();
       } catch (e) {
         console.error(e);

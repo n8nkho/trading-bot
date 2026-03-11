@@ -23,9 +23,8 @@ def format_currency(value):
     except (ValueError, TypeError):
         return "$0.00"
 
-# Project root (dashboard/ is one level below)
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-log_dir = _PROJECT_ROOT / 'logs'
+# Setup logging
+log_dir = Path('../logs')
 log_dir.mkdir(exist_ok=True)
 logging.basicConfig(
     filename=log_dir / 'dashboard.log',
@@ -34,12 +33,12 @@ logging.basicConfig(
 )
 
 # Data directory
-DATA_DIR = _PROJECT_ROOT / 'data'
+DATA_DIR = Path('../data')
 
 def load_positions():
     """Load current positions from positions.json"""
     try:
-        positions_file = DATA_DIR / 'positions.json'
+        positions_file = Path('/home/ubuntu/trading-bot/data/positions.json')
         if positions_file.exists():
             with open(positions_file, 'r') as f:
                 positions = json.load(f)

@@ -1,3 +1,10 @@
+from agents.vix_insurance import get_current_vix, should_buy_insurance, calculate_insurance_position
+from agents.bond_manager import get_market_regime, calculate_bond_target
+from agents.commodity_trader import get_usd_strength, commodity_hedge_strategy
+from agents.theta_spreads import theta_strategy
+from agents.dividend_capture import dividend_capture_strategy
+from agents.pairs_trader import pairs_trading_strategy, analyze_all_pairs
+from alpaca.trading.client import TradingClient
 import os
 import json
 import logging
@@ -56,9 +63,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 def get_portfolio_status():
     """Connect to Alpaca and get portfolio status."""
-    from alpaca.trading.client import TradingClient
-    from alpaca.trading.client import TradingClient
-    client = TradingClient(os.getenv('ALPACA_API_KEY'), os.getenv('ALPACA_SECRET_KEY'), paper=True)
+    ak = os.getenv('APCA_API_KEY_ID') or os.getenv('ALPACA_API_KEY')
+    sk = os.getenv('APCA_API_SECRET_KEY') or os.getenv('ALPACA_SECRET_KEY')
+    client = TradingClient(ak, sk, paper=True)
     account = client.get_account()
     positions = client.get_all_positions()
     total_value = float(account.equity)
@@ -70,10 +77,6 @@ def get_portfolio_status():
 
 def assess_market_conditions():
     """Assess current market conditions."""
-    from agents.vix_insurance import get_current_vix
-    from agents.bond_manager import get_market_regime
-    from agents.commodity_trader import get_usd_strength
-
     vix = get_current_vix()
     regime = get_market_regime()
     usd_strength = get_usd_strength()
@@ -87,8 +90,6 @@ def assess_market_conditions():
 
 def get_target_allocation(market_regime):
     """Get target allocation based on market regime."""
-    from agents.bond_manager import get_market_regime
-
     if market_regime == 'RISK_ON':
         return RISK_ON_ALLOCATION
     elif market_regime == 'RISK_OFF':
@@ -108,13 +109,11 @@ def run_all_hedge_strategies(portfolio_value):
             # - Increase bond allocation by 5%
             # - Increase pairs trading by 3%
             # - Increase commodity hedge by 2%
-            from agents.bond_manager import calculate_bond_target, get_market_regime
             recommendations['bonds'] = {'target': calculate_bond_target(portfolio_value, get_market_regime()) * 1.05}
             recommendations['pairs_trading'] = {'action': 'INCREASE', 'reason': 'Budget mode - increased allocation'}
             recommendations['commodities'] = {'action': 'INCREASE', 'reason': 'Budget mode - increased allocation'}
         else:
             # VIX Insurance
-            from agents.vix_insurance import should_buy_insurance, calculate_insurance_position, get_current_vix
             should_buy, reason = should_buy_insurance(portfolio_value, get_current_vix())
             if should_buy:
                 insurance = calculate_insurance_position(portfolio_value)
@@ -123,13 +122,9 @@ def run_all_hedge_strategies(portfolio_value):
                 recommendations['vix_insurance'] = {'action': 'HOLD', 'reason': reason}
 
         # Bonds
-        from agents.bond_manager import calculate_bond_target, get_market_regime
-
         recommendations['bonds'] = {'target': calculate_bond_target(portfolio_value, get_market_regime())}
 
         # Commodities
-        from agents.commodity_trader import commodity_hedge_strategy
-
         result = commodity_hedge_strategy(portfolio_value)
         if isinstance(result, tuple):
             action, reason = result
@@ -138,20 +133,14 @@ def run_all_hedge_strategies(portfolio_value):
             recommendations['commodities'] = result
 
         # Theta Spreads
-        from agents.theta_spreads import theta_strategy
-
         result = theta_strategy(portfolio_value)
         recommendations['theta_spreads'] = result or {'action': 'NONE'}
 
         # Dividend Capture
-        from agents.dividend_capture import dividend_capture_strategy
-
         result = dividend_capture_strategy(portfolio_value)
         recommendations['dividend_capture'] = result or {'action': 'NONE'}
 
         # Pairs Trading
-        from agents.pairs_trader import pairs_trading_strategy
-
         result = pairs_trading_strategy(portfolio_value)
         recommendations['pairs_trading'] = result or {'action': 'NONE'}
 
