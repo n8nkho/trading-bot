@@ -20,12 +20,15 @@ STOP_LOSS_PCT = 0.06
 MAX_POSITION_SIZE = 500.0
 
 # Candidates to screen for squeeze setups
+# Removed dead/delisted: BBBY (bankrupt), NKLA (delisted), SNDL (delisted)
 SQUEEZE_UNIVERSE = [
-    "GME", "AMC", "BBBY", "MSTR", "COIN", "HOOD", "SOFI", "LCID",
-    "RIVN", "PLUG", "FCEL", "SPCE", "NKLA", "CLOV", "WKHS",
-    "BB", "NOK", "SNDL", "KOSS",
+    "GME", "AMC", "MSTR", "COIN", "HOOD", "SOFI", "LCID",
+    "RIVN", "PLUG", "FCEL", "SPCE", "CLOV", "WKHS",
+    "BB", "NOK", "KOSS",
     # High-short-interest names
     "BYND", "CVNA", "UPST", "AFRM", "OPEN",
+    # Active replacements
+    "HIMS", "IONQ", "JOBY", "ACHR", "RKLB",
 ]
 
 
