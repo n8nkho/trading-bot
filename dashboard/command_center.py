@@ -313,9 +313,9 @@ def get_trading_performance():
     perf["decisions"] = decisions[-20:]
     sells = [d for d in decisions if d.get("action") == "SELL" or "pnl_pct" in d]
     if sells:
-        wins = sum(1 for s in sells if (s.get("pnl_pct") or 0) > 0)
+        wins = sum(1 for s in sells if float(s.get("pnl_pct") or 0) > 0)
         perf["win_rate_30d"] = round(100 * wins / len(sells), 1)
-        perf["total_pnl"] = round(sum(s.get("pnl") or 0 for s in sells), 2)
+        perf["total_pnl"] = round(sum(float(s.get("pnl") or 0) for s in sells), 2)
         # Aggregate per-strategy stats
         strategy_stats = {}
         for s in sells:
