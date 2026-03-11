@@ -19,7 +19,7 @@ import re
 import logging
 import requests
 from pathlib import Path
-from utils.local_llm import call_ollama
+from utils.local_llm import call_ollama, MODEL_FAST, MODEL_MED, MODEL_DEEP
 
 logger = logging.getLogger(__name__)
 _ROOT = Path(__file__).resolve().parent.parent
@@ -90,7 +90,7 @@ def _call_openai(prompt, max_tokens=200):
         return None
 
 
-def ask_ai(task_type, prompt, ticker=None, max_tokens=150, fallback_to_local=True):
+def ask_ai(task_type, prompt, ticker=None, max_tokens=80, fallback_to_local=True):
     """
     Route a prompt to the cheapest capable model for the task.
 
@@ -104,13 +104,17 @@ def ask_ai(task_type, prompt, ticker=None, max_tokens=150, fallback_to_local=Tru
     Returns: str response or None
     """
     label = f"[{ticker}] " if ticker else ""
+    # Truncate prompts to control token spend
+    MAX_PROMPT = 500
+    if len(prompt) > MAX_PROMPT:
+        prompt = prompt[:MAX_PROMPT] + "..."
 
     if task_type in ("news", "sentiment"):
         logger.info(f"{label}Routing to Grok (real-time task)")
         result = _call_grok(prompt, max_tokens=max_tokens)
         if result is None and fallback_to_local:
             logger.info(f"{label}Grok unavailable — falling back to Llama")
-            result = call_ollama(prompt, timeout=90)
+            result = call_ollama(prompt, model=MODEL_FAST, timeout=15)
         return result
 
     elif task_type == "classify":
@@ -118,12 +122,21 @@ def ask_ai(task_type, prompt, ticker=None, max_tokens=150, fallback_to_local=Tru
         result = _call_openai(prompt, max_tokens=max_tokens)
         if result is None and fallback_to_local:
             logger.info(f"{label}OpenAI unavailable — falling back to Llama")
-            result = call_ollama(prompt, timeout=60)
+            result = call_ollama(prompt, model=MODEL_MED, timeout=15)
         return result
 
-    else:  # "analyze", "batch", or anything else
-        logger.info(f"{label}Routing to local Llama (free, offline task)")
-        return call_ollama(prompt, timeout=90)
+    elif task_type == "analyze":
+        # Use OpenAI gpt-4o-mini for analysis — faster than Ollama during market hours
+        logger.info(f"{label}Routing to OpenAI (analysis task)")
+        result = _call_openai(prompt, max_tokens=max_tokens)
+        if result is None and fallback_to_local:
+            logger.info(f"{label}OpenAI unavailable — falling back to Llama")
+            result = call_ollama(prompt, model=MODEL_FAST, timeout=20)
+        return result
+
+    else:  # "batch" — background only, Ollama fine
+        logger.info(f"{label}Routing to local Llama (background batch task)")
+        return call_ollama(prompt, model=MODEL_FAST, timeout=30)
 
 
 def parse_json_response(text):
