@@ -19,10 +19,10 @@ logging.basicConfig(
 
 # Exit Configuration
 STOP_LOSS_PCT = -0.02  # -2% stop loss
-TAKE_PROFIT_T1_PCT = 0.015  # +1.5% take profit tier 1
+TAKE_PROFIT_T1_PCT = 0.01   # +1.0% take profit tier 1
 TAKE_PROFIT_T2_PCT = 0.03  # +3% take profit tier 2
 TAKE_PROFIT_T3_PCT = 0.05  # +5% take profit tier 3
-MAX_HOLD_DAYS = 3  # Maximum hold period
+MAX_HOLD_DAYS = 2  # Maximum hold period
 
 # Tier sell percentages
 TIER_1_SELL_PCT = 0.50  # Sell 50% at tier 1

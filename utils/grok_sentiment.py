@@ -3,6 +3,11 @@ import requests
 import logging
 from datetime import datetime
 from pathlib import Path
+try:
+    from utils.ai_router import ask_ai as _ask_ai
+    _HAS_ROUTER = True
+except ImportError:
+    _HAS_ROUTER = False
 
 # Setup logging
 log_dir = Path("logs")
@@ -42,26 +47,19 @@ def check_twitter_sentiment(ticker, confidence_threshold=0.8):
     prompt = f"Twitter sentiment ${ticker} last hour: BULLISH/BEARISH/NEUTRAL? One word."
     
     try:
-        response = requests.post(
-            "https://api.x.ai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "grok-3-mini",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 10,
-                "temperature": 0.1
-            },
-            timeout=10
-        )
-        
-        response.raise_for_status()
-        result = response.json()
-        
-        # Extract sentiment
-        sentiment = result["choices"][0]["message"]["content"].strip().upper()
+        if _HAS_ROUTER:
+            raw = _ask_ai("sentiment", prompt, ticker=ticker)
+            sentiment = (raw or "").strip().upper()
+        else:
+            response = requests.post(
+                "https://api.x.ai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={"model": "grok-3-mini", "messages": [{"role": "user", "content": prompt}],
+                      "max_tokens": 10, "temperature": 0.1},
+                timeout=10
+            )
+            response.raise_for_status()
+            sentiment = response.json()["choices"][0]["message"]["content"].strip().upper()
         
         # Normalize response
         if "BULLISH" in sentiment:

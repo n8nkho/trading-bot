@@ -7,6 +7,11 @@ from datetime import datetime
 from pathlib import Path
 import yfinance as yf
 from utils.local_llm import analyze_stock_drop
+try:
+    from utils.ai_router import ask_ai as _ask_ai
+    _HAS_ROUTER = True
+except ImportError:
+    _HAS_ROUTER = False
 from agents.vision_analyst import analyze_chart_patterns, pattern_to_signal
 
 # Load current parameters
@@ -55,9 +60,22 @@ def get_vix() -> float:
     return 20.0  # default neutral
 
 
+def _get_current_regime() -> str:
+    """Read current regime from data/regime_state.json."""
+    try:
+        regime_file = Path(__file__).resolve().parent.parent / "data" / "regime_state.json"
+        if regime_file.exists():
+            import json as _json
+            return _json.loads(regime_file.read_text()).get("regime", "NEUTRAL")
+    except Exception:
+        pass
+    return "NEUTRAL"
+
+
 def get_adaptive_params(base_params: dict) -> dict:
-    """Adjust screening thresholds based on VIX regime."""
+    """Adjust screening thresholds based on VIX and regime."""
     vix = get_vix()
+    regime = _get_current_regime()
     params = base_params.copy()
     params["vix"] = vix
     if vix >= 40:
@@ -75,9 +93,15 @@ def get_adaptive_params(base_params: dict) -> dict:
         params["volume_ratio_min"] = max(params.get("volume_ratio_min", 1.5), 1.8)
         params["halt"] = False
         logging.info(f"VIX={vix:.1f}: LOW VOL - slightly relaxed thresholds")
+    elif regime == "BULL_TREND":
+        params["drop_min"] = max(params.get("drop_min", -15), -12)
+        params["rsi_threshold"] = max(params.get("rsi_threshold", 40), 42)
+        params["volume_ratio_min"] = min(params.get("volume_ratio_min", 1.5), 1.3)
+        params["halt"] = False
+        logging.info(f"VIX={vix:.1f}, regime=BULL_TREND: RELAXED thresholds (RSI<42, drop>-12%, vol>1.3x)")
     else:
         params["halt"] = False
-        logging.info(f"VIX={vix:.1f}: NORMAL regime")
+        logging.info(f"VIX={vix:.1f}, regime={regime}: NORMAL thresholds")
     return params
 
 
@@ -162,7 +186,11 @@ def run_screener():
 
             # Analyze stock drop with LLM
             logging.info(f"{ticker}: Analyzing stock drop with LLM...")
-            analysis = analyze_stock_drop(ticker, news_headlines, {'drop_pct': drop_pct, 'rsi': rsi})
+            if _HAS_ROUTER:
+                prompt = f"{ticker}: drop {drop_pct:.1f}%, RSI {rsi:.1f}. News: {news_headlines[:3]}. Analyze for contrarian entry."
+                analysis = _ask_ai('analyze', prompt, ticker=ticker) or analyze_stock_drop(ticker, news_headlines, {'drop_pct': drop_pct, 'rsi': rsi})
+            else:
+                analysis = analyze_stock_drop(ticker, news_headlines, {'drop_pct': drop_pct, 'rsi': rsi})
             logging.info(f"{ticker}: Analysis complete")
 
             # Run FREE local pattern detection for technical confirmation
