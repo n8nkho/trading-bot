@@ -36,8 +36,9 @@ def _load_env_key(name):
     return None
 
 
-def _call_grok(prompt, max_tokens=100):
-    """Call XAI Grok-3-mini. Returns text or None on failure."""
+def _call_grok(prompt, max_tokens=20):
+    """Call XAI Grok-3-mini. Terse one-word answers only."""
+    SYSTEM = "You are a trading signal classifier. Reply ONE word or number only. No explanation. No punctuation."
     api_key = _load_env_key("XAI_API_KEY")
     if not api_key:
         logger.warning("XAI_API_KEY not set — skipping Grok")
@@ -48,9 +49,12 @@ def _call_grok(prompt, max_tokens=100):
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             json={
                 "model": "grok-3-mini",
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [
+                    {"role": "system", "content": SYSTEM},
+                    {"role": "user", "content": prompt},
+                ],
                 "max_tokens": max_tokens,
-                "temperature": 0.1,
+                "temperature": 0.0,
             },
             timeout=15,
         )
@@ -75,9 +79,12 @@ def _call_openai(prompt, max_tokens=200):
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             json={
                 "model": "gpt-4o-mini",
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [
+                    {"role": "system", "content": SYSTEM},
+                    {"role": "user", "content": prompt},
+                ],
                 "max_tokens": max_tokens,
-                "temperature": 0.1,
+                "temperature": 0.0,
             },
             timeout=15,
         )
