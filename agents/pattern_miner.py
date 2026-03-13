@@ -88,7 +88,7 @@ def _load_outcome_records(weeks: int = 12) -> list[dict]:
                         out.append(rec)
                 except (json.JSONDecodeError, TypeError):
                     continue
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.error("Failed to read outcome records: %s", e)
     return out
 

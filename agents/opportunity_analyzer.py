@@ -187,23 +187,25 @@ def _check_safe_opportunity(ticker: str, signal_date: datetime, entry_price: flo
     Uses yfinance; returns a small result dict or None.
     """
     try:
+        # External data is non-critical here; guard with circuit breaker.
+        from utils.provider_safety import guarded_call
         import yfinance as yf
-        start = signal_date.strftime("%Y-%m-%d")
-        end = (signal_date + timedelta(days=10)).strftime("%Y-%m-%d")
-        hist = yf.Ticker(ticker).history(start=start, end=end, interval="1d")
-        if hist is None or hist.empty or len(hist) < 2:
+
+        def _do_history():
+            start = signal_date.strftime("%Y-%m-%d")
+            end = (signal_date + timedelta(days=10)).strftime("%Y-%m-%d")
+            return yf.Ticker(ticker).history(start=start, end=end, interval="1d")
+
+        hist = guarded_call("yfinance", _do_history)
+        if hist is None or getattr(hist, "empty", True) or len(hist) < 2:
             return None
         hist = hist.sort_index()
-        # First bar is signal day; we care about subsequent bars
-        opens = hist["Open"]
-        highs = hist["High"]
         lows = hist["Low"]
         closes = hist["Close"]
         stop_pct = -4.0
         target_pct = 5.0
         for i in range(1, min(len(hist), 6)):
             low = float(lows.iloc[i])
-            high = float(highs.iloc[i])
             close = float(closes.iloc[i])
             pct_from_entry = (close - entry_price) / entry_price * 100.0
             drawdown = (low - entry_price) / entry_price * 100.0
@@ -214,7 +216,7 @@ def _check_safe_opportunity(ticker: str, signal_date: datetime, entry_price: flo
         last_close = float(closes.iloc[-1])
         pct = (last_close - entry_price) / entry_price * 100.0
         return {"ticker": ticker, "outcome": "open", "pct": pct}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.debug("%s: check failed %s", ticker, e)
         return None
 

@@ -1,6 +1,6 @@
 # Fortress Trading Bot – Session Handoff
 
-**Last updated:** March 7, 2026
+**Last updated:** March 13, 2026
 
 When resuming work, read this file first, then `PROJECT_CONTEXT.md` and `SYSTEM_REVIEW.md`.
 
@@ -62,6 +62,23 @@ Or with file refs: `@HANDOFF.md @PROJECT_CONTEXT.md @SYSTEM_REVIEW.md`
 - **Fortress cron** – consider venv path
 - **Auto-execution** – monitor first trades (March 2+)
 - **Port config** – Command Center default 8083; Oracle firewall may need ingress rule
+- **LLM performance** – Llama watchdog reports suboptimal latency (timeouts around 30s) but healthy; continue to monitor and tune if it worsens
+- **External data quirks** – yfinance occasional 401 \"Invalid Crumb\" and news items missing `title` are logged but handled as non-fatal warnings
+
+---
+
+## Completed (March 13, 2026)
+
+- **sync_alpaca.py** – Rewritten (was broken with SyntaxError); loads ALPACA_* from env/.env, writes `data/positions.json` at project root, preserves entry_time. Cron and Command Center Sync Alpaca now run successfully.
+- **Productization / robustness (no behavior change to live trading):**
+  - **Schemas:** `models/schemas.py` – dataclasses for Candidate, Position, Decision, OutcomeRecord, Recommendation, RegimeRecord (for future validation/backtest).
+  - **Provider safety:** `utils/provider_safety.py` – in-memory circuit breakers for yfinance, Grok, OpenAI; opportunity_analyzer uses guarded_call for yfinance in outcome checks.
+  - **Agent health:** `agents/agent_manager.py` writes `data/agent_health_snapshot.json` after each run for dashboards/meta-agents.
+  - **Backtest:** `backtest/replay.py` – read-only replay of daily_signals for outcome stats; `python backtest/replay.py --days 30`.
+  - **Tenant/license:** `config/tenancy.py`, `config/license.py`, `data/license.json` – single-tenant default, dev-unlimited plan; no enforcement yet.
+  - **Meta-strategy analyzer:** `agents/meta_strategy_analyzer.py` → `data/meta_strategy_recommendations.json` (advisory only; reads decisions, outcomes, agent_health_snapshot).
+- **Smoke tests:** Full system and Command Center smoke-tested; health check passes. Regime confirmed adaptive (no change needed).
+- **Command Center:** Total P&L is lifetime realized from decisions_log + unrealized from positions (positions.json had no pnl until sync; sync now fixed).
 
 ---
 
@@ -72,6 +89,9 @@ Or with file refs: `@HANDOFF.md @PROJECT_CONTEXT.md @SYSTEM_REVIEW.md`
 | Main controller | `orchestrator.py` |
 | Screener | `agents/screener_agent.py` |
 | Command Center | `dashboard/command_center.py` |
+| Sync Alpaca | `sync_alpaca.py` |
 | Config | `.env` (do not edit via AI) |
-| Data | `data/positions.json`, `data/daily_signals_*.json`, `data/regime_recommendations.json`, `data/daily_realized_pnl.jsonl` |
+| Data | `data/positions.json`, `data/daily_signals_*.json`, `data/regime_recommendations.json`, `data/agent_health_snapshot.json`, `data/meta_strategy_recommendations.json` |
 | Regime alignment | `agents/regime_alignment.py` |
+| Schemas | `models/schemas.py` |
+| Backtest (read-only) | `backtest/replay.py` |

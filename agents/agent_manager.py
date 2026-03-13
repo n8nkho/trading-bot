@@ -26,6 +26,8 @@ LOG_DIR = Path("logs")
 LOG_FILE = LOG_DIR / "agent_manager.log"
 CRON_LOGS_DIR = LOG_DIR
 MAX_LOG_AGE_HOURS = 24
+DATA_DIR = Path("data")
+HEALTH_SNAPSHOT_FILE = DATA_DIR / "agent_health_snapshot.json"
 
 # Services to monitor
 SERVICES = {
@@ -377,7 +379,16 @@ def run_health_intervention():
         logging.warning(f"  - Stale jobs: {', '.join(stale_jobs)}")
     
     logging.info("=" * 60)
-    
+
+    # Persist machine-readable snapshot for dashboards / meta-agents
+    try:
+        DATA_DIR.mkdir(exist_ok=True)
+        with open(HEALTH_SNAPSHOT_FILE, "w") as f:
+            json.dump(summary, f, indent=2)
+        logging.debug("Wrote agent health snapshot to %s", HEALTH_SNAPSHOT_FILE)
+    except Exception as e:  # noqa: BLE001
+        logging.error("Failed to write health snapshot: %s", e)
+
     return summary
 
 def print_summary(summary):
