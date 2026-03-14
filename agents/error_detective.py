@@ -2,6 +2,7 @@
 Error Detective Agent - Error detection and diagnostic reporting (NO auto-fixing)
 
 Purpose: Scan all logs, detect errors, create diagnostic reports, alert user
+Run from project root so logs/ and report paths resolve correctly.
 """
 
 import os
@@ -9,10 +10,13 @@ import re
 import logging
 import json
 from datetime import datetime, timedelta
+from pathlib import Path
 import glob
 
+# Project root (so script works from any CWD)
+_ROOT = Path(__file__).resolve().parent.parent
 # Configuration
-LOG_DIRECTORIES = ['logs/']
+LOG_DIRECTORIES = [str(_ROOT / "logs")]
 ERROR_PATTERNS = {
     'ImportError': r'(ImportError|ModuleNotFoundError):.*',
     'SyntaxError': r'(SyntaxError|IndentationError):.*',
@@ -25,14 +29,15 @@ ERROR_PATTERNS = {
 }
 
 # Setup logging
-os.makedirs('logs', exist_ok=True)
+_LOG_DIR = _ROOT / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler('logs/error_detective.log'),
-        logging.StreamHandler()
-    ]
+        logging.FileHandler(_LOG_DIR / "error_detective.log"),
+        logging.StreamHandler(),
+    ],
 )
 logger = logging.getLogger(__name__)
 
@@ -102,6 +107,22 @@ def scan_all_logs():
                 all_errors[log_file] = errors
                 
     return all_errors
+
+
+def _dedupe_errors(errors_by_file):
+    """Keep one occurrence per (error_type, error_message) per file so report is readable."""
+    out = {}
+    for log_file, errs in errors_by_file.items():
+        seen = set()
+        unique = []
+        for e in errs:
+            key = (e.get("error_type"), e.get("error_message", "")[:120])
+            if key not in seen:
+                seen.add(key)
+                unique.append(e)
+        if unique:
+            out[log_file] = unique
+    return out
 
 
 def identify_broken_agents(error_dict):
@@ -247,23 +268,23 @@ def save_report(report):
         report: Formatted report string
     """
     # Save text version
-    report_path = 'logs/error_report.txt'
+    report_path = _ROOT / "logs" / "error_report.txt"
     try:
-        with open(report_path, 'w') as f:
-            f.write(report)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(report, encoding="utf-8")
         logger.info(f"Report saved to {report_path}")
     except Exception as e:
         logger.error(f"Failed to save text report: {e}")
-    
+
     # Save JSON version for dashboard
-    json_path = 'logs/error_report.json'
+    json_path = _ROOT / "logs" / "error_report.json"
     try:
         report_data = {
-            'generated_at': datetime.now().isoformat(),
-            'report_text': report
+            "generated_at": datetime.now().isoformat(),
+            "report_text": report,
         }
-        with open(json_path, 'w') as f:
-            json.dump(report_data, f, indent=2)
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        json_path.write_text(json.dumps(report_data, indent=2), encoding="utf-8")
         logger.info(f"JSON report saved to {json_path}")
     except Exception as e:
         logger.error(f"Failed to save JSON report: {e}")
@@ -316,12 +337,41 @@ def get_recent_errors(hours=24):
     return recent_errors
 
 
-def error_detective():
+def _filter_errors_by_days(errors_by_file, recent_days):
+    """Keep only errors with timestamp in last recent_days, or no timestamp but file modified in last recent_days."""
+    from datetime import datetime as dt
+    cutoff = dt.now() - timedelta(days=recent_days)
+    out = {}
+    for log_file, errs in errors_by_file.items():
+        filtered = []
+        try:
+            file_mtime = dt.fromtimestamp(os.path.getmtime(log_file))
+        except Exception:
+            file_mtime = None
+        for e in errs:
+            if e.get("timestamp"):
+                try:
+                    t = dt.strptime(e["timestamp"], "%Y-%m-%d %H:%M:%S")
+                    if t >= cutoff:
+                        filtered.append(e)
+                except Exception:
+                    if file_mtime and file_mtime >= cutoff:
+                        filtered.append(e)
+            elif file_mtime and file_mtime >= cutoff:
+                filtered.append(e)
+        if filtered:
+            out[log_file] = filtered
+    return out
+
+
+def error_detective(recent_days=7):
     """
     Main function - scan logs, identify errors, create report.
+    By default only reports errors from the last 7 days so the report stays actionable.
+    Pass recent_days=None to include all historical errors.
     
     Returns:
-        int: Total error count
+        int: Total error count (after optional recency filter)
     """
     logger.info("Starting Error Detective scan...")
     
@@ -332,13 +382,29 @@ def error_detective():
         logger.info("No errors detected in logs!")
         return 0
     
+    if recent_days is not None:
+        all_errors = _filter_errors_by_days(all_errors, recent_days)
+        logger.info(f"Filtered to errors in last {recent_days} days")
+        if not all_errors:
+            logger.info("No recent errors detected!")
+            save_report(
+                "ERROR DETECTIVE DIAGNOSTIC REPORT\n"
+                f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"Filter: last {recent_days} days\n"
+                "No recent errors found.\n"
+            )
+            return 0
+
+    # Dedupe so we see each unique issue once per agent
+    all_errors = _dedupe_errors(all_errors)
+    
     # Count total errors
     total_errors = sum(len(errs) for errs in all_errors.values())
     logger.info(f"Found {total_errors} errors across {len(all_errors)} log files")
     
-    # Identify broken agents
+    # Identify log files that contain errors (agent name from log filename)
     broken_agents = identify_broken_agents(all_errors)
-    logger.warning(f"Broken agents detected: {list(broken_agents.keys())}")
+    logger.info(f"Log files with errors in scan window: {list(broken_agents.keys())}")
     
     # Create diagnostic report
     report = create_diagnostic_report(all_errors)
@@ -351,8 +417,10 @@ def error_detective():
     print("ERROR DETECTIVE SUMMARY")
     print("=" * 80)
     print(f"Total Errors: {total_errors}")
-    print(f"Affected Agents: {len(broken_agents)}")
-    print(f"Report saved to: logs/error_report.txt")
+    print(f"Log files with errors: {len(broken_agents)}")
+    print(f"Report saved to: {_ROOT / 'logs' / 'error_report.txt'}")
+    if total_errors > 0:
+        print("\n(These are from existing log lines in the scan window; code may already be fixed.)")
     print("=" * 80 + "\n")
     
     return total_errors
@@ -361,6 +429,6 @@ def error_detective():
 if __name__ == "__main__":
     error_count = error_detective()
     if error_count > 0:
-        print(f"\n⚠️  {error_count} errors detected! Review logs/error_report.txt for details.")
+        print(f"\n⚠️  {error_count} errors in logs. Review logs/error_report.txt for details.")
     else:
         print("\n✅ No errors detected!")

@@ -363,21 +363,6 @@ if __name__ == "__main__":
 
 
 def get_sp500_tickers():
-    """
-    Return a list of the top 100 most liquid S&P 500 tickers.
-    Used by earnings_drift, insider_tracker, vwap_reversion, and defensive_universe_scanner.
-    """
-    return [
-        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'TSLA', 'META', 'BRK.B',
-        'UNH', 'XOM', 'JNJ', 'JPM', 'V', 'PG', 'MA', 'HD', 'CVX', 'MRK',
-        'ABBV', 'KO', 'AVGO', 'PEP', 'COST', 'TMO', 'MCD', 'CSCO', 'ACN',
-        'LLY', 'DHR', 'ABT', 'NKE', 'DIS', 'TXN', 'VZ', 'ADBE', 'WMT',
-        'CRM', 'NFLX', 'ORCL', 'AMD', 'INTC', 'CMCSA', 'PFE', 'PM', 'BA',
-        'QCOM', 'T', 'UNP', 'HON', 'IBM', 'GE', 'INTU', 'SBUX', 'CAT',
-        'PLTR', 'COIN', 'HOOD', 'SOFI', 'RIVN', 'LCID', 'NIO',
-        'SPY', 'QQQ', 'IWM', 'GLD', 'SLV', 'TLT', 'HYG', 'LQD',
-        'MS', 'GS', 'BAC', 'WFC', 'C', 'BLK', 'SCHW', 'AXP',
-        'AMGN', 'GILD', 'BIIB', 'REGN', 'VRTX', 'ISRG', 'MDT', 'BMY',
-        'F', 'GM', 'UBER', 'LYFT', 'ABNB', 'DASH', 'SNAP', 'PINS',
-        'ZM', 'DDOG', 'NET', 'SNOW', 'MDB', 'BILL', 'CRWD', 'PANW',
-    ]
+    """Re-export from config.universe_tickers (single source of truth)."""
+    from config.universe_tickers import get_sp500_tickers as _get
+    return _get()

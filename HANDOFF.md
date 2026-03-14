@@ -1,6 +1,6 @@
 # Fortress Trading Bot – Session Handoff
 
-**Last updated:** March 13, 2026
+**Last updated:** March 14, 2026
 
 When resuming work, read this file first, then `PROJECT_CONTEXT.md` and `SYSTEM_REVIEW.md`.
 
@@ -57,7 +57,42 @@ Or with file refs: `@HANDOFF.md @PROJECT_CONTEXT.md @SYSTEM_REVIEW.md`
 - **Automated refresh:** Command Center starts a daemon thread that runs the 6 recommendation agents (opportunity_analyzer, hedging_opportunity_analyzer, defensive_universe_scanner, regime_alignment, no_trade_analyzer, pattern_miner) 20 seconds after startup and then every 15 minutes. No pkill/restart—data files are refreshed so the dashboard stays current when you open it.
 - **News impacting strategy:** Backend returns **top 10** items with **url** (from yfinance `clickThroughUrl`/`canonicalUrl`). Frontend: scrolling list (max-height 320px), each headline is a link to source when `url` is present; subtitle updated to “Top 10, scrollable”.
 
-## Open / next
+## Completed (March 14, 2026 – Error Detective + Pristine)
+
+- **Error Detective–driven fixes:**
+  - **risk_guardian:** TypeError (float + NoneType) – equity, today_pnl, adjusted_value and position/sector values now normalized with `(x or 0)` / `float(...)`.
+  - **command_center:** TypeError in total_pnl – use `float(perf.get("total_pnl") or 0) + unrealized_pnl`.
+  - **performance_analyzer:** KeyError `'decision'` – only process log lines with valid `decision` and `outcome` dicts; skip malformed lines.
+  - **exit_monitor:** None decision – if `evaluate_exit`/`check_option_exit` returns None/non-dict, treat as HOLD and use `.get()` for logging.
+  - **Alpaca auth (ValueError: You must supply a method of authentication):** Guarded TradingClient creation in `orchestrator.py`, `sync_alpaca.py`, `dashboard/command_center.py` (test_connection + get_recent_orders), and `agents/fortress_orchestrator.py` – try/except ValueError or missing keys; return None / friendly error / empty data instead of crashing.
+- **Universe:** `config/universe_tickers.py` (lightweight `get_sp500_tickers`) and regime_center/exit_monitor fixes from prior session remain in place.
+
+## Completed (March 14, 2026 – Next steps done)
+
+- **1. Error Detective:** Fixes are in place; the 31 reported errors are from existing log lines (last 7 days). New runs should not reproduce them once logs rotate. Run `python3 agents/error_detective.py` periodically to confirm (use `python3` if `python` is not available).
+- **2. Env for paper trading:** `check_health.py` now has a **2.5 ALPACA (paper trading)** section: reports "Alpaca keys: SET" or "NOT SET" (no values printed). Missing/invalid keys remain handled without tracebacks in orchestrator, sync, Command Center, fortress_orchestrator.
+- **3. exit_monitor without screener:** News is **lazy-imported** inside the function that needs it. `exit_monitor` loads and `monitor_positions` is importable without scipy/screener_agent; news check runs only when that code path executes and logs a warning if screener is unavailable.
+- **4. API robustness:** **Wash trade:** `orchestrator.execute_buy_order` now catches Alpaca errors containing "wash trade" or "40310000", logs a WARNING with guidance ("Use complex orders or cancel the existing order first"), and returns the error dict. **yfinance 401:** Already non-fatal; `utils/provider_safety.py` has a yfinance circuit breaker for optional use in hot paths.
+- **5. Sync log SyntaxError:** Confirmed `logs/sync.log` is written by cron: `sync_alpaca.py >> logs/sync.log 2>&1`. `sync_alpaca.py` compiles cleanly; any SyntaxError in the log is historical (e.g. old traceback).
+- **6. Health and smoke tests:** `check_health.py` passes (incl. new Alpaca section); `run_strategies.py inefficiency` and `from agents.exit_monitor import monitor_positions` succeed.
+
+## Pristine verification (confirm bot is clean)
+
+Run from project root:
+
+```bash
+python3 scripts/confirm_pristine.py
+```
+
+This checks: **exit_monitor**, **risk_guardian**, **performance_analyzer** imports; **run_strategies.py inefficiency** and **sector**; and **check_health.py**. All must pass (exit 0). Optional: then run `python3 agents/error_detective.py` and treat the 31 log entries as historical until new logs overwrite them.
+
+## Next steps (optional / ongoing)
+
+- Run Error Detective after a few days of new logs to confirm no new error patterns.
+- Command Center: refresh after changes to see latest agent activity and performance.
+- If yfinance 401 spikes: consider using `provider_safety.guarded_call("yfinance", fn)` in critical data-fetch paths.
+
+## Open / next (unchanged)
 
 - **Fortress cron** – consider venv path
 - **Auto-execution** – monitor first trades (March 2+)
@@ -86,16 +121,39 @@ Or with file refs: `@HANDOFF.md @PROJECT_CONTEXT.md @SYSTEM_REVIEW.md`
 
 ---
 
+## Completed (March 13, 2026 – ROADMAP_SELLER gaps + full test)
+
+- **A1 Backtest:** `backtest/strategy_backtest.py` (historical screener backtest), `backtest/run_backtest.py` (single entry: `replay --days N`, `screener --days N`). Health check runs backtest smoke (replay 1 day) and reports "Backtest module: OK".
+- **A2 Agent audit:** `agents/inefficiency_trader.py` – template only; returns `[]` and logs; no placeholder runs. `run_strategies.py` – each strategy wrapped in `_run_safe()` (try/except, log and exit 1 on failure); **lazy imports** per strategy so one broken dependency (e.g. scipy) does not block others (e.g. inefficiency, flow). Flow tracker already returns list; forex_sniper already env-gated (prior session).
+- **A3 Ops:** `check_health.py` – positions support both list and `{"positions": [...]}`; new section 8 "Backtest module" smoke. Circuit breaker already visible in Command Center (risk.circuit_breaker_active).
+- **B Seller:** `setup.sh` (venv, .env from .env.example if missing, data/config, health check); `.env.example` extended (OANDA, XAI_API_KEY, COMMAND_CENTER_PORT, Twilio); Command Center footer: disclaimer + version from `VERSION` file; `VERSION` (1.0.0); `EULA.md` (as-is, your responsibility, no custody); agent tiers (core / extended / experimental) in `PROJECT_CONTEXT.md`.
+- **Full test:** Health check (incl. backtest smoke), `run_strategies.py inefficiency`, `flow`, `momentum`, `backtest/run_backtest.py replay --days 1`, `screener --days 5`; lint on changed files – no errors.
+
+---
+
+## Completed (Licensing and tiered deployments)
+
+- **Tiers:** `config/tiers.py` – master (full), starter, pro, enterprise. Gate strategies, backtest, Command Center, Fortress, universe size.
+- **License:** `config/license.py` – reads `data/license.json`, optional signature (HMAC) and expiry; invalid/expired downgrades to starter. `scripts/generate_license.py` to generate signed licenses.
+- **Customer settings:** `config/customer_settings.py` – bounded risk params from `data/customer_settings.json` (position size, stop/target %, max trades, etc.); clamped to safe ranges.
+- **Add-ons only:** `config/addon_loader.py` – loads `customer_addons/*.py` with `register(env)`; hooks `on_screen_done`, `on_before_trade`, `on_after_trade`. Core must not be modified.
+- **Integrity:** `utils/integrity.py` + `scripts/build_manifest.py` – optional manifest of core file hashes for customer builds to detect tampering.
+- **Wiring:** Orchestrator uses `_effective_max_positions()` from customer_settings; Fortress gated by tier; run_strategies and backtest gate by tier. entry_agent uses customer position_size min/max.
+- **Docs:** `docs/LICENSING.md`, `docs/ADDONS.md`; EULA updated (no modifying core; add-ons only).
+- **Customer build next step:** Command Center shows **License** tier in System Health and an **upgrade banner** when tier is Starter or license invalid. Add-on hooks wired in orchestrator: `invoke_screen_done(candidates)` after screening; `invoke_before_trade(trade)` before each execution (approved_for_execution); `invoke_after_trade(decision, "logged")` after track_decision and `invoke_after_trade(trade, "executed")` after successful order.
+
+---
+
 ## Key paths
 
 | What | Path |
 |------|------|
 | Main controller | `orchestrator.py` |
 | Screener | `agents/screener_agent.py` |
-| Command Center | `dashboard/command_center.py` |
+| Command Center | `dashboard/command_center.py` (or run as service: `sudo bash scripts/install_command_center_service.sh`) |
 | Sync Alpaca | `sync_alpaca.py` |
 | Config | `.env` (do not edit via AI) |
 | Data | `data/positions.json`, `data/daily_signals_*.json`, `data/regime_recommendations.json`, `data/agent_health_snapshot.json`, `data/meta_strategy_recommendations.json` |
 | Regime alignment | `agents/regime_alignment.py` |
 | Schemas | `models/schemas.py` |
-| Backtest (read-only) | `backtest/replay.py` |
+| Backtest | `backtest/run_backtest.py` (replay / screener), `backtest/replay.py`, `backtest/strategy_backtest.py` |

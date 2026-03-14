@@ -71,7 +71,11 @@ def main() -> int:
         print("ALPACA_API_KEY / ALPACA_SECRET_KEY not set; skipping sync.")
         return 1
 
-    client = TradingClient(api_key, api_secret, paper=True)
+    try:
+        client = TradingClient(api_key, api_secret, paper=True)
+    except ValueError as e:
+        print(f"Alpaca auth invalid: {e}. Check API keys in .env.")
+        return 1
 
     existing_entry_times = _load_existing_entry_times()
 

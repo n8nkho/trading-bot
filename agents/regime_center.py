@@ -121,7 +121,8 @@ def get_current_regime(max_age_minutes: int = 15) -> dict:
     try:
         if REGIME_FILE.exists():
             with open(REGIME_FILE) as f:
-                data = json.load(f)
+                raw = json.load(f)
+            data = raw if isinstance(raw, dict) else {}
             ts = data.get("timestamp")
             if ts:
                 try:
@@ -130,6 +131,15 @@ def get_current_regime(max_age_minutes: int = 15) -> dict:
                         return data
                 except Exception:
                     pass
+            # Return dict with expected keys (defensive for callers)
+            if data and data.get("regime"):
+                return {
+                    "regime": data.get("regime", "NEUTRAL"),
+                    "vix": data.get("vix"),
+                    "spy_trend": data.get("spy_trend"),
+                    "spy_50_above_200": data.get("spy_50_above_200"),
+                    "timestamp": data.get("timestamp", ""),
+                }
     except Exception as e:
         logger.warning(f"Failed to read {REGIME_FILE}: {type(e).__name__}: {e}")
 

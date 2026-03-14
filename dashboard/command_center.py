@@ -20,8 +20,19 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 os.chdir(_ROOT)
 
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, make_response, request, redirect, url_for
 from flask_cors import CORS
+
+
+def _get_version() -> str:
+    """Read VERSION file at project root; default 1.0.0."""
+    try:
+        vf = _ROOT / "VERSION"
+        if vf.exists():
+            return vf.read_text().strip() or "1.0.0"
+    except Exception:
+        pass
+    return "1.0.0"
 
 app = Flask(__name__, template_folder=Path(__file__).resolve().parent / "templates")
 app.config['TEMPLATES_AUTO_RELOAD'] = True
@@ -258,6 +269,28 @@ def get_system_health():
     health["validation_errors"] = err_list
     health["market_hours"] = _is_market_hours()
 
+    # License tier (for customer builds)
+    try:
+        from config.license import get_plan
+        from config.tiers import backtest_allowed, fortress_allowed, get_tier_spec
+        plan = get_plan()
+        spec = get_tier_spec(plan.tier)
+        health["license"] = {
+            "tier": plan.tier,
+            "name": plan.name,
+            "valid": plan.valid,
+            "backtest_allowed": backtest_allowed(plan.tier),
+            "fortress_allowed": fortress_allowed(plan.tier),
+            "max_universe_size": spec.max_universe_size,
+            "upgrade_message": None,
+        }
+        if plan.tier == "starter":
+            health["license"]["upgrade_message"] = "Upgrade to Pro for backtest, Fortress hedging, and more strategies."
+        elif plan.tier == "pro" and not plan.valid:
+            health["license"]["upgrade_message"] = "License expired or invalid. Contact support."
+    except Exception:
+        health["license"] = {"tier": "master", "name": "Master", "valid": True, "upgrade_message": None}
+
     return health
 
 
@@ -342,9 +375,10 @@ def get_trading_performance():
         strategies.sort(key=lambda x: (abs(x["pnl"]), x["trades"]), reverse=True)
         perf["strategies"] = strategies
     # Unrealized P&L from open positions
-    unrealized_pnl = round(sum(p.get("pnl", 0) or 0 for p in positions), 2)
+    unrealized_pnl = round(sum(float(p.get("pnl") or 0) for p in positions), 2)
     perf["unrealized_pnl"] = unrealized_pnl
-    perf["total_pnl"] = round(perf["total_pnl"] + unrealized_pnl, 2)
+    total = float(perf.get("total_pnl") or 0) + unrealized_pnl
+    perf["total_pnl"] = round(total, 2)
     perf["recent_trades"] = list(reversed(decisions[-15:]))
 
     # Latest daily signals
@@ -729,13 +763,188 @@ def get_recommendations():
     return recs
 
 
+# ---- First-run setup (easy install for non-technical customers) ----
+SETUP_COMPLETE_FILE = DATA_DIR / "setup_complete"
+ENV_FILE = _ROOT / ".env"
+
+
+def _setup_status():
+    """Returns dict: setup_complete (bool), has_alpaca_keys (bool). Keys never logged."""
+    has_keys = False
+    if ENV_FILE.exists():
+        try:
+            text = ENV_FILE.read_text()
+            key_val = secret_val = None
+            for line in text.splitlines():
+                if line.strip().startswith("ALPACA_API_KEY="):
+                    key_val = line.split("=", 1)[1].strip().strip('"\'')
+                elif line.strip().startswith("ALPACA_SECRET_KEY="):
+                    secret_val = line.split("=", 1)[1].strip().strip('"\'')
+            if key_val and secret_val and "your_" not in key_val.lower() and "your_" not in secret_val.lower():
+                if len(key_val) > 10 and len(secret_val) > 10:
+                    has_keys = True
+        except Exception:
+            pass
+    done = SETUP_COMPLETE_FILE.exists()
+    return {"setup_complete": done or has_keys, "has_alpaca_keys": has_keys}
+
+
+def _env_upsert_alpaca(api_key: str, secret_key: str) -> None:
+    """Update or add ALPACA_API_KEY and ALPACA_SECRET_KEY in .env. Preserve other vars. Never log keys."""
+    lines = []
+    if ENV_FILE.exists():
+        for line in ENV_FILE.read_text().splitlines():
+            s = line.strip()
+            if s.startswith("ALPACA_API_KEY=") or s.startswith("ALPACA_SECRET_KEY="):
+                continue
+            lines.append(line)
+    lines.append(f"ALPACA_API_KEY={api_key}")
+    lines.append(f"ALPACA_SECRET_KEY={secret_key}")
+    ENV_FILE.write_text("\n".join(lines) + "\n")
+    # Reload env into process so next request sees them
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(ENV_FILE, override=True)
+    except Exception:
+        pass
+
+
+@app.route("/setup")
+def setup_page():
+    """First-run wizard: enter Alpaca keys and test connection."""
+    if _setup_status()["setup_complete"]:
+        return redirect(url_for("index"))
+    return make_response(render_template("setup_wizard.html", version=_get_version()))
+
+
+@app.route("/api/setup/status")
+def api_setup_status():
+    return jsonify(_setup_status())
+
+
+@app.route("/api/setup/save_keys", methods=["POST"])
+def api_setup_save_keys():
+    """Save Alpaca API key and secret to .env. Never logged or echoed."""
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        api_key = (data.get("api_key") or "").strip()
+        secret_key = (data.get("secret_key") or "").strip()
+        if not api_key or not secret_key:
+            return jsonify({"ok": False, "error": "API key and secret are required."}), 400
+        if "your_" in api_key.lower() or "your_" in secret_key.lower():
+            return jsonify({"ok": False, "error": "Please use your real Alpaca keys, not placeholders."}), 400
+        if len(api_key) < 10 or len(secret_key) < 10:
+            return jsonify({"ok": False, "error": "Keys look too short. Check you copied them fully."}), 400
+        _env_upsert_alpaca(api_key, secret_key)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/setup/test_connection", methods=["POST"])
+def api_setup_test_connection():
+    """Test Alpaca connection. On success, mark setup complete."""
+    try:
+        from alpaca.trading.client import TradingClient
+        os.environ.pop("ALPACA_API_KEY", None)
+        os.environ.pop("ALPACA_SECRET_KEY", None)
+        from dotenv import load_dotenv
+        load_dotenv(ENV_FILE, override=True)
+        key = os.getenv("ALPACA_API_KEY")
+        secret = os.getenv("ALPACA_SECRET_KEY")
+        if not key or not secret:
+            return jsonify({"ok": False, "error": "No keys found. Save keys first."}), 400
+        try:
+            client = TradingClient(key, secret, paper=True)
+        except ValueError as e:
+            return jsonify({"ok": False, "error": f"Invalid Alpaca keys: {e}"}), 400
+        acc = client.get_account()
+        if acc:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            SETUP_COMPLETE_FILE.write_text("ok")
+            return jsonify({"ok": True, "message": "Connection successful. You're all set."})
+        return jsonify({"ok": False, "error": "Could not get account."}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
 @app.route("/")
 def index():
+    if not _setup_status()["setup_complete"]:
+        return redirect(url_for("setup_page"))
     from flask import make_response
-    resp = make_response(render_template("command_center.html"))
+    resp = make_response(render_template("command_center.html", version=_get_version()))
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
     resp.headers['Pragma'] = 'no-cache'
     return resp
+
+
+def _run_pristine_checks():
+    """Run pristine verification checks; return dict with passed, checks[], timestamp."""
+    checks = []
+    all_ok = True
+    py = sys.executable
+
+    # 1. Critical imports
+    for desc, mod_attr in [
+        ("exit_monitor.monitor_positions", ("agents.exit_monitor", "monitor_positions")),
+        ("risk_guardian.get_risk_status", ("agents.risk_guardian", "get_risk_status")),
+        ("performance_analyzer.analyze_performance", ("agents.performance_analyzer", "analyze_performance")),
+    ]:
+        try:
+            mod = __import__(mod_attr[0], fromlist=[mod_attr[1]])
+            getattr(mod, mod_attr[1])
+            checks.append({"name": desc, "ok": True, "detail": "OK"})
+        except Exception as e:
+            checks.append({"name": desc, "ok": False, "detail": str(e)[:120]})
+            all_ok = False
+
+    # 2. Strategies
+    for label, cmd in [
+        ("run_strategies.py inefficiency", [py, str(_ROOT / "run_strategies.py"), "inefficiency"]),
+        ("run_strategies.py sector", [py, str(_ROOT / "run_strategies.py"), "sector"]),
+    ]:
+        try:
+            r = subprocess.run(cmd, cwd=_ROOT, capture_output=True, text=True, timeout=120)
+            ok = r.returncode == 0
+            checks.append({"name": label, "ok": ok, "detail": "exit 0" if ok else (r.stderr or r.stdout or "non-zero exit")[:80]})
+            if not ok:
+                all_ok = False
+        except Exception as e:
+            checks.append({"name": label, "ok": False, "detail": str(e)[:120]})
+            all_ok = False
+
+    # 3. Health check
+    try:
+        r = subprocess.run([py, str(_ROOT / "check_health.py")], cwd=_ROOT, capture_output=True, text=True, timeout=60)
+        ok = r.returncode == 0
+        checks.append({"name": "check_health.py", "ok": ok, "detail": "exit 0" if ok else "failed"})
+        if not ok:
+            all_ok = False
+    except Exception as e:
+        checks.append({"name": "check_health.py", "ok": False, "detail": str(e)[:120]})
+        all_ok = False
+
+    return {
+        "passed": all_ok,
+        "checks": checks,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@app.route("/api/pristine")
+def api_pristine():
+    """Run pristine verification and return pass/fail and per-check results."""
+    try:
+        result = _run_pristine_checks()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({
+            "passed": False,
+            "checks": [],
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e),
+        }), 500
 
 
 @app.route("/api/health")
@@ -942,7 +1151,12 @@ def get_recent_orders():
                         key = line.split("=", 1)[1].strip()
                     elif line.startswith("ALPACA_SECRET_KEY="):
                         secret = line.split("=", 1)[1].strip()
-        client = TradingClient(key, secret, paper=True)
+        if not key or not secret:
+            return {"orders": [{"error": "Alpaca keys not set"}], "count": 0, "timestamp": __import__("datetime").datetime.now().isoformat()}
+        try:
+            client = TradingClient(key, secret, paper=True)
+        except ValueError:
+            return {"orders": [{"error": "Invalid Alpaca keys"}], "count": 0, "timestamp": __import__("datetime").datetime.now().isoformat()}
         req = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=25)
         orders = client.get_orders(req)
         for o in orders:

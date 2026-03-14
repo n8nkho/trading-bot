@@ -54,6 +54,11 @@ Paper trading on Alpaca, analysis via Ollama (local LLM), auto-execution enabled
 └── config/             # Configuration files
 ```
 
+### Agent Tiers (support level)
+- **Core (fully supported):** screener_agent, exit_monitor, risk_guardian, fortress_orchestrator, regime_alignment, universe_builder, intraday_sniper, Command Center, orchestrator, sync_alpaca. Required for basic screening, exits, and risk control.
+- **Extended (included, use at your discretion):** momentum_trader, trump_trader, merger_arb, smart_money_trader, earnings_drift, insider_tracker, squeeze_detector, sector_rotation, vwap_reversion. Documented and runnable; tune or disable per your strategy.
+- **Experimental / template (optional):** forex_sniper (needs OANDA env vars), inefficiency_trader (template only; no data source), flow_tracker (sample data; plug in your options flow feed). Return empty or no-op when not configured; do not block core operation.
+
 ### Key Technologies
 - **Trading:** Alpaca API (paper trading)
 - **Forex:** OANDA API (practice account)

@@ -128,9 +128,13 @@ def check_risk_limits(portfolio_data, new_position):
     """
     logger.info(f"Checking risk limits for new position: {new_position['ticker']}")
     
-    equity = portfolio_data.get('equity', 0)
-    positions = portfolio_data.get('positions', [])
-    today_pnl = portfolio_data.get('today_pnl', 0)
+    equity = float(portfolio_data.get('equity') or 0)
+    positions = portfolio_data.get('positions') or []
+    today_pnl = portfolio_data.get('today_pnl')
+    if today_pnl is None:
+        today_pnl = 0.0
+    else:
+        today_pnl = float(today_pnl)
     week_pnl = portfolio_data.get('week_pnl', None)
     
     # Check circuit breaker status
@@ -140,7 +144,7 @@ def check_risk_limits(portfolio_data, new_position):
         return circuit_check
     
     # Apply position size reduction if circuit breaker is in reduce mode
-    adjusted_value = new_position['value'] * position_size_reduction
+    adjusted_value = float(new_position.get('value') or 0) * position_size_reduction
     if position_size_reduction < 1.0:
         logger.info(f"Position size reduced by {(1-position_size_reduction)*100:.0f}% due to consecutive losses")
     
@@ -158,7 +162,7 @@ def check_risk_limits(portfolio_data, new_position):
         return {"approved": False, "reason": reason}
     
     # 3. Check total portfolio risk
-    total_position_value = sum(p.get('value', 0) for p in positions) + adjusted_value
+    total_position_value = sum(float(p.get('value') or 0) for p in positions) + adjusted_value
     total_risk_pct = (total_position_value / equity) * 100
     if total_risk_pct > MAX_TOTAL_RISK_PCT:
         reason = f"Total portfolio risk {total_risk_pct:.2f}% exceeds {MAX_TOTAL_RISK_PCT}% limit"
@@ -228,10 +232,11 @@ def check_sector_concentration(positions, new_position, equity, new_position_val
     sector_exposure = {}
     for pos in positions:
         sector = pos.get('sector', 'Unknown')
-        value = pos.get('value', 0)
+        value = float(pos.get('value') or 0)
         sector_exposure[sector] = sector_exposure.get(sector, 0) + value
     
     # Add new position to sector exposure
+    new_position_value = float(new_position_value or 0)
     sector_exposure[new_sector] = sector_exposure.get(new_sector, 0) + new_position_value
     
     # Check if any sector exceeds limit

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fortress – First-time setup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-deep: #06090f;
+      --bg-panel: #0d1117;
+      --bg-card: #161b22;
+      --border: #21262d;
+      --cyan: #00f5d4;
+      --cyan-dim: #00f5d440;
+      --amber: #f9c74f;
+      --red: #f94144;
+      --green: #43b883;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg-deep);
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+      background-image: radial-gradient(ellipse 120% 80% at 50% -20%, var(--cyan-dim), transparent 50%);
+    }
+    .card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2rem;
+      max-width: 440px;
+      width: 100%;
+    }
+    h1 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.25rem;
+      color: var(--cyan);
+      margin: 0 0 0.5rem 0;
+    }
+    .sub {
+      color: var(--text-muted);
+      font-size: 12px;
+      margin-bottom: 1.5rem;
+    }
+    label {
+      display: block;
+      margin-top: 1rem;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+    input[type="text"],
+    input[type="password"] {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      margin-top: 0.25rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+    }
+    input:focus {
+      outline: none;
+      border-color: var(--cyan);
+    }
+    .checkbox {
+      margin-top: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .checkbox input { width: auto; margin: 0; }
+    .btn {
+      width: 100%;
+      margin-top: 1.5rem;
+      padding: 0.75rem 1rem;
+      background: var(--cyan);
+      color: var(--bg-deep);
+      border: none;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn:hover { background: #00ddbb; }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .msg {
+      margin-top: 1rem;
+      padding: 0.75rem;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+    .msg.success { background: rgba(67,184,131,0.2); border: 1px solid var(--green); color: var(--green); }
+    .msg.error { background: rgba(249,65,68,0.2); border: 1px solid var(--red); color: var(--red); }
+    .msg.hide { display: none; }
+    .footer {
+      margin-top: 1.5rem;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .footer a { color: var(--cyan); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Fortress – First-time setup</h1>
+    <p class="sub">Enter your Alpaca paper trading keys. They are stored only on this computer.</p>
+    <form id="setupForm">
+      <label for="api_key">Alpaca API Key</label>
+      <input type="text" id="api_key" name="api_key" placeholder="Paste your API key" autocomplete="off" required>
+      <label for="secret_key">Alpaca Secret Key</label>
+      <input type="password" id="secret_key" name="secret_key" placeholder="Paste your secret" autocomplete="off" required>
+      <div class="checkbox">
+        <input type="checkbox" id="paper" checked>
+        <label for="paper" style="margin:0">Use paper trading (recommended)</label>
+      </div>
+      <button type="submit" class="btn" id="btnSubmit">Save and test connection</button>
+    </form>
+    <div id="msg" class="msg hide"></div>
+    <p class="footer">Get keys at <a href="https://app.alpaca.markets/paper/dashboard/overview" target="_blank" rel="noopener">Alpaca Paper Dashboard</a>. We never see or store your keys on our servers.</p>
+    <p class="footer" style="margin-top:0.5rem">Optional: <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> for AI analysis; see <code>docs/PREREQUISITES_AND_CLOUD.md</code> in your Fortress folder for cloud (24/7) setup.</p>
+  </div>
+  <script>
+    document.getElementById('setupForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var btn = document.getElementById('btnSubmit');
+      var msg = document.getElementById('msg');
+      msg.className = 'msg hide';
+      btn.disabled = true;
+      var apiKey = document.getElementById('api_key').value.trim();
+      var secretKey = document.getElementById('secret_key').value.trim();
+      if (!apiKey || !secretKey) {
+        msg.textContent = 'Please enter both API key and secret.';
+        msg.className = 'msg error';
+        btn.disabled = false;
+        return;
+      }
+      try {
+        var r1 = await fetch('/api/setup/save_keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: apiKey, secret_key: secretKey })
+        });
+        var d1 = await r1.json();
+        if (!d1.ok) {
+          msg.textContent = d1.error || 'Could not save keys.';
+          msg.className = 'msg error';
+          btn.disabled = false;
+          return;
+        }
+        var r2 = await fetch('/api/setup/test_connection', { method: 'POST' });
+        var d2 = await r2.json();
+        if (d2.ok) {
+          msg.textContent = d2.message || 'Connection successful.';
+          msg.className = 'msg success';
+          setTimeout(function() { window.location.href = '/'; }, 1500);
+        } else {
+          msg.textContent = d2.error || 'Connection failed.';
+          msg.className = 'msg error';
+          btn.disabled = false;
+        }
+      } catch (err) {
+        msg.textContent = 'Network error. Try again.';
+        msg.className = 'msg error';
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

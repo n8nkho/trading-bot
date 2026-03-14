@@ -73,6 +73,16 @@
       border-radius: 4px;
     }
     .refresh button:hover { background: var(--cyan-dim); color: var(--text); }
+    .app-footer {
+      margin-top: 2rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 11px;
+    }
+    .app-footer .disclaimer { margin: 0 0 0.25rem 0; }
+    .app-footer .version { margin: 0; color: var(--cyan-dim); }
     .grid {
       display: grid;
       grid-template-columns: repeat(12, 1fr);
@@ -227,6 +237,40 @@
     .panel-scroll { max-height: 260px; overflow-y: auto; }
     .loading { color: var(--text-muted); }
     .empty { color: var(--text-muted); font-style: italic; }
+    #licenseUpgradeBanner {
+      display: none;
+      margin-bottom: 1rem;
+      padding: 0.5rem 1rem;
+      background: var(--amber-dim);
+      border: 1px solid var(--amber);
+      border-radius: 4px;
+      font-size: 12px;
+      color: var(--amber);
+    }
+    .pristine-actions { margin-bottom: 0.75rem; display: flex; align-items: center; flex-wrap: wrap; }
+    .btn-cyan {
+      font-family: inherit;
+      background: var(--bg-card);
+      border: 1px solid var(--cyan);
+      color: var(--cyan);
+      padding: 0.4rem 0.8rem;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .btn-cyan:hover { background: var(--cyan-dim); color: var(--text); }
+    .btn-cyan:disabled { opacity: 0.6; cursor: not-allowed; }
+    .pristine-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      font-size: 11px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .pristine-item { display: flex; align-items: center; gap: 0.5rem; }
+    .pristine-item.ok { color: var(--green); }
+    .pristine-item.fail { color: var(--red); }
+    .pristine-item .detail { color: var(--text-muted); font-size: 10px; }
   </style>
 </head>
 <body>
@@ -238,6 +282,7 @@
         <span id="lastUpdate">—</span>
       </div>
     </header>
+    <div id="licenseUpgradeBanner" role="note"></div>
 
     <div class="grid">
       <div class="panel col-4">
@@ -251,6 +296,15 @@
       <div class="panel col-4">
         <div class="panel-title">LATEST SCREENING</div>
         <div id="screening" class="loading">Loading…</div>
+      </div>
+
+      <div class="panel col-4">
+        <div class="panel-title">PRISTINE VERIFICATION</div>
+        <div class="pristine-actions">
+          <button type="button" id="btnPristine" class="btn-cyan">Run</button>
+          <span id="pristineStatus" class="text-muted" style="font-size:11px;margin-left:0.5rem;"></span>
+        </div>
+        <div id="pristine" class="pristine-list">Click <strong>Run</strong> to verify imports and strategies.</div>
       </div>
 
       <div class="panel col-6">
@@ -298,7 +352,7 @@
   </div>
 
   <script>
-    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', feed: '/api/feed' };
+    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', feed: '/api/feed', pristine: '/api/pristine' };
 
     function setUpdated() {
       document.getElementById('lastUpdate').textContent = 'Updated ' + new Date().toLocaleTimeString();
@@ -333,7 +387,75 @@
       } else {
         items.push({ label: 'Validation', value: 'OK', cls: 'ok' });
       }
+      if (data.license) {
+        const lic = data.license;
+        const tierLabel = (lic.tier || 'master').toUpperCase();
+        items.push({ label: 'License', value: tierLabel + (lic.valid === false ? ' (invalid)' : ''), cls: lic.valid === false ? 'err' : 'ok' });
+      }
       el.innerHTML = items.map(i => `<div class="health-item ${i.cls}"><div class="label">${i.label}</div><div class="value">${i.value}</div></div>`).join('');
+      el.innerHTML = items.map(i => `<div class="health-item ${i.cls}"><div class="label">${i.label}</div><div class="value">${i.value}</div></div>`).join('');
+      if (data.license && data.license.upgrade_message) {
+        const banner = document.getElementById('licenseUpgradeBanner');
+        if (banner) {
+          banner.textContent = data.license.upgrade_message;
+          banner.style.display = 'block';
+        }
+      } else {
+        const banner = document.getElementById('licenseUpgradeBanner');
+        if (banner) banner.style.display = 'none';
+      }
+    }
+
+    function renderPristine(data) {
+      const el = document.getElementById('pristine');
+      const statusEl = document.getElementById('pristineStatus');
+      if (!el) return;
+      if (!data || !data.checks || !data.checks.length) {
+        if (data && data.error) {
+          el.innerHTML = '<span class="pristine-item fail">Error: ' + (data.error || '').slice(0, 80) + '</span>';
+        }
+        return;
+      }
+      statusEl.textContent = data.passed ? 'Passed' : 'Failed';
+      statusEl.style.color = data.passed ? 'var(--green)' : 'var(--red)';
+      el.innerHTML = data.checks.map(c => {
+        const cls = c.ok ? 'ok' : 'fail';
+        const icon = c.ok ? '✅' : '❌';
+        const detail = c.detail && !c.ok ? '<span class="detail">' + (c.detail.slice(0, 60) + (c.detail.length > 60 ? '…' : '')) + '</span>' : '';
+        return '<div class="pristine-item ' + cls + '">' + icon + ' ' + c.name + (detail ? '<br/>' + detail : '') + '</div>';
+      }).join('');
+    }
+
+    function runPristine() {
+      const btn = document.getElementById('btnPristine');
+      const statusEl = document.getElementById('pristineStatus');
+      const el = document.getElementById('pristine');
+      if (!btn || !el) return;
+      btn.disabled = true;
+      statusEl.textContent = 'Running…';
+      statusEl.style.color = 'var(--text-muted)';
+      el.innerHTML = 'Running verification (imports + strategies + health)…';
+      fetch(API.pristine)
+        .then(r => {
+          const ct = (r.headers.get('content-type') || '').toLowerCase();
+          return r.text().then(text => {
+            if (!r.ok) {
+              throw new Error('HTTP ' + r.status + (text.startsWith('<') ? ' (server returned HTML; run Command Center with: python3 dashboard/command_center.py)' : ': ' + text.slice(0, 80)));
+            }
+            if (ct.indexOf('json') >= 0) return JSON.parse(text);
+            if (text.trim().startsWith('{')) return JSON.parse(text);
+            throw new Error('Server returned non-JSON. Run Fortress Command Center: python3 dashboard/command_center.py');
+          });
+        })
+        .then(data => {
+          renderPristine(data);
+        })
+        .catch(e => {
+          el.innerHTML = '<span class="pristine-item fail">' + (e.message || 'Request failed').replace(/</g, '&lt;') + '</span>';
+          statusEl.textContent = 'Error';
+          statusEl.style.color = 'var(--red)';
+        })
+        .finally(() => { btn.disabled = false; });
     }
 
     function renderAgents(data) {
@@ -583,8 +705,14 @@
     }
 
     document.getElementById('btnRefresh').addEventListener('click', loadAll);
+    const btnPristine = document.getElementById('btnPristine');
+    if (btnPristine) btnPristine.addEventListener('click', runPristine);
     loadAll();
     setInterval(loadAll, 30000);
   </script>
+  <footer class="app-footer">
+    <p class="disclaimer">For educational and research use only. You are solely responsible for your own trading and risk. No guarantee of profit; software provided as-is.</p>
+    <p class="version">Fortress v{{ version }} – you own it, you run it.</p>
+  </footer>
 </body>
 </html>

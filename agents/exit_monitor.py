@@ -9,7 +9,6 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.local_llm import call_ollama
 from utils.ai_router import ask_ai, parse_json_response
-from agents.screener_agent import get_news_headlines
 
 logging.basicConfig(
     filename='logs/exit_monitor.log',
@@ -44,8 +43,6 @@ def calculate_atr(prices_df, period=14):
     return float(atr.iloc[-1])
 
 
-def check_option_exit(position):
-    pass
 def monitor_positions(positions):
     """
     Monitor open positions and generate exit decisions.
@@ -74,9 +71,14 @@ def monitor_positions(positions):
                 decision = check_option_exit(pos)
             else:
                 decision = evaluate_exit(pos)
+            if not decision or not isinstance(decision, dict):
+                decision = {
+                    'ticker': ticker, 'action': 'HOLD', 'reason': 'No decision returned',
+                    'current_price': None, 'pnl_pct': None, 'timestamp': datetime.now().isoformat()
+                }
             decisions.append(decision)
             
-            logging.info(f"{ticker}: {decision['action']} - {decision['reason']}")
+            logging.info(f"{ticker}: {decision.get('action', 'HOLD')} - {decision.get('reason', '')}")
             
         except Exception as e:
             logging.error(f"Error monitoring {ticker}: {type(e).__name__}: {str(e)}")
@@ -97,15 +99,8 @@ def monitor_positions(positions):
     logging.info(f"Exit monitoring complete: {action_summary}")
     
     return decisions
-    """
-    Evaluate exit conditions for an option position.
-    
-    Args:
-        position: Position dict with ticker, entry_premium, qty, expiration_date, type
-        
-    Returns:
-        Decision dict with action, reason, sell_qty, current_price, pnl_pct
-    """
+
+
 def check_option_exit(position):
     ticker = position['ticker']
     entry_premium = position['entry_premium']
@@ -194,57 +189,6 @@ def check_option_exit(position):
     logging.info(f"{ticker}: {reason}")
     return create_hold_decision(ticker, reason, current_premium, profit_pct)
 
-def monitor_positions(positions):
-    """
-    Monitor open positions and generate exit decisions.
-    
-    Args:
-        positions: List of position dicts with:
-            - ticker: Stock symbol
-            - entry_price: Entry price per share
-            - qty or shares: Number of shares
-            - entry_time or entry_date: Entry timestamp (ISO format string or datetime)
-            - tiers_sold: Optional dict tracking which tiers have been sold
-            
-    Returns:
-        List of exit decision dicts with action and reasoning
-    """
-    logging.info(f"Starting exit monitoring for {len(positions)} positions")
-    
-    decisions = []
-    
-    for pos in positions:
-        ticker = pos['ticker']
-        logging.info(f"Monitoring position: {ticker} ({pos.get('type', 'STOCK')})")
-        
-        try:
-            if pos.get('type') == 'OPTION':
-                decision = check_option_exit(pos)
-            else:
-                decision = evaluate_exit(pos)
-            decisions.append(decision)
-            
-            logging.info(f"{ticker}: {decision['action']} - {decision['reason']}")
-            
-        except Exception as e:
-            logging.error(f"Error monitoring {ticker}: {type(e).__name__}: {str(e)}")
-            decisions.append({
-                'ticker': ticker,
-                'action': 'HOLD',
-                'reason': f'Error during evaluation: {str(e)}',
-                'current_price': None,
-                'pnl_pct': None,
-                'timestamp': datetime.now().isoformat()
-            })
-    
-    action_summary = {}
-    for d in decisions:
-        action = d['action']
-        action_summary[action] = action_summary.get(action, 0) + 1
-    
-    logging.info(f"Exit monitoring complete: {action_summary}")
-    
-    return decisions
 
 def evaluate_exit(position):
     """
@@ -408,8 +352,13 @@ def check_negative_news(ticker):
     try:
         logging.info(f"{ticker}: Checking for negative news...")
         
-        # Get recent news headlines
-        headlines = get_news_headlines(ticker, limit=5)
+        # Lazy import so exit_monitor loads without screener_agent (e.g. no scipy)
+        try:
+            from agents.screener_agent import get_news_headlines
+            headlines = get_news_headlines(ticker, limit=5) or []
+        except Exception as imp_err:
+            logging.warning(f"{ticker}: News unavailable (screener not loaded): {imp_err}")
+            headlines = []
         
         if not headlines:
             logging.info(f"{ticker}: No news headlines found")

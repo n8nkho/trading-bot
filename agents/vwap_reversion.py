@@ -20,7 +20,7 @@ from typing import Any, Dict, List
 
 import yfinance as yf
 
-from agents.screener_agent import get_sp500_tickers
+from config.universe_tickers import get_sp500_tickers
 
 
 logging.basicConfig(

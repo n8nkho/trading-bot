@@ -163,15 +163,19 @@ def analyze_performance(lookback_days=30):
         
         with open(DECISIONS_LOG, 'r') as f:
             for line in f:
-                record = json.loads(line.strip())
-                
-                # Only include completed trades (BUY with outcome)
-                if (record['decision']['action'] == 'BUY' and 
-                    record['outcome'] is not None):
-                    
-                    logged_at = datetime.fromisoformat(record['logged_at'])
-                    if logged_at >= cutoff_date:
-                        trades.append(record)
+                try:
+                    record = json.loads(line.strip())
+                    decision = record.get('decision') if isinstance(record.get('decision'), dict) else None
+                    if not decision:
+                        continue
+                    outcome = record.get('outcome')
+                    # Only include completed trades (BUY with outcome)
+                    if (decision.get('action') == 'BUY' and outcome is not None and isinstance(outcome, dict)):
+                        logged_at = datetime.fromisoformat(record['logged_at'])
+                        if logged_at >= cutoff_date:
+                            trades.append(record)
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                    continue
         
         if len(trades) == 0:
             logger.info("No completed trades found in lookback period")

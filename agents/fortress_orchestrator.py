@@ -65,7 +65,13 @@ def get_portfolio_status():
     """Connect to Alpaca and get portfolio status."""
     ak = os.getenv('APCA_API_KEY_ID') or os.getenv('ALPACA_API_KEY')
     sk = os.getenv('APCA_API_SECRET_KEY') or os.getenv('ALPACA_SECRET_KEY')
-    client = TradingClient(ak, sk, paper=True)
+    if not ak or not sk:
+        return {'balance': 0, 'positions': [], 'total_value': 0}
+    try:
+        client = TradingClient(ak, sk, paper=True)
+    except (ValueError, Exception) as e:
+        logging.warning(f"fortress_orchestrator: Alpaca client failed: {e}")
+        return {'balance': 0, 'positions': [], 'total_value': 0}
     account = client.get_account()
     positions = client.get_all_positions()
     total_value = float(account.equity)

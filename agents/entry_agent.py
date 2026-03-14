@@ -405,7 +405,14 @@ def evaluate_single_entry(candidate, portfolio_value):
     current_time_et = get_current_time_et()
     logging.info(f"{ticker}: ✓ Time window check passed ({current_time_et.strftime('%H:%M')} ET)")
     
-    # Calculate position size using Kelly or fallback
+    # Bounded position size (customer_settings when allowed, else defaults)
+    try:
+        from config.customer_settings import get_customer_value
+        pos_min = get_customer_value("position_size_min", 300.0)
+        pos_max = get_customer_value("position_size_max", 750.0)
+        default_size = (pos_min + pos_max) / 2.0
+    except Exception:
+        pos_min, pos_max, default_size = 300.0, 750.0, 500.0
     win_stats = _load_win_stats()
     if win_stats:
         position_size = kelly_position_size(
@@ -413,13 +420,16 @@ def evaluate_single_entry(candidate, portfolio_value):
             avg_win_pct=win_stats["avg_win_pct"],
             avg_loss_pct=win_stats["avg_loss_pct"],
             account_equity=portfolio_value,
-            default_size=500.0
+            min_size=pos_min,
+            max_size=pos_max,
+            default_size=default_size,
         )
         position_size = position_size * confidence  # scale by confidence
     else:
         base_position = portfolio_value * BASE_POSITION_PCT
         adjusted_position = base_position * confidence
-        position_size = min(adjusted_position, MAX_POSITION_SIZE)
+        position_size = min(adjusted_position, float(pos_max))
+    position_size = max(pos_min, min(float(pos_max), position_size))
     shares = int(position_size / current_price)
     
     # Ensure at least 1 share

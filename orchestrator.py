@@ -73,9 +73,18 @@ VISION_CONFIDENCE_THRESHOLD = 0.9  # Only use Vision for very high-confidence ca
 FUNDAMENTAL_CONFIDENCE_THRESHOLD = 0.85  # Only use fundamental analysis for high-confidence candidates
 FUNDAMENTAL_RISK_THRESHOLD = 70  # Skip if SEC risk score >= 70
 
-# Trading configuration
+# Trading configuration (overridden by customer_settings when license allows)
 MAX_POSITIONS = 5  # Maximum number of open positions
 BUYING_POWER_BUFFER = 1.2  # Require 20% buffer on buying power
+
+
+def _effective_max_positions():
+    """Max positions: customer_settings if allowed and set, else default."""
+    try:
+        from config.customer_settings import get_customer_value
+        return get_customer_value("max_positions", MAX_POSITIONS)
+    except Exception:
+        return MAX_POSITIONS
 
 # Initialize Alpaca client (paper trading only)
 ALPACA_API_KEY = os.getenv('ALPACA_API_KEY')
@@ -94,6 +103,8 @@ if ALPACA_API_KEY and ALPACA_SECRET_KEY:
     try:
         alpaca_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
         logger.info(f"Alpaca client initialized (PAPER TRADING): {ALPACA_BASE_URL}")
+    except ValueError as e:
+        logger.warning(f"Alpaca auth invalid (check API keys): {e}")
     except Exception as e:
         logger.error(f"Failed to initialize Alpaca client: {type(e).__name__}: {str(e)}")
 else:
@@ -221,7 +232,14 @@ def execute_buy_order(ticker, shares, entry_price):
         }
         
     except Exception as e:
-        logger.error(f"{ticker}: Error executing buy order: {type(e).__name__}: {str(e)}")
+        err_msg = str(e).lower()
+        if "wash trade" in err_msg or "40310000" in str(e):
+            logger.warning(
+                f"{ticker}: Alpaca rejected (wash trade / opposite side): {e}. "
+                "Use complex orders or cancel the existing order first."
+            )
+        else:
+            logger.error(f"{ticker}: Error executing buy order: {type(e).__name__}: {str(e)}")
         return {
             'success': False,
             'order_id': None,
@@ -512,9 +530,10 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
             save_daily_signals(result)
             return result
         
-        # Check position limit
-        if account_info['position_count'] >= MAX_POSITIONS:
-            logger.warning(f"Position limit reached: {account_info['position_count']}/{MAX_POSITIONS}")
+        # Check position limit (may be overridden by customer_settings)
+        eff_max = _effective_max_positions()
+        if account_info['position_count'] >= eff_max:
+            logger.warning(f"Position limit reached: {account_info['position_count']}/{eff_max}")
             logger.warning("Skipping all trades")
             result = {
                 'timestamp': datetime.now().isoformat(),
@@ -539,17 +558,18 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         
         approved_trades = []
         rejected_trades = []
+        eff_max = _effective_max_positions()
         
         for decision in buy_decisions:
             ticker = decision['ticker']
             logger.info(f"{ticker}: Checking risk limits...")
             
             # Check position limit
-            if account_info['position_count'] + len(approved_trades) >= MAX_POSITIONS:
+            if account_info['position_count'] + len(approved_trades) >= eff_max:
                 logger.warning(f"{ticker}: Position limit would be exceeded")
                 rejected_trades.append({
                     'ticker': ticker,
-                    'reason': f'Position limit ({MAX_POSITIONS}) would be exceeded',
+                    'reason': f'Position limit ({eff_max}) would be exceeded',
                     'original_decision': decision
                 })
                 continue
@@ -612,6 +632,11 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
                     'fundamental_analysis': decision.get('fundamental_analysis'),
                     'timestamp': datetime.now().isoformat()
                 })
+                try:
+                    from config.addon_loader import invoke_after_trade
+                    invoke_after_trade(decision, "logged")
+                except Exception as e:
+                    logger.debug("Add-on after_trade (logged): %s", e)
                 
                 # Update portfolio data for next iteration
                 portfolio_data['positions'].append({
@@ -627,8 +652,13 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
                     'original_decision': decision
                 })
         
-        # Step 5: Execute approved trades (in parallel)
+        # Step 5: Execute approved trades (in parallel); add-ons can modify decision before execution
         logger.info("Step 5: Executing approved trades...")
+        try:
+            from config.addon_loader import invoke_before_trade
+            approved_for_execution = [invoke_before_trade(t) for t in approved_trades]
+        except Exception:
+            approved_for_execution = approved_trades
         
         async def execute_trade(trade):
             """Execute a single trade asynchronously."""
@@ -669,6 +699,12 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
                 trade['executed'] = True
                 trade['execution_time'] = datetime.now().isoformat()
                 
+                try:
+                    from config.addon_loader import invoke_after_trade
+                    invoke_after_trade(trade, "executed")
+                except Exception as e:
+                    logger.debug("Add-on after_trade (executed): %s", e)
+                
                 # Add to positions file
                 await asyncio.to_thread(add_position, {
                     'ticker': ticker,
@@ -688,8 +724,8 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
                 trade['execution_error'] = order_result['error']
                 return ('failure', trade)
         
-        # Execute all trades in parallel
-        execution_results = await asyncio.gather(*[execute_trade(t) for t in approved_trades])
+        # Execute all trades in parallel (using add-on-modified decisions)
+        execution_results = await asyncio.gather(*[execute_trade(t) for t in approved_for_execution])
         
         executed_trades = [trade for status, trade in execution_results if status == 'success']
         execution_failures = [trade for status, trade in execution_results if status == 'failure']
@@ -718,6 +754,12 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         logger.info(f"DAILY SCREENING COMPLETE: {len(executed_trades)} executed, {len(execution_failures)} failed, {len(rejected_trades)} rejected")
         logger.info(f"Duration: {duration:.2f} seconds")
         logger.info("=" * 80)
+        
+        try:
+            from config.addon_loader import invoke_screen_done
+            invoke_screen_done(candidates)
+        except Exception as e:
+            logger.debug("Add-on screen_done: %s", e)
         
         # Step 7: Save results
         save_daily_signals(result)
@@ -756,7 +798,15 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
 
 
 def run_fortress():
-    """Run complete fortress hedging system."""
+    """Run complete fortress hedging system. Gated by license tier."""
+    try:
+        from config.license import get_plan
+        from config.tiers import fortress_allowed
+        if not fortress_allowed(get_plan().tier):
+            logger.warning("Fortress hedging not included in this license tier. Upgrade to Pro or Enterprise.")
+            return None
+    except Exception:
+        pass
     logger.info("=" * 80)
     logger.info("FORTRESS HEDGING SYSTEM")
     logger.info("=" * 80)

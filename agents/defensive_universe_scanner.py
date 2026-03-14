@@ -42,7 +42,7 @@ MAX_TICKERS = 30
 def _get_seed_tickers() -> list[str]:
     """Seed from screener base or S&P 100 style list."""
     try:
-        from agents.screener_agent import get_sp500_tickers
+        from config.universe_tickers import get_sp500_tickers
         return get_sp500_tickers()[:80]
     except Exception:
         return ["AAPL", "MSFT", "JNJ", "PG", "KO", "PEP", "WMT", "JPM", "XOM", "UNH"]

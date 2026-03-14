@@ -39,6 +39,15 @@ if 'orchestrator.py' in result.stdout:
 else:
     print("   ❌ Cron jobs: NOT CONFIGURED")
 
+# 2.5 Alpaca env (paper trading)
+print("\n2.5 ALPACA (paper trading):")
+ak = os.getenv("ALPACA_API_KEY") or os.getenv("APCA_API_KEY_ID")
+sk = os.getenv("ALPACA_SECRET_KEY") or os.getenv("APCA_API_SECRET_KEY")
+if ak and sk:
+    print("   ✅ Alpaca keys: SET (sync/execution enabled)")
+else:
+    print("   ⚠️  Alpaca keys: NOT SET (sync and execution disabled)")
+
 # 3. Check data files
 print("\n3. DATA STATUS:")
 files = {
@@ -91,14 +100,18 @@ print("\n6. CURRENT POSITIONS:")
 if os.path.exists('data/positions.json'):
     with open('data/positions.json') as f:
         try:
-            positions = json.load(f)
+            raw = json.load(f)
+            # Support both list and {"positions": [...]} (e.g. from sync_alpaca)
+            positions = raw.get("positions", raw) if isinstance(raw, dict) else raw
+            if not isinstance(positions, list):
+                positions = []
             if positions:
                 print(f"   📊 Open positions: {len(positions)}")
                 for p in positions:
                     print(f"      • {p.get('ticker', 'UNKNOWN')}: ${p.get('entry_price', 0)}")
             else:
                 print("   💤 No open positions")
-        except:
+        except Exception:
             print("   ⚠️  Can't read positions file")
 else:
     print("   💤 No positions file")
@@ -125,8 +138,22 @@ if os.path.exists('data/decisions_log.jsonl'):
 else:
     print("   ⏳ No decision log yet")
 
-# 8. COMPREHENSIVE COST ANALYSIS:
-print("\n8. COMPREHENSIVE COSTS:")
+# 8. Backtest module (smoke)
+print("\n8. BACKTEST MODULE:")
+try:
+    import sys
+    from pathlib import Path
+    _root = Path(__file__).resolve().parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    from backtest.replay import run_replay
+    _smoke = run_replay(1)
+    print("   ✅ Backtest module: OK (replay 1 day)")
+except Exception as e:
+    print(f"   ❌ Backtest module: FAILED — {e}")
+
+# 9. COMPREHENSIVE COST ANALYSIS:
+print("\n9. COMPREHENSIVE COSTS:")
 try:
     from utils.cost_calculator import get_daily_costs, get_monthly_projection
     
