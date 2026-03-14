@@ -15,7 +15,9 @@ except ImportError:
 from agents.vision_analyst import analyze_chart_patterns, pattern_to_signal
 
 # Load current parameters
-DATA_DIR = Path("data")
+_ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = _ROOT / "data"
+CONFIG_DIR = _ROOT / "config"
 CURRENT_PARAMS_FILE = DATA_DIR / "current_params.json"
 
 def load_screening_params():
@@ -105,6 +107,81 @@ def get_adaptive_params(base_params: dict) -> dict:
     return params
 
 
+# Set by _get_screening_universe for orchestrator/dashboard
+_last_screening_universe_size = 0
+
+
+def _get_screening_universe():
+    """
+    Build the screening universe: base watchlist + dynamic universe_extra.
+    In RISK_OFF, prepend defensive_watchlist so defensive names are scanned first.
+    """
+    global _last_screening_universe_size
+    watchlist = []
+    seen = set()
+
+    # 1) Base watchlist from config
+    base_path = CONFIG_DIR / "watchlist.json"
+    if base_path.exists():
+        try:
+            with open(base_path, "r") as f:
+                base = json.load(f).get("quality_stocks", [])
+            for s in base:
+                t = s.get("ticker") if isinstance(s, dict) else s
+                if t and t not in seen:
+                    seen.add(t)
+                    watchlist.append(s if isinstance(s, dict) else {"ticker": t, "sector": "Unknown", "name": t})
+        except Exception as e:
+            logging.warning(f"Could not load base watchlist: {e}")
+
+    # 2) Dynamic universe: merge data/universe_extra.json (from universe_builder)
+    extra_path = DATA_DIR / "universe_extra.json"
+    if extra_path.exists():
+        try:
+            with open(extra_path, "r") as f:
+                extra = json.load(f)
+            if isinstance(extra, list):
+                for t in extra:
+                    t = str(t).strip().upper() if t else None
+                    if t and t not in seen:
+                        seen.add(t)
+                        watchlist.append({"ticker": t, "sector": "Unknown", "name": t})
+            logging.info(f"Merged universe_extra: {len(watchlist)} total tickers (base + extra)")
+        except Exception as e:
+            logging.warning(f"Could not load universe_extra.json: {e}")
+
+    # 3) RISK_OFF: prepend defensive watchlist so defensive names are scanned first
+    regime = _get_current_regime()
+    if regime == "RISK_OFF":
+        def_path = DATA_DIR / "defensive_watchlist.json"
+        if def_path.exists():
+            try:
+                with open(def_path, "r") as f:
+                    data = json.load(f)
+                def_tickers = data.get("tickers") or []
+                prepend = []
+                for t in def_tickers:
+                    t = str(t).strip().upper() if t else None
+                    if t and t not in seen:
+                        seen.add(t)
+                        prepend.append({"ticker": t, "sector": "Defensive", "name": t})
+                if prepend:
+                    watchlist = prepend + watchlist
+                    logging.info(f"RISK_OFF: prepended {len(prepend)} defensive tickers to screening universe")
+            except Exception as e:
+                logging.warning(f"Could not load defensive_watchlist.json: {e}")
+
+    if not watchlist:
+        logging.warning("Screening universe is empty; check config/watchlist.json and data/universe_extra.json")
+    _last_screening_universe_size = len(watchlist)
+    return watchlist
+
+
+def get_last_screening_universe_size():
+    """Return the number of tickers in the last screening universe (for dashboard)."""
+    return _last_screening_universe_size
+
+
 def run_screener():
     # Load current parameters (may have been auto-tuned)
     params = load_screening_params()
@@ -112,9 +189,9 @@ def run_screener():
     if params.get("halt"):
         logging.warning("VIX regime halt active — returning no candidates")
         return []
-    
-    with open('config/watchlist.json', 'r') as f:
-        watchlist = json.load(f)['quality_stocks']
+
+    watchlist = _get_screening_universe()
+    logging.info(f"Screening universe size: {len(watchlist)} tickers")
 
     candidates = []
     for stock in watchlist:

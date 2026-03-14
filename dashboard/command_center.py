@@ -32,7 +32,10 @@ DATA_DIR = _ROOT / "data"
 LOGS_DIR = _ROOT / "logs"
 CONFIG_DIR = _ROOT / "config"
 
-# Agent log files and max age (hours) for "fresh"
+# Agent activity: one row per log file. "Last run" = file mtime; "fresh" if age <= max_age_hours.
+# This list is cron/key agents with dedicated logs. Other agents (e.g. opportunity_analyzer,
+# regime_alignment, pattern_miner) run via Command Center refresh and write to data/ + their own logs;
+# add an entry here if you want them shown (use the log path that gets written when they run).
 AGENT_LOGS = {
     "screener": {"log": LOGS_DIR / "screener.log", "name": "Screener", "max_age_hours": 26},
     "monitor": {"log": LOGS_DIR / "monitor.log", "name": "Exit Monitor", "max_age_hours": 2},

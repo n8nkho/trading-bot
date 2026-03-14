@@ -19,7 +19,7 @@ from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 
 # Import agents
-from agents.screener_agent import run_screener
+from agents.screener_agent import run_screener, get_last_screening_universe_size
 from agents.entry_agent import evaluate_entry
 from agents.exit_monitor import monitor_positions as monitor_exit_conditions
 from agents.risk_guardian import check_risk_limits, get_risk_status
@@ -37,12 +37,13 @@ from utils.cost_calculator import (
     generate_cost_report
 )
 
+# Project root and logs (absolute so cron from any CWD writes to project logs)
+_ORCH_ROOT = Path(__file__).resolve().parent
+log_dir = _ORCH_ROOT / "logs"
+log_dir.mkdir(exist_ok=True)
+
 # Load environment variables
 load_dotenv()
-
-# Setup logging
-log_dir = Path("logs")
-log_dir.mkdir(exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -367,7 +368,8 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
                 'candidates_found': 0,
                 'approved_trades': [],
                 'rejected_trades': [],
-                'risk_status': get_risk_status()
+                'risk_status': get_risk_status(),
+                'universe_size': get_last_screening_universe_size(),
             }
             save_daily_signals(result)
             return result
@@ -708,7 +710,8 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
             'risk_status': get_risk_status(),
             'portfolio_value': portfolio_value,
             'account_info': account_info,
-            'fundamental_cost': fundamental_total_cost
+            'fundamental_cost': fundamental_total_cost,
+            'universe_size': get_last_screening_universe_size(),
         }
         
         logger.info("=" * 80)
@@ -764,12 +767,8 @@ def run_fortress():
         
         if result:
             logger.info("Fortress check complete")
-            logger.info(f"Market regime: {result.get('market_conditions', {}).get('regime', 'N/A')}")
-            logger.info(f"Strategies evaluated: {len(result.get('recommendations', {}))}")
-            
-            # Show recommendations
-            recs = result.get('recommendations', {})
-            for strategy, data in recs.items():
+            logger.info(f"Strategies evaluated: {len(result)}")
+            for strategy, data in (result or {}).items():
                 if data:
                     logger.info(f"{strategy}: {data}")
         
@@ -1154,7 +1153,18 @@ def save_exit_signals(result):
 
 if __name__ == "__main__":
     import sys
-    
+
+    # Ensure cwd is project root (critical when run from cron)
+    os.chdir(_ORCH_ROOT)
+
+    # Touch orchestrator.log so Command Center "last run" is fresh for any command
+    try:
+        with open(log_dir / "orchestrator.log", "a", encoding="utf-8") as f:
+            cmd = sys.argv[1] if len(sys.argv) > 1 else "?"
+            f.write(f"{datetime.now().isoformat()} - orchestrator started: {cmd}\n")
+    except Exception:
+        pass
+
     # Command-line interface
     if len(sys.argv) < 2:
         print("Usage:")
@@ -1169,9 +1179,8 @@ if __name__ == "__main__":
         print("  python orchestrator.py architect                  - Run meta-architect improvement cycle")
         print("  python orchestrator.py fortress                   - Run complete hedging system")
         print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
-        print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
         sys.exit(1)
-    
+
     command = sys.argv[1].lower()
     
     if command == "screen":
@@ -1490,6 +1499,12 @@ if __name__ == "__main__":
 
     elif command == "snipe":
         portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else 10000
+        # Append a timestamp line so Command Center sees a fresh run when cron runs
+        try:
+            with open(log_dir / "sniper.log", "a", encoding="utf-8") as f:
+                f.write(f"{datetime.now().isoformat()} - orchestrator snipe started (portfolio={portfolio_value:,.0f})\n")
+        except Exception:
+            pass
         logger.info(f"Running intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
         opportunities = scan_intraday_opportunities(portfolio_value)
         
@@ -1504,4 +1519,9 @@ if __name__ == "__main__":
                 logger.info(f"  Metrics: {opp['metrics']}")
         else:
             logger.info("No opportunities found")
+
+    else:
+        print(f"Unknown command: {command}")
+        print("Use: screen, monitor, status, costs, watchdog, preload, tune, review, architect, fortress, snipe")
+        sys.exit(1)
 

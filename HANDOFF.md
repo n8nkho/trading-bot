@@ -79,6 +79,10 @@ Or with file refs: `@HANDOFF.md @PROJECT_CONTEXT.md @SYSTEM_REVIEW.md`
   - **Meta-strategy analyzer:** `agents/meta_strategy_analyzer.py` → `data/meta_strategy_recommendations.json` (advisory only; reads decisions, outcomes, agent_health_snapshot).
 - **Smoke tests:** Full system and Command Center smoke-tested; health check passes. Regime confirmed adaptive (no change needed).
 - **Command Center:** Total P&L is lifetime realized from decisions_log + unrealized from positions (positions.json had no pnl until sync; sync now fixed).
+- **Intraday sniper & Fortress hedging:** (1) Orchestrator sets CWD to project root at startup so cron has correct paths. (2) Snipe command appends a timestamp line to `logs/sniper.log` each run so Command Center “last run” is fresh. (3) `run_fortress()` logging fixed—result is the strategies dict; iterate it directly. (4) Unknown command prints clear message and lists all commands (snipe, fortress included). (5) Fortress cron is Sun/Wed 00:00 only; to run weekdays too add: `0 18 * * 1-5 cd /home/ubuntu/trading-bot && /home/ubuntu/trading-bot/venv/bin/python orchestrator.py fortress >> logs/fortress.log 2>&1`
+- **Orchestrator last run:** Orchestrator now appends a line to `logs/orchestrator.log` at the start of every run so Command Center shows a current last run.
+- **Agent activity list:** The 16 rows are cron/key agents with a dedicated log; add to `AGENT_LOGS` in `dashboard/command_center.py` to show more.
+- **Committed (March 13, 2026 – evening):** Orchestrator log touch + absolute log path; screener dynamic universe (base + `data/universe_extra.json` + RISK_OFF defensive prepend); intraday sniper uses same universe as screener; `universe_size` in daily_signals for dashboard; `data/current_params.json` recreated with expanded range (drop -20% to -3%, RSI 42, vol 1.4x). **Marker:** git tag `pre-march14` at this commit. Backup: repo + tag; `data/` is gitignored so backup `data/` separately if needed.
 
 ---
 

@@ -126,19 +126,35 @@ def detect_sudden_move(df):
     return metrics if is_opportunity else None
 
 
+def _get_sniper_tickers():
+    """Use same screening universe as screener (base + universe_extra + defensive in RISK_OFF)."""
+    try:
+        from agents.screener_agent import _get_screening_universe
+        universe = _get_screening_universe()
+        return [s["ticker"] for s in universe if isinstance(s, dict) and s.get("ticker")]
+    except Exception as e:
+        logger.warning(f"Could not load screener universe: {e}; falling back to config watchlist")
+    watchlist_file = Path(__file__).resolve().parent.parent / "config" / "watchlist.json"
+    if not watchlist_file.exists():
+        return []
+    with open(watchlist_file, "r") as f:
+        data = json.load(f)
+    # Support both quality_stocks (list of dicts) and tickers (list of strings)
+    quality = data.get("quality_stocks", [])
+    if quality:
+        return [s.get("ticker") if isinstance(s, dict) else s for s in quality if (s.get("ticker") if isinstance(s, dict) else s)]
+    return data.get("tickers", [])
+
+
 def scan_intraday_opportunities(portfolio_value=10000):
     """Scan for intraday scalping opportunities"""
     logger.info("Starting intraday opportunity scan...")
     
-    # Load watchlist
-    watchlist_file = Path("config/watchlist.json")
-    if not watchlist_file.exists():
-        logger.error("Watchlist file not found")
+    watchlist = _get_sniper_tickers()
+    if not watchlist:
+        logger.warning("Sniper watchlist is empty; check screener universe or config/watchlist.json")
         return []
-    
-    with open(watchlist_file, 'r') as f:
-        watchlist_data = json.load(f)
-        watchlist = watchlist_data.get('tickers', [])
+    logger.info(f"Sniper scanning {len(watchlist)} tickers (same universe as screener)")
     
     opportunities = []
     
