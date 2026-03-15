@@ -2,32 +2,40 @@
 
 ## Overview
 
-- **Master** – Internal/full version; no restrictions. Used by you for development and full feature set.
-- **Starter** – Limited strategies, smaller universe, no backtest, no Fortress hedging. Suitable for low-cost entry.
+- **Master** – Vendor only (you). Never sold. Full capabilities; no customer tier is equivalent.
+- **Starter** – Base customer tier: limited strategies, smaller universe, no backtest, no Fortress hedging.
+- **Growth** – More strategies and universe than Starter.
 - **Pro** – Core + extended strategies, backtest, Fortress hedging, Command Center.
-- **Enterprise** – Full feature set (all strategies, large universe).
+- **Enterprise** – Highest customer tier; largest limits. Still a subset of Master (e.g. no experimental-only features unless you add them).
 
-Deployments use the **same codebase**. The tier is determined by `data/license.json`. Customers receive a license file (and optionally a signed license) for their tier.
+Deployments use the **same codebase**. The tier is determined by `data/license.json`. Customers receive a license file (and optionally a signed license) for their tier. All updates are compatible with every tier; tier upgrade = new license only (see [TIER_COMPATIBILITY.md](TIER_COMPATIBILITY.md)).
 
 ## License file (`data/license.json`)
 
-- **tier** – `"master"` | `"starter"` | `"pro"` | `"enterprise"`.
+- **tier** – `"master"` (vendor only) | `"starter"` | `"growth"` | `"pro"` | `"enterprise"`.
 - **name** – Display name (e.g. "Pro Plan").
 - **expiry** – Optional ISO date (e.g. `"2026-12-31"`). If past, the system behaves as Starter.
 - **license_key** – Optional; if present with **signature**, the signature is verified.
-- **signature** – Optional; HMAC-SHA256 of `tier|expiry|customer_id` with a server secret. Prevents customers from editing `tier` to get higher features.
+- **signature** – Optional; Ed25519 (base64) or legacy HMAC-SHA256 hex. Prevents customers from editing `tier` to get higher features.
 
 If the file is missing or invalid, the system defaults to **master** (full) so your own install is unchanged.
 
 ## Generating a signed license
 
-From project root:
+The signing key is **randomly generated** (not hardcoded). One-time setup from project root:
 
 ```bash
-python scripts/generate_license.py pro "Customer Name" 2026-12-31
+python3 scripts/generate_license_keypair.py
 ```
 
-Paste the output into `data/license.json` for that customer’s deployment. **Keep the signing secret secure** (in production use an env var or secret store; update `config/license.py` and `scripts/generate_license.py` to read it).
+This creates `data/.license_private.pem` (gitignored; back it up) and `config/license_public.pem` (committed; shipped so customers can verify). Then generate licenses:
+
+```bash
+python3 scripts/generate_license.py growth "Customer Name" 2026-12-31
+python3 scripts/generate_license.py pro "Customer Name" 2026-12-31
+```
+
+Paste the output into `data/license.json` for that customer’s deployment. No secret in code; only the public key is shipped. Legacy: **LICENSE_SIGNING_SECRET** still works for HMAC-signed licenses.
 
 ## Customer settings (bounded risk)
 

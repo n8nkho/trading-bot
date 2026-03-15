@@ -1,4 +1,17 @@
-import alpaca_trade_api as tradeapi
+import os
+
+def _trading_client():
+    """Return Alpaca TradingClient if keys are set; else None (uses alpaca-py, same as orchestrator)."""
+    try:
+        from alpaca.trading.client import TradingClient
+        key = os.getenv("ALPACA_API_KEY") or os.getenv("APCA_API_KEY_ID")
+        secret = os.getenv("ALPACA_SECRET_KEY") or os.getenv("APCA_API_SECRET_KEY")
+        if key and secret:
+            return TradingClient(key, secret, paper=True)
+    except Exception:
+        pass
+    return None
+
 
 def find_overvalued_stocks():
     """
@@ -19,29 +32,32 @@ def find_overvalued_stocks():
 
 def execute_short_trade(ticker, portfolio_value):
     """
-    Execute a short trade via Alpaca.
-    
+    Execute a short trade via Alpaca (alpaca-py).
+
     Args:
         ticker (str): Stock ticker
         portfolio_value (float): Total portfolio value
     """
-    api = tradeapi.REST('APCA-API-KEY-ID', 'APCA-API-SECRET-KEY', base_url='https://paper-api.alpaca.markets')
+    client = _trading_client()
+    if not client:
+        return
     position_size = 0.05 * portfolio_value
     # Placeholder for getting current price
     current_price = 100  # Example price
-    stop_loss = current_price * 1.05
-    target_price = current_price * 0.80
-    
-    # Execute short order
-    api.submit_order(
-        symbol=ticker,
-        qty=position_size / current_price,
-        side='sell',
-        type='market',
-        time_in_force='gtc'
-    )
-    # Set stop loss and target
-    # Placeholder for setting stop loss and target
+    qty = max(1, int(position_size / current_price))
+    try:
+        from alpaca.trading.requests import MarketOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+        req = MarketOrderRequest(
+            symbol=ticker,
+            qty=qty,
+            side=OrderSide.SELL,
+            time_in_force=TimeInForce.GTC,
+        )
+        client.submit_order(req)
+    except Exception:
+        pass
+    # Placeholder: set stop loss and target
 
 def macro_short_strategy(macro_regime, portfolio_value):
     """

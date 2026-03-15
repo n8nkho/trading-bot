@@ -86,11 +86,57 @@ python3 scripts/confirm_pristine.py
 
 This checks: **exit_monitor**, **risk_guardian**, **performance_analyzer** imports; **run_strategies.py inefficiency** and **sector**; and **check_health.py**. All must pass (exit 0). Optional: then run `python3 agents/error_detective.py` and treat the 31 log entries as historical until new logs overwrite them.
 
+## Solver agent (review errors → re-test → ensure pristine)
+
+**agents/solver_agent.py** runs periodically to: (1) run Error Detective (scan logs, last 7 days), (2) run Pristine verification, (3) run Health check, (4) run Compliance checklist, (5) build recommendations from a playbook (no automatic code changes). Writes **logs/solver_report.json** and **logs/solver_report.txt**.
+
+- Run: `python3 agents/solver_agent.py [--days 7]`
+- Command Center: **System Health** shows last Solver result (Pristine OK/FAIL, error count); **Agent Activity** lists Solver Agent; **GET /api/solver** returns full report.
+- Cron (optional): e.g. weekly `0 4 * * 0 cd /home/ubuntu/trading-bot && python3 agents/solver_agent.py --days 7 >> logs/solver_agent.log 2>&1`
+
 ## Next steps (optional / ongoing)
 
 - Run Error Detective after a few days of new logs to confirm no new error patterns.
 - Command Center: refresh after changes to see latest agent activity and performance.
 - If yfinance 401 spikes: consider using `provider_safety.guarded_call("yfinance", fn)` in critical data-fetch paths.
+
+---
+
+## Monetization & licensing
+
+*More updates planned before selling; this section will be revised.*
+
+**Your copy (master)**  
+- `data/` is gitignored. When **no** `data/license.json` exists, the app treats the install as **master** (full access). Your bot stays master without any license file. Optionally create `data/license.json` with `{"tier": "master", "name": "Master (internal)"}` and no signature for clarity—only on your machine, not in git.
+
+**What’s in place**  
+- **Tiers:** `config/tiers.py` — **Master** (vendor only, never sold) + **4 customer tiers**: Starter (base), Growth, Pro, Enterprise. Highest customer tier is always a subset of Master. Helpers: `is_master()`, `is_customer_tier()`, `CUSTOMER_TIERS_ORDERED`.  
+- **License:** `config/license.py` reads `data/license.json`; missing file → master; invalid/expired signature → downgrade to starter.  
+- **Signed licenses:** `scripts/generate_license.py` — generate customer licenses:  
+  `python3 scripts/generate_license.py pro "Customer Name" 2026-12-31`  
+  Paste output into **their** `data/license.json`; they never get the signing secret.  
+- **Gating:** run_strategies, orchestrator, backtest, Fortress, Command Center use `strategy_allowed()`, `backtest_allowed()`, `fortress_allowed()`, etc.  
+- **Command Center:** Shows license tier in System Health; upgrade banner for Starter / invalid license.  
+- **Customer risk:** `config/customer_settings.py` + `data/customer_settings.json` (bounded position size, stops, max trades).  
+- **Docs:** `docs/LICENSING.md` — overview, generating licenses, keeping master separate. **`docs/TIER_COMPATIBILITY.md`** — updates compatible with all tiers; tier upgrade = new license only; developer rules so patches and upgrades never break a tier.
+- **Dashboard by tier:** Same Command Center codebase; visibility aligned to tier. Backend passes `show_fortress_agent`, `show_backtest_health` in `health.license`; frontend shows “Plan: …” in header, hides Fortress Hedging agent row for Starter/Growth, and shows hedging recommendations as “Upgrade to Pro” when Fortress not allowed.
+
+**Before selling (planned updates)**  
+- ~~Move signing secret to env~~ **Done.** **Random key pair (no hardcoded secret):** Run `python scripts/generate_license_keypair.py` once; creates `data/.license_private.pem` (gitignored) and `config/license_public.pem` (committed). New licenses use Ed25519; verification uses public key only. Legacy HMAC (LICENSE_SIGNING_SECRET) still supported for old licenses.  
+- **Pricing:** Suggested bands in **docs/PRICING_AND_WTP.md**; list prices in **config/pricing.py** (Starter $49/mo → Enterprise $399/mo). Update when you lock final numbers.  
+- ~~Customer build packaging~~ **Done.** **scripts/build_customer_package.sh** produces `dist/fortress-$(VERSION).tar.gz` (excludes data/, .env, venv, .git, dist/, logs/). **data/customer_settings.json.example** added; copy to `data/customer_settings.json` to tune.  
+- Later: payment integration (Stripe/Paddle, etc.) and license delivery on purchase.
+
+**Customer flow**  
+- Same codebase; you issue each customer a signed `data/license.json` for their tier. They deploy with that file only; no master license, no signing secret.
+
+**Shipping updates without breaking customer installs**  
+- **Strategy:** `docs/UPDATES_AND_SUPPORT.md` — versioned releases, additive-only minor/patch, backup-before-update, one supported update path.  
+- **Update script:** `scripts/apply_update.sh /path/to/fortress-1.2.0.tar.gz` — backs up `data/` and `.env`, unpacks release (excluding data/.env/venv), restores backup, runs `check_health.py`. Build tarball from project root with `tar czf fortress-X.Y.Z.tar.gz -C /path/to/trading-bot .` so there is no top-level folder.  
+- **Compatibility check:** `python3 scripts/check_compatibility.py` — validates VERSION and optional license.json; use before/after update or for support.  
+- **Add-ons:** New optional features can ship as files in `customer_addons/` (see `docs/ADDONS.md`); core unchanged, no full upgrade required.
+
+---
 
 ## Open / next (unchanged)
 
@@ -137,10 +183,18 @@ This checks: **exit_monitor**, **risk_guardian**, **performance_analyzer** impor
 - **License:** `config/license.py` – reads `data/license.json`, optional signature (HMAC) and expiry; invalid/expired downgrades to starter. `scripts/generate_license.py` to generate signed licenses.
 - **Customer settings:** `config/customer_settings.py` – bounded risk params from `data/customer_settings.json` (position size, stop/target %, max trades, etc.); clamped to safe ranges.
 - **Add-ons only:** `config/addon_loader.py` – loads `customer_addons/*.py` with `register(env)`; hooks `on_screen_done`, `on_before_trade`, `on_after_trade`. Core must not be modified.
-- **Integrity:** `utils/integrity.py` + `scripts/build_manifest.py` – optional manifest of core file hashes for customer builds to detect tampering.
+- **Integrity:** `utils/integrity.py` + `scripts/build_manifest.py` – optional manifest of core file hashes; when license has `"integrity_check": true` and manifest exists, `get_plan()` runs the check and downgrades to Starter if core was modified. See **docs/PROTECTION_AND_ANTI_TAMPER.md** for copy/hack prevention summary.
 - **Wiring:** Orchestrator uses `_effective_max_positions()` from customer_settings; Fortress gated by tier; run_strategies and backtest gate by tier. entry_agent uses customer position_size min/max.
 - **Docs:** `docs/LICENSING.md`, `docs/ADDONS.md`; EULA updated (no modifying core; add-ons only).
 - **Customer build next step:** Command Center shows **License** tier in System Health and an **upgrade banner** when tier is Starter or license invalid. Add-on hooks wired in orchestrator: `invoke_screen_done(candidates)` after screening; `invoke_before_trade(trade)` before each execution (approved_for_execution); `invoke_after_trade(decision, "logged")` after track_decision and `invoke_after_trade(trade, "executed")` after successful order.
+
+---
+
+## Agentic compliance (credential)
+
+- **Frameworks:** Bot aligned with WEF *AI Agents in Action* (role, safeguards, oversight, transparency), UK agentic/consumer guidance, and EU AI Act–style transparency/oversight. See **docs/AGENTIC_COMPLIANCE.md** for mapping and one-page summary.
+- **Checklist:** **scripts/compliance_checklist.py** runs 10 verifiable checks (defined role, decision logging, outcome tracking, safeguards, dry-run, bounded settings, dashboard, EULA, no custody, health verification). Use for self-attestation, RFPs, or certification prep.
+- **API:** **GET /api/compliance** (Command Center) returns JSON report (`passed`, `total`, `all_passed`, `checks[]`) for audits or credential display.
 
 ---
 
@@ -157,3 +211,9 @@ This checks: **exit_monitor**, **risk_guardian**, **performance_analyzer** impor
 | Regime alignment | `agents/regime_alignment.py` |
 | Schemas | `models/schemas.py` |
 | Backtest | `backtest/run_backtest.py` (replay / screener), `backtest/replay.py`, `backtest/strategy_backtest.py` |
+| Agentic compliance | `docs/AGENTIC_COMPLIANCE.md`, `scripts/compliance_checklist.py`, GET `/api/compliance` |
+| Solver agent | `agents/solver_agent.py`, `logs/solver_report.json`, GET `/api/solver` |
+| Tier pricing | `config/pricing.py`, `docs/PRICING_AND_WTP.md` |
+| Differentiator (marketing) | `docs/DIFFERENTIATOR_MARKETING.md` – four pillars + **Simple steps (no technical experience needed)**; `scripts/verify_differentiators.py` + GET `/api/differentiators` + Command Center **Verify differentiators** panel |
+| **Customer docs (non-technical)** | **docs/CUSTOMER_GUIDE.md** – main step-by-step guide; **docs/HOW_TO_UPDATE_FOR_CUSTOMERS.md** – update in minimal steps; .cursor/rules/customer-instructions.mdc – assume non-technical, dashboard-first, bare minimum |
+| **Sell readiness** | **docs/SELL_READINESS_ANALYSIS.md** – packaging/selling checklist; must-do: move signing secret to env; should-do: build_customer_package.sh, customer_settings example |

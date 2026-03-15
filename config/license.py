@@ -10,14 +10,18 @@ Schema (data/license.json):
   - name: display name (e.g. "Pro Plan")
   - expiry: optional ISO date string; if past, treat as Starter
   - license_key: optional; if present, signature is validated
-  - signature: optional; HMAC-SHA256(license_key, tier|expiry|customer_id) in hex
+  - signature: Ed25519 (base64) or legacy HMAC-SHA256 hex
+  - integrity_check: optional bool; if true and data/integrity_manifest.json exists,
+    core file hashes are checked; on mismatch plan is downgraded to Starter.
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,10 +36,35 @@ from config.tiers import (
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LICENSE_FILE = PROJECT_ROOT / "data" / "license.json"
+INTEGRITY_MANIFEST = PROJECT_ROOT / "data" / "integrity_manifest.json"
+LICENSE_PUBLIC_KEY = PROJECT_ROOT / "config" / "license_public.pem"
 
-# Server-side secret for signature verification (in production set via env or secure store)
-# Customers never see this; only your build/deploy has it to generate signed licenses.
-_LICENSE_SECRET = b"fortress-license-v1-change-in-production"
+# Cache integrity result per process so we don't re-hash on every get_plan().
+_integrity_ok: Optional[bool] = None
+
+# Legacy HMAC fallback for old licenses only (not used for new licenses).
+_VERIFICATION_FALLBACK = b"fortress-license-v1-change-in-production"
+
+
+def _get_license_secret() -> bytes:
+    raw = os.environ.get("LICENSE_SIGNING_SECRET", "").strip()
+    return raw.encode("utf-8") if raw else _VERIFICATION_FALLBACK
+
+
+def _verify_signature_ed25519(payload: str, signature_b64: str) -> bool:
+    """Verify Ed25519 signature using config/license_public.pem (no secret in code)."""
+    if not signature_b64 or not payload or not LICENSE_PUBLIC_KEY.exists():
+        return False
+    try:
+        from cryptography.hazmat.primitives.serialization import load_pem_public_key
+        from cryptography.exceptions import InvalidSignature
+        key_bytes = LICENSE_PUBLIC_KEY.read_bytes()
+        public_key = load_pem_public_key(key_bytes)
+        sig = base64.b64decode(signature_b64, validate=True)
+        public_key.verify(sig, payload.encode("utf-8"))
+        return True
+    except Exception:
+        return False
 
 
 @dataclass
@@ -63,15 +92,22 @@ def _read_json(path: Path) -> Dict[str, Any]:
     return {}
 
 
-def _verify_signature(payload: str, signature_hex: str) -> bool:
-    if not signature_hex or not payload:
+def _verify_signature(payload: str, signature: str) -> bool:
+    if not signature or not payload:
+        return False
+    # New licenses: Ed25519 base64 (no hardcoded secret; public key in config/).
+    if len(signature) != 64 or not all(c in "0123456789abcdef" for c in signature.lower()):
+        return _verify_signature_ed25519(payload, signature)
+    # Legacy: HMAC hex (fallback secret only for old licenses).
+    secret = _get_license_secret()
+    if not secret:
         return False
     expected = hmac.new(
-        _LICENSE_SECRET,
+        secret,
         payload.encode("utf-8"),
         hashlib.sha256
     ).hexdigest()
-    return hmac.compare_digest(expected, signature_hex.lower())
+    return hmac.compare_digest(expected, signature.lower())
 
 
 def get_plan() -> Plan:
@@ -99,6 +135,19 @@ def get_plan() -> Plan:
         if expiry and datetime.now(timezone.utc) > expiry:
             valid = False
             tier = "starter"  # Downgrade on expiry
+
+    # Optional: enforce core file integrity when license has integrity_check and manifest exists
+    if valid and data.get("integrity_check") and INTEGRITY_MANIFEST.exists():
+        global _integrity_ok
+        if _integrity_ok is None:
+            try:
+                from utils.integrity import check_integrity
+                _integrity_ok, _ = check_integrity(INTEGRITY_MANIFEST)
+            except Exception:
+                _integrity_ok = False
+        if not _integrity_ok:
+            valid = False
+            tier = "starter"  # Downgrade on tampered core
 
     spec = get_tier_spec(tier)
     return Plan(
