@@ -1,10 +1,19 @@
 # Oracle is the source of truth (code)
 
+## Default workflow (your setup)
+
+| What | Where |
+|------|--------|
+| **Personal bot runs** | **Oracle only** — `orchestrator.py`, dashboard, agents, **all cron jobs** and systemd units point at `~/trading-bot` on the VM. |
+| **Default sync direction** | **Oracle → Mac** — refresh your Mac copy with `scripts/sync_pull_from_oracle.sh` so Cursor matches production code. |
+| **Mac role** | **Mirror + editor** — not a second production runtime. Avoid running the same trading cron or “live” bot on the Mac unless you explicitly mean a throwaway test. |
+| **Mac → Oracle** | **On purpose only** — when you need to push a tree from the Mac to the server, use `deploy_to_oracle.sh`; then return to editing on Oracle as truth. |
+
 Production **code** you care about should be edited, run, and committed on the **Oracle** VM (`~/trading-bot`). Your Mac is a **convenience mirror** for Cursor / reading — **not** a second canonical git remote unless you use a shared host (GitHub).
 
 ---
 
-## Safe pull: Oracle → Mac
+## Safe pull: Oracle → Mac (default)
 
 From your **Mac**, in this repo:
 

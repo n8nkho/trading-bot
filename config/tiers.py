@@ -1,153 +1,124 @@
 """
-Product tiers for customer deployments.
+Tier limits and feature gates — aligned with config/pricing_gates.json.
 
-Master = full codebase (your internal version); no restrictions.
-Customer tiers (Starter, Pro, Enterprise) are deployed with the same codebase
-but restricted by license. Gate features here so deployment is tier-driven.
+Lane 1 (personal): use FORTRESS_LICENSE_TIER=master → all gates allowed.
+Lanes 2–3 (customers): starter / pro / enterprise from env or license file.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import List, Set
+from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+import json
+from typing import Any, Dict, FrozenSet, Set
 
-# Tier ids must match license.json "tier" and data/license.json
-TIER_MASTER = "master"
-TIER_STARTER = "starter"
-TIER_PRO = "pro"
-TIER_ENTERPRISE = "enterprise"
-
-# Strategy ids that can be gated (subset of run_strategies + core agents)
-CORE_STRATEGIES = {
-    "screener",
-    "exit_monitor",
-    "risk_guardian",
-    "orchestrator",
-    "sync_alpaca",
-    "intraday_sniper",
-    "regime_alignment",
-    "universe_builder",
-}
-EXTENDED_STRATEGIES = {
-    "momentum",
-    "trump",
-    "mergerarb",
-    "smartmoney",
-    "earnings",
-    "insider",
-    "squeeze",
-    "sector",
-    "vwap",
-    "flow",
-}
-EXPERIMENTAL_STRATEGIES = {"forex_sniper", "inefficiency"}
+CONFIG_DIR = Path(__file__).resolve().parent
 
 
-@dataclass
+@dataclass(frozen=True)
 class TierSpec:
-    """What a tier allows."""
+    """Per-tier limits surfaced in health API and for future enforcement."""
 
-    tier_id: str
-    label: str
     max_universe_size: int
-    max_strategies: int  # total strategy slots (core + extended count)
-    allowed_strategy_ids: Set[str]  # empty = all from allowed sets
-    backtest_allowed: bool
-    command_center_allowed: bool
-    fortress_hedging_allowed: bool
-    auto_trading_allowed: bool
-    customer_settings_allowed: bool  # can use bounded risk settings
 
 
-def _all_strategies() -> Set[str]:
-    return CORE_STRATEGIES | EXTENDED_STRATEGIES | EXPERIMENTAL_STRATEGIES
-
-
-TIER_SPECS = {
-    TIER_MASTER: TierSpec(
-        tier_id=TIER_MASTER,
-        label="Master (internal)",
-        max_universe_size=10000,
-        max_strategies=999,
-        allowed_strategy_ids=set(),  # all
-        backtest_allowed=True,
-        command_center_allowed=True,
-        fortress_hedging_allowed=True,
-        auto_trading_allowed=True,
-        customer_settings_allowed=True,
-    ),
-    TIER_STARTER: TierSpec(
-        tier_id=TIER_STARTER,
-        label="Starter",
-        max_universe_size=200,
-        max_strategies=len(CORE_STRATEGIES) + 1,  # core + 1 extended
-        allowed_strategy_ids=CORE_STRATEGIES | {"momentum"},  # example: 1 extended
-        backtest_allowed=False,
-        command_center_allowed=True,
-        fortress_hedging_allowed=False,
-        auto_trading_allowed=True,
-        customer_settings_allowed=True,
-    ),
-    TIER_PRO: TierSpec(
-        tier_id=TIER_PRO,
-        label="Pro",
-        max_universe_size=1000,
-        max_strategies=len(CORE_STRATEGIES) + len(EXTENDED_STRATEGIES),
-        allowed_strategy_ids=CORE_STRATEGIES | EXTENDED_STRATEGIES,
-        backtest_allowed=True,
-        command_center_allowed=True,
-        fortress_hedging_allowed=True,
-        auto_trading_allowed=True,
-        customer_settings_allowed=True,
-    ),
-    TIER_ENTERPRISE: TierSpec(
-        tier_id=TIER_ENTERPRISE,
-        label="Enterprise",
-        max_universe_size=5000,
-        max_strategies=999,
-        allowed_strategy_ids=set(),  # all
-        backtest_allowed=True,
-        command_center_allowed=True,
-        fortress_hedging_allowed=True,
-        auto_trading_allowed=True,
-        customer_settings_allowed=True,
-    ),
+# Explicit caps (tune per product decision). master = practical "unlimited".
+_TIER_SPECS: Dict[str, TierSpec] = {
+    "starter": TierSpec(max_universe_size=50),
+    "pro": TierSpec(max_universe_size=500),
+    "enterprise": TierSpec(max_universe_size=10_000),
+    "master": TierSpec(max_universe_size=999_999),
 }
 
 
-def get_tier_spec(tier_id: str | None) -> TierSpec:
-    """Return spec for tier; unknown tier defaults to Starter (restrictive)."""
-    if not tier_id:
-        return TIER_SPECS[TIER_STARTER]
-    spec = TIER_SPECS.get(tier_id)
-    if spec is None:
-        return TIER_SPECS[TIER_STARTER]
-    return spec
+@lru_cache(maxsize=1)
+def _gates_by_tier() -> Dict[str, FrozenSet[str]]:
+    """Load tier rows from pricing_gates.json; each tier's gates include inherited names."""
+    path = CONFIG_DIR / "pricing_gates.json"
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {
+            "starter": frozenset(),
+            "pro": frozenset(),
+            "enterprise": frozenset(),
+            "master": frozenset(),
+        }
+
+    tiers: list[dict[str, Any]] = data.get("tiers") or []
+    id_to_gates: Dict[str, Set[str]] = {}
+    for row in tiers:
+        tid = str(row.get("id") or "").strip().lower()
+        if not tid:
+            continue
+        raw_gates = row.get("gates") or []
+        id_to_gates[tid] = {str(g).strip().lower() for g in raw_gates if str(g).strip()}
+
+    # Expand: a tier implicitly includes gates of tiers it lists by id in `gates`
+    # (e.g. pro lists "starter" → inherit starter's gate tokens).
+    def expanded(tier_id: str, seen: Set[str] | None = None) -> Set[str]:
+        if seen is None:
+            seen = set()
+        if tier_id in seen:
+            return set()
+        seen.add(tier_id)
+        base = set(id_to_gates.get(tier_id, set()))
+        out = set(base)
+        for token in list(base):
+            if token in id_to_gates:
+                out |= expanded(token, seen)
+        return out
+
+    out: Dict[str, FrozenSet[str]] = {}
+    for tid in id_to_gates:
+        out[tid] = frozenset(expanded(tid))
+    # master: all defined gates from all tiers
+    all_tokens: Set[str] = set()
+    for fs in out.values():
+        all_tokens |= set(fs)
+    out["master"] = frozenset(all_tokens)
+    return out
 
 
-def strategy_allowed(strategy_id: str, tier_id: str | None) -> bool:
-    """True if this strategy is allowed for the given tier."""
-    spec = get_tier_spec(tier_id)
-    if not spec.allowed_strategy_ids:
+def _tier_gates(tier: str) -> FrozenSet[str]:
+    t = (tier or "").strip().lower()
+    m = _gates_by_tier()
+    if t in m:
+        return m[t]
+    return frozenset()
+
+
+def has_gate(tier: str, gate: str) -> bool:
+    """True if this tier includes the given gate token (after pricing_gates expansion)."""
+    if (tier or "").strip().lower() == "master":
         return True
-    return strategy_id in spec.allowed_strategy_ids
+    g = (gate or "").strip().lower()
+    return g in _tier_gates(tier)
 
 
-def backtest_allowed(tier_id: str | None) -> bool:
-    return get_tier_spec(tier_id).backtest_allowed
+def backtest_allowed(tier: str) -> bool:
+    """Walk-forward / backtest style features (Pro+ in pricing_gates: walk_forward_report)."""
+    if (tier or "").strip().lower() == "master":
+        return True
+    return has_gate(tier, "walk_forward_report")
 
 
-def command_center_allowed(tier_id: str | None) -> bool:
-    return get_tier_spec(tier_id).command_center_allowed
+def fortress_allowed(tier: str) -> bool:
+    """Fortress hedging and related (Pro+)."""
+    if (tier or "").strip().lower() == "master":
+        return True
+    return has_gate(tier, "fortress_hedging")
 
 
-def fortress_allowed(tier_id: str | None) -> bool:
-    return get_tier_spec(tier_id).fortress_hedging_allowed
+def trust_ledger_export_allowed(tier: str) -> bool:
+    """Trust ledger export (Pro+)."""
+    if (tier or "").strip().lower() == "master":
+        return True
+    return has_gate(tier, "trust_ledger_export")
 
 
-def customer_settings_allowed(tier_id: str | None) -> bool:
-    return get_tier_spec(tier_id).customer_settings_allowed
-
-
-def max_universe_for_tier(tier_id: str | None) -> int:
-    return get_tier_spec(tier_id).max_universe_size
+def get_tier_spec(tier: str) -> TierSpec:
+    t = (tier or "").strip().lower()
+    return _TIER_SPECS.get(t, _TIER_SPECS["starter"])

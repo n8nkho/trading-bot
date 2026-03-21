@@ -1,0 +1,23 @@
+{
+  "tiers": [
+    {
+      "id": "starter",
+      "name": "Starter",
+      "monthly_usd": 49,
+      "gates": ["command_center", "paper_trading", "setup_wizard"]
+    },
+    {
+      "id": "pro",
+      "name": "Pro",
+      "monthly_usd": 149,
+      "gates": ["starter", "fortress_hedging", "walk_forward_report", "trust_ledger_export"]
+    },
+    {
+      "id": "enterprise",
+      "name": "Enterprise",
+      "monthly_usd": 499,
+      "gates": ["pro", "multi_account", "sla_support", "custom_policy_profiles"]
+    }
+  ],
+  "disclaimer": "Pricing is illustrative for productization planning; not a live checkout."
+}

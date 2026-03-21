@@ -53,8 +53,9 @@ else
   echo "[sync] overlay only (no --delete). Your Mac .git/ is never removed by this script."
 fi
 
+# macOS Bash 3.2 + set -u: "${empty[@]}" is "unbound". Only expand when non-empty.
 rsync -avz \
-  "${RSYNC_DELETE[@]}" \
+  ${RSYNC_DELETE[@]+"${RSYNC_DELETE[@]}"} \
   -e "ssh -o StrictHostKeyChecking=accept-new" \
   "${RSYNC_EXCLUDES[@]}" \
   "${REMOTE_SSH}:${REMOTE_DIR}/" "${TARGET}/"

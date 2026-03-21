@@ -7,28 +7,43 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, time
+import glob
+import time
+import time as pytime
+from datetime import datetime, time, timedelta
 from dateutil import parser
 from pathlib import Path
+from collections import Counter
 import pytz
 from dotenv import load_dotenv
 
 # Import Alpaca
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest
-from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
+from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 
 # Import agents
-from agents.screener_agent import run_screener, get_last_screening_universe_size
+from agents.screener_agent import run_screener
 from agents.entry_agent import evaluate_entry
 from agents.exit_monitor import monitor_positions as monitor_exit_conditions
-from agents.risk_guardian import check_risk_limits, get_risk_status
+from agents.risk_guardian import check_risk_limits, get_risk_limits, get_risk_status, update_consecutive_losses
 from agents.performance_analyzer import track_decision, load_current_params
 from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mode
-from agents.fortress_orchestrator import fortress_daily_check, generate_fortress_report
+# Fortress hedging is optionally deployable; avoid import-time failures.
+# We import it lazily inside `run_fortress()` so `orchestrator.py` can start
+# even if some hedge dependencies are missing.
 from agents.document_analyst import quick_fundamental_check
-from agents.intraday_sniper import scan_intraday_opportunities
+from agents.intraday_sniper import scan_intraday_opportunities, evaluate_quick_entry
 from utils.grok_sentiment import check_twitter_sentiment
+from utils.option_contract_schema import normalize_option_decision
+from utils.policy_profile import get_profile_bundle
+from utils.trust_ledger import append_trust_event
+from utils.run_registry import (
+    log_screening_completed,
+    log_screening_failed,
+    log_screening_started,
+)
+from utils.pre_trade_gate import evaluate_pre_trade_submission, format_gate_block_message
 from utils.cost_calculator import (
     get_daily_costs,
     get_monthly_projection,
@@ -36,14 +51,202 @@ from utils.cost_calculator import (
     get_cost_per_trade,
     generate_cost_report
 )
+from utils.execution_mode import get_execution_mode
 
-# Project root and logs (absolute so cron from any CWD writes to project logs)
-_ORCH_ROOT = Path(__file__).resolve().parent
-log_dir = _ORCH_ROOT / "logs"
-log_dir.mkdir(exist_ok=True)
+
+def _order_is_filled(order_result: dict) -> bool:
+    """
+    Create/persist positions only after a filled order.
+    This prevents ghost positions from orders that were only accepted.
+    """
+    status = str(order_result.get("status", "")).strip().lower()
+    filled_price = order_result.get("filled_price")
+    status_filled = status == "filled" or status.endswith(".filled")
+    return status_filled and filled_price is not None
+
+
+def _load_latest_fortress_report(max_age_hours=None):
+    """Load newest fortress_report_*.json if present, with freshness metadata."""
+    meta = {"path": None, "age_hours": None, "is_fresh": None}
+    try:
+        fort_pattern = DATA_DIR / "fortress_report_*.json"
+        fort_files = sorted(glob.glob(str(fort_pattern)), reverse=True)
+        if not fort_files:
+            return None, meta
+        latest_fort_path = Path(fort_files[0])
+        meta["path"] = str(latest_fort_path)
+        age_hours = (pytime.time() - latest_fort_path.stat().st_mtime) / 3600.0
+        meta["age_hours"] = round(age_hours, 2)
+        meta["is_fresh"] = True if max_age_hours is None else age_hours <= float(max_age_hours)
+        with open(latest_fort_path, "r") as f:
+            return json.load(f), meta
+    except Exception:
+        return None, meta
+
+
+def _refresh_order_result(order_result: dict, max_wait_seconds: int = 3, poll_interval_seconds: float = 1.0) -> dict:
+    """
+    Best-effort refresh from Alpaca when submit returns ACCEPTED/PENDING_NEW.
+    Prevents prematurely marking exits as executed before actual fill.
+    """
+    if not isinstance(order_result, dict):
+        return order_result
+    if not order_result.get("success"):
+        return order_result
+    if _order_is_filled(order_result):
+        return order_result
+
+    order_id = order_result.get("order_id")
+    if not order_id or alpaca_client is None:
+        return order_result
+
+    deadline = pytime.time() + max_wait_seconds
+    while pytime.time() < deadline:
+        try:
+            order = alpaca_client.get_order_by_id(order_id)
+            order_result["status"] = str(getattr(order, "status", order_result.get("status")))
+            order_result["filled_qty"] = int(order.filled_qty) if getattr(order, "filled_qty", None) else None
+            order_result["filled_price"] = float(order.filled_avg_price) if getattr(order, "filled_avg_price", None) else None
+            if _order_is_filled(order_result):
+                break
+        except Exception:
+            break
+        pytime.sleep(poll_interval_seconds)
+    return order_result
+
+
+def _read_pnl_ledger_order_ids() -> set[str]:
+    """Return set of already-recorded order_ids in pnl_ledger.jsonl."""
+    order_ids: set[str] = set()
+    if not PNL_LEDGER_FILE.exists():
+        return order_ids
+    try:
+        with open(PNL_LEDGER_FILE, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                oid = rec.get("order_id")
+                if oid:
+                    order_ids.add(str(oid))
+    except Exception:
+        pass
+    return order_ids
+
+
+def _append_pnl_ledger_once(entry: dict, seen_order_ids: set[str]) -> bool:
+    """Append one PnL ledger entry once per order_id."""
+    order_id = entry.get("order_id")
+    if order_id and str(order_id) in seen_order_ids:
+        return False
+    try:
+        PNL_LEDGER_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(PNL_LEDGER_FILE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+        if order_id:
+            seen_order_ids.add(str(order_id))
+        return True
+    except Exception:
+        return False
+
+
+def _derive_entry_price_from_signal(signal: dict, filled_price: float) -> float | None:
+    """
+    Derive entry price when original position is no longer present.
+    Uses pnl_pct relationship: filled = entry * (1 + pnl_pct).
+    """
+    try:
+        pnl_pct = signal.get("pnl_pct")
+        if pnl_pct is None:
+            return None
+        pnl_pct = float(pnl_pct)
+        denom = 1.0 + pnl_pct
+        if abs(denom) < 1e-9:
+            return None
+        return float(filled_price) / denom
+    except Exception:
+        return None
+
+
+def _compute_hedge_gate_metrics_from_report(report: dict) -> dict:
+    """
+    Compute hedge gate metrics from the latest fortress report.
+
+    Gate pass rule (risk elimination):
+      passed iff (applied_count >= 1) OR (bonds_target_present).
+    """
+    known_strategies = [
+        "bonds",
+        "commodities",
+        "forex",
+        "vix_insurance",
+        "theta_spreads",
+        "dividend_capture",
+        "pairs_trading",
+    ]
+
+    strategies = report.get("strategies") or {}
+    applied = 0
+    skipped = 0
+    not_evaluated = 0
+    bonds_target_present = False
+
+    strategy_gate_details = {}
+
+    for name in known_strategies:
+        s = strategies.get(name)
+        if not isinstance(s, dict):
+            not_evaluated += 1
+            strategy_gate_details[name] = {"status": "not_evaluated"}
+            continue
+
+        if name == "bonds":
+            target = s.get("target")
+            bonds_target_present = target is not None
+            if bonds_target_present:
+                applied += 1
+                strategy_gate_details[name] = {"status": "applied", "target": target}
+            else:
+                skipped += 1
+                strategy_gate_details[name] = {"status": "skipped", "target": target}
+            continue
+
+        action = s.get("action")
+        reason = s.get("reason") or s.get("opportunity") or ""
+        action_upper = str(action).upper() if action is not None else None
+
+        if action is None:
+            not_evaluated += 1
+            strategy_gate_details[name] = {"status": "not_evaluated", "action": action, "reason": reason}
+        elif action_upper in ["SKIP", "NONE", "HOLD"]:
+            skipped += 1
+            strategy_gate_details[name] = {"status": "skipped", "action": action, "reason": reason}
+        else:
+            applied += 1
+            strategy_gate_details[name] = {"status": "applied", "action": action, "reason": reason}
+
+    passed = (applied >= 1) or bool(bonds_target_present)
+
+    return {
+        "passed": passed,
+        "applied_count": applied,
+        "skipped_count": skipped,
+        "not_evaluated_count": not_evaluated,
+        "bonds_target_present": bonds_target_present,
+        "total_known": len(known_strategies),
+        "strategy_gate_details": strategy_gate_details,
+    }
 
 # Load environment variables
 load_dotenv()
+
+# Setup logging
+log_dir = Path("logs")
+log_dir.mkdir(exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -61,6 +264,8 @@ DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 
 POSITIONS_FILE = DATA_DIR / "positions.json"
+PNL_LEDGER_FILE = DATA_DIR / "pnl_ledger.jsonl"
+FORTRESS_REPORT_MAX_AGE_HOURS = float(os.getenv("FORTRESS_REPORT_MAX_AGE_HOURS", "30"))
 PORTFOLIO_VALUE = 50000  # Default portfolio value
 
 # Market hours (Eastern Time)
@@ -73,18 +278,9 @@ VISION_CONFIDENCE_THRESHOLD = 0.9  # Only use Vision for very high-confidence ca
 FUNDAMENTAL_CONFIDENCE_THRESHOLD = 0.85  # Only use fundamental analysis for high-confidence candidates
 FUNDAMENTAL_RISK_THRESHOLD = 70  # Skip if SEC risk score >= 70
 
-# Trading configuration (overridden by customer_settings when license allows)
+# Trading configuration
 MAX_POSITIONS = 5  # Maximum number of open positions
 BUYING_POWER_BUFFER = 1.2  # Require 20% buffer on buying power
-
-
-def _effective_max_positions():
-    """Max positions: customer_settings if allowed and set, else default."""
-    try:
-        from config.customer_settings import get_customer_value
-        return get_customer_value("max_positions", MAX_POSITIONS)
-    except Exception:
-        return MAX_POSITIONS
 
 # Initialize Alpaca client (paper trading only)
 ALPACA_API_KEY = os.getenv('ALPACA_API_KEY')
@@ -103,8 +299,6 @@ if ALPACA_API_KEY and ALPACA_SECRET_KEY:
     try:
         alpaca_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
         logger.info(f"Alpaca client initialized (PAPER TRADING): {ALPACA_BASE_URL}")
-    except ValueError as e:
-        logger.warning(f"Alpaca auth invalid (check API keys): {e}")
     except Exception as e:
         logger.error(f"Failed to initialize Alpaca client: {type(e).__name__}: {str(e)}")
 else:
@@ -204,6 +398,30 @@ def execute_buy_order(ticker, shares, entry_price):
             'filled_price': None,
             'error': 'Alpaca client not initialized'
         }
+
+    try:
+        est = float(shares) * float(entry_price or 0)
+    except Exception:
+        est = 0.0
+    gate = evaluate_pre_trade_submission(
+        side="BUY",
+        symbol=ticker,
+        qty=float(shares),
+        estimated_notional_usd=est if est > 0 else None,
+    )
+    if not gate["allowed"]:
+        logger.warning(f"{ticker}: pre_trade_gate blocked: {gate.get('reasons')}")
+        append_trust_event(
+            "pre_trade_gate_blocked",
+            {"ticker": ticker, "pattern": "stock_buy", "gate": gate},
+        )
+        return {
+            "success": False,
+            "order_id": None,
+            "filled_qty": None,
+            "filled_price": None,
+            "error": format_gate_block_message(gate),
+        }
     
     try:
         logger.info(f"{ticker}: Submitting BUY order for {shares} shares (expected price: ${entry_price:.2f})")
@@ -232,14 +450,7 @@ def execute_buy_order(ticker, shares, entry_price):
         }
         
     except Exception as e:
-        err_msg = str(e).lower()
-        if "wash trade" in err_msg or "40310000" in str(e):
-            logger.warning(
-                f"{ticker}: Alpaca rejected (wash trade / opposite side): {e}. "
-                "Use complex orders or cancel the existing order first."
-            )
-        else:
-            logger.error(f"{ticker}: Error executing buy order: {type(e).__name__}: {str(e)}")
+        logger.error(f"{ticker}: Error executing buy order: {type(e).__name__}: {str(e)}")
         return {
             'success': False,
             'order_id': None,
@@ -274,6 +485,26 @@ def execute_sell_order(ticker, shares):
             'filled_qty': None,
             'filled_price': None,
             'error': 'Alpaca client not initialized'
+        }
+
+    gate = evaluate_pre_trade_submission(
+        side="SELL",
+        symbol=ticker,
+        qty=float(shares),
+        estimated_notional_usd=None,
+    )
+    if not gate["allowed"]:
+        logger.warning(f"{ticker}: pre_trade_gate blocked: {gate.get('reasons')}")
+        append_trust_event(
+            "pre_trade_gate_blocked",
+            {"ticker": ticker, "pattern": "stock_sell", "gate": gate},
+        )
+        return {
+            "success": False,
+            "order_id": None,
+            "filled_qty": None,
+            "filled_price": None,
+            "error": format_gate_block_message(gate),
         }
     
     try:
@@ -340,6 +571,148 @@ def format_option_symbol(ticker, expiration, strike, call=True):
     return f"{ticker.upper()}{exp_str}{option_type}{strike_str}"
 
 
+async def submit_approved_screening_trade(trade, candidates, current_params):
+    """
+    Submit one approved entry from daily screening (stock or option) and persist position if filled.
+    Used for autonomous execution and for ``execute_pending`` (human-in-the-loop flush).
+    """
+    option_symbol = None
+    if trade.get("trade_type") == "OPTION" or trade.get("type") == "OPTION":
+        ticker = trade["ticker"]
+        strike = trade["strike"]
+        expiration = trade["expiration"]
+        contracts = trade["contracts"]
+        call = trade.get("call", True)
+
+        option_symbol = format_option_symbol(ticker, expiration, strike, call)
+        logger.info(f"Executing OPTION order: {option_symbol} x {contracts} contracts")
+
+        if not alpaca_client:
+            order_result = {
+                "success": False,
+                "order_id": None,
+                "filled_qty": None,
+                "filled_price": None,
+                "error": "Alpaca client not initialized",
+            }
+        else:
+            gate = evaluate_pre_trade_submission(
+                side="BUY",
+                symbol=option_symbol,
+                qty=float(contracts),
+                order_class="option",
+                estimated_notional_usd=None,
+            )
+            if not gate["allowed"]:
+                append_trust_event(
+                    "pre_trade_gate_blocked",
+                    {
+                        "ticker": option_symbol,
+                        "pattern": "option_buy",
+                        "gate": gate,
+                    },
+                )
+                order_result = {
+                    "success": False,
+                    "order_id": None,
+                    "filled_qty": None,
+                    "filled_price": None,
+                    "error": format_gate_block_message(gate),
+                }
+            else:
+                try:
+                    order_data = MarketOrderRequest(
+                        symbol=option_symbol,
+                        qty=contracts,
+                        side=OrderSide.BUY,
+                        time_in_force=TimeInForce.DAY,
+                    )
+                    order = alpaca_client.submit_order(order_data)
+                    order_result = {
+                        "success": True,
+                        "order_id": str(order.id),
+                        "filled_qty": int(order.filled_qty) if order.filled_qty else None,
+                        "filled_price": float(order.filled_avg_price) if order.filled_avg_price else None,
+                        "status": str(order.status),
+                        "error": None,
+                    }
+                except Exception as e:
+                    order_result = {
+                        "success": False,
+                        "order_id": None,
+                        "filled_qty": None,
+                        "filled_price": None,
+                        "error": f"{type(e).__name__}: {str(e)}",
+                    }
+
+    else:
+        ticker = trade["ticker"]
+        shares = trade["shares"]
+        entry_price = trade["entry_price"]
+        logger.info(f"Executing STOCK order: {ticker} x {shares} shares")
+
+        order_result = await asyncio.to_thread(execute_buy_order, ticker, shares, entry_price)
+        order_result = _refresh_order_result(order_result)
+
+    if order_result["success"] and _order_is_filled(order_result):
+        label = option_symbol or trade.get("ticker") or "?"
+        logger.info(f"{label}: Order executed successfully - ID: {order_result['order_id']}")
+
+        trade["order_id"] = order_result["order_id"]
+        trade["order_status"] = order_result["status"]
+        trade["filled_qty"] = order_result["filled_qty"]
+        trade["filled_price"] = order_result["filled_price"]
+        trade["executed"] = True
+        trade["execution_time"] = datetime.now().isoformat()
+
+        if trade.get("trade_type") == "OPTION" or trade.get("type") == "OPTION":
+            await asyncio.to_thread(
+                add_position,
+                {
+                    "ticker": option_symbol,
+                    "type": "OPTION",
+                    "underlying_ticker": trade["ticker"],
+                    "qty": trade["contracts"],
+                    "entry_premium": trade.get("filled_price") or trade.get("entry_price", 0),
+                    "expiration_date": trade["expiration"],
+                    "strike": trade["strike"],
+                    "call": trade.get("call", True),
+                    "entry_date": datetime.now().isoformat(),
+                    "order_id": order_result["order_id"],
+                    "sector": get_sector_from_candidates(trade["ticker"], candidates),
+                    "stop_loss_pct": current_params["stop_loss_pct"],
+                    "take_profit_pct": current_params.get("take_profit_pct", 15.0),
+                    "tiers_sold": {"tier1": False, "tier2": False, "tier3": False},
+                },
+            )
+        else:
+            await asyncio.to_thread(
+                add_position,
+                {
+                    "ticker": trade["ticker"],
+                    "shares": trade.get("shares", 0),
+                    "entry_price": trade.get("entry_price", 0),
+                    "entry_date": datetime.now().isoformat(),
+                    "order_id": order_result["order_id"],
+                    "sector": get_sector_from_candidates(trade["ticker"], candidates),
+                    "stop_loss_pct": current_params["stop_loss_pct"],
+                    "take_profit_pct": current_params.get("take_profit_pct", 15.0),
+                    "tiers_sold": {"tier1": False, "tier2": False, "tier3": False},
+                },
+            )
+
+        return ("success", trade)
+
+    label = option_symbol or trade.get("ticker") or "?"
+    logger.error(
+        f"{label}: Order not filled or execution failed - {order_result.get('error')}"
+        f" (status={order_result.get('status')}, filled_price={order_result.get('filled_price')})"
+    )
+    trade["executed"] = False
+    trade["execution_error"] = order_result.get("error")
+    return ("failure", trade)
+
+
 async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
     """
     Run the complete daily screening workflow with async parallel execution.
@@ -373,11 +746,108 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
     
     start_time = datetime.now()
     
+    run_id = f"screen_{int(pytime.time())}"
+    policy = get_profile_bundle()
+    append_trust_event("screening_started", {
+        "run_id": run_id,
+        "policy_profile": policy.get("active_profile"),
+        "portfolio_value": portfolio_value,
+    })
+    log_screening_started(
+        run_id,
+        policy.get("active_profile"),
+        float(portfolio_value),
+    )
+    try:
+        from utils.policy_guardrails import shadow_policy_snapshot
+
+        shadow_snap = shadow_policy_snapshot()
+        if shadow_snap:
+            append_trust_event("shadow_policy_observation", {"run_id": run_id, **shadow_snap})
+    except Exception:
+        pass
     try:
         # Step 1: Run screener
         logger.info("Step 1: Running stock screener...")
         candidates = run_screener()
         logger.info(f"Screener found {len(candidates)} candidates")
+
+        # Screenshot-style screening telemetry (universe size + filter rejection counts).
+        # Stored by `agents.screener_agent.run_screener()` for the dashboard.
+        screening_meta = {}
+        try:
+            meta_path = DATA_DIR / "last_screening_meta.json"
+            if meta_path.exists():
+                screening_meta = json.loads(meta_path.read_text())
+        except Exception:
+            screening_meta = {}
+
+        # Defaults so early returns still have stable dashboard fields.
+        entry_gate_summary = {
+            "evaluated_candidates": len(candidates),
+            "buy_count": 0,
+            "skip_count": 0,
+            "top_skip_reasons": []
+        }
+        risk_gate_summary = {
+            "approved_count": 0,
+            "rejected_count": 0,
+            "top_rejected_reasons": []
+        }
+        execution_gate_summary = {
+            "executed_count": 0,
+            "failed_count": 0,
+            "top_failure_reasons": []
+        }
+
+        # Risk-elimination mode: triggered only when the risk engine is already under stress.
+        risk_status = get_risk_status()
+        consecutive_losses = int(risk_status.get("consecutive_losses") or 0)
+        circuit_breaker_active = bool(risk_status.get("circuit_breaker_active"))
+        strict_mode = circuit_breaker_active or consecutive_losses >= 2
+        if circuit_breaker_active:
+            strict_mode_reason = f"circuit_breaker_active (consecutive_losses={consecutive_losses})"
+        elif consecutive_losses >= 2:
+            strict_mode_reason = f"consecutive_losses={consecutive_losses} >= 2"
+        else:
+            strict_mode_reason = "normal"
+
+        effective_limits = get_risk_limits(strict_mode=strict_mode)
+        effective_max_positions = effective_limits.get("max_positions", MAX_POSITIONS)
+
+        hedge_gate_summary = {
+            "passed": None,
+            "applied_count": None,
+            "skipped_count": None,
+            "not_evaluated_count": None,
+            "bonds_target_present": None,
+            "total_known": None,
+            "strategy_gate_details": None,
+            "reason": "not_evaluated",
+        }
+        # Always attempt to compute hedge gate transparency for UI metrics.
+        # Enforcement still happens only when `strict_mode` is True.
+        report, report_meta = _load_latest_fortress_report(max_age_hours=FORTRESS_REPORT_MAX_AGE_HOURS)
+        if report is None:
+            hedge_gate_summary["reason"] = "No fortress_report_*.json found"
+        elif not report_meta.get("is_fresh", True):
+            age = report_meta.get("age_hours")
+            hedge_gate_summary["passed"] = False if strict_mode else None
+            hedge_gate_summary["reason"] = (
+                f"Stale fortress report ({age}h old > {FORTRESS_REPORT_MAX_AGE_HOURS}h)"
+            )
+        else:
+            try:
+                hedge_gate_summary = _compute_hedge_gate_metrics_from_report(report)
+                hedge_gate_summary["reason"] = "hedging gate derived from latest fortress_report"
+            except Exception:
+                hedge_gate_summary["passed"] = None
+                hedge_gate_summary["reason"] = "Failed to compute hedge gate metrics from fortress report"
+
+        # Attach strict/hedge gate telemetry to the daily signals screener meta.
+        screening_meta["strict_mode"] = strict_mode
+        screening_meta["strict_mode_reason"] = strict_mode_reason
+        screening_meta["hedge_gate"] = hedge_gate_summary
         
         if len(candidates) == 0:
             logger.info("No candidates found. Ending workflow.")
@@ -386,10 +856,35 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
                 'candidates_found': 0,
                 'approved_trades': [],
                 'rejected_trades': [],
-                'risk_status': get_risk_status(),
-                'universe_size': get_last_screening_universe_size(),
+                'screening_meta': screening_meta,
+                'entry_gate_summary': entry_gate_summary,
+                'risk_gate_summary': risk_gate_summary,
+                'execution_gate_summary': execution_gate_summary,
+                'risk_status': risk_status
             }
             save_daily_signals(result)
+            append_trust_event("screening_completed", {
+                "run_id": run_id,
+                "policy_profile": policy.get("active_profile"),
+                "candidates_found": 0,
+                "approved_count": 0,
+                "executed_count": 0,
+                "rejected_count": 0,
+                "strict_mode": strict_mode,
+                "hedge_gate_passed": hedge_gate_summary.get("passed"),
+            })
+            log_screening_completed(
+                run_id,
+                {
+                    "policy_profile": policy.get("active_profile"),
+                    "candidates_found": 0,
+                    "approved_count": 0,
+                    "executed_count": 0,
+                    "rejected_count": 0,
+                    "strict_mode": strict_mode,
+                    "hedge_gate_passed": hedge_gate_summary.get("passed"),
+                },
+            )
             return result
         
         # Step 2: Run parallel analysis for high-confidence candidates
@@ -457,6 +952,7 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
             
             # Handle Fundamental analysis
             if confidence >= FUNDAMENTAL_CONFIDENCE_THRESHOLD:
+                # We create only two tasks in this workflow, so index 2 can never exist.
                 if isinstance(results[1], Exception):
                     logger.error(f"{ticker}: Fundamental analysis failed: {results[1]}")
                     candidate['fundamental_analysis'] = None
@@ -507,10 +1003,28 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         logger.info("Step 3: Evaluating entry conditions...")
         entry_decisions = await asyncio.to_thread(evaluate_entry, candidates, portfolio_value)
         
-        buy_decisions = [d for d in entry_decisions if d['action'] == 'BUY']
-        skip_decisions = [d for d in entry_decisions if d['action'] == 'SKIP']
+        # Defensive filtering: option decisions may not include an `action` field yet.
+        buy_decisions = [d for d in entry_decisions if d.get('action') == 'BUY']
+        skip_decisions = [d for d in entry_decisions if d.get('action') == 'SKIP']
         
         logger.info(f"Entry evaluation: {len(buy_decisions)} BUY, {len(skip_decisions)} SKIP")
+
+        # Entry gate transparency (BUY vs SKIP with top SKIP reasons).
+        skip_reason_counter = Counter(
+            d.get("reason") or "Unknown"
+            for d in skip_decisions
+            if isinstance(d, dict)
+        )
+        top_skip_reasons = [
+            {"reason": reason, "count": count}
+            for reason, count in skip_reason_counter.most_common(6)
+        ]
+        entry_gate_summary = {
+            "evaluated_candidates": len(entry_decisions),
+            "buy_count": len(buy_decisions),
+            "skip_count": len(skip_decisions),
+            "top_skip_reasons": top_skip_reasons
+        }
         
         # Step 4: Check account and risk limits
         logger.info("Step 4: Checking account status and risk limits...")
@@ -525,21 +1039,28 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
                 'candidates_found': len(candidates),
                 'approved_trades': [],
                 'rejected_trades': [],
+                'screening_meta': screening_meta,
+                'entry_gate_summary': entry_gate_summary,
+                'risk_gate_summary': risk_gate_summary,
+                'execution_gate_summary': execution_gate_summary,
                 'risk_status': get_risk_status()
             }
             save_daily_signals(result)
             return result
         
-        # Check position limit (may be overridden by customer_settings)
-        eff_max = _effective_max_positions()
-        if account_info['position_count'] >= eff_max:
-            logger.warning(f"Position limit reached: {account_info['position_count']}/{eff_max}")
+        # Check position limit
+        if account_info['position_count'] >= effective_max_positions:
+            logger.warning(f"Position limit reached: {account_info['position_count']}/{effective_max_positions}")
             logger.warning("Skipping all trades")
             result = {
                 'timestamp': datetime.now().isoformat(),
                 'candidates_found': len(candidates),
                 'approved_trades': [],
                 'rejected_trades': [{'ticker': d['ticker'], 'reason': 'Position limit reached'} for d in buy_decisions],
+                'screening_meta': screening_meta,
+                'entry_gate_summary': entry_gate_summary,
+                'risk_gate_summary': risk_gate_summary,
+                'execution_gate_summary': execution_gate_summary,
                 'risk_status': get_risk_status(),
                 'account_info': account_info
             }
@@ -558,177 +1079,213 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         
         approved_trades = []
         rejected_trades = []
-        eff_max = _effective_max_positions()
-        
-        for decision in buy_decisions:
-            ticker = decision['ticker']
-            logger.info(f"{ticker}: Checking risk limits...")
-            
-            # Check position limit
-            if account_info['position_count'] + len(approved_trades) >= eff_max:
-                logger.warning(f"{ticker}: Position limit would be exceeded")
+        effective_hedge_passed = bool(hedge_gate_summary.get("passed"))
+
+        if strict_mode and not effective_hedge_passed:
+            # Hedge/strategy gates are a hard prerequisite for entries in strict mode.
+            hedge_reason = hedge_gate_summary.get("reason") or "hedge gate failed"
+            logger.warning(f"Strict mode hedge gate failed; rejecting all BUYs: {hedge_reason}")
+            for decision in buy_decisions:
+                ticker = decision["ticker"]
                 rejected_trades.append({
-                    'ticker': ticker,
-                    'reason': f'Position limit ({eff_max}) would be exceeded',
-                    'original_decision': decision
+                    "ticker": ticker,
+                    "reason": f"HEDGE_GATE_FAILED: {hedge_reason}",
+                    "original_decision": decision,
+                    "reject_stage": "hedge_gate",
                 })
-                continue
-            
-            # Check buying power
-            required_capital = decision['position_size'] * BUYING_POWER_BUFFER
-            if account_info['buying_power'] < required_capital:
-                logger.warning(f"{ticker}: Insufficient buying power (need ${required_capital:,.2f}, have ${account_info['buying_power']:,.2f})")
-                rejected_trades.append({
+        else:
+            for decision in buy_decisions:
+                ticker = decision['ticker']
+                logger.info(f"{ticker}: Checking risk limits...")
+                
+                # Check position limit
+                if account_info['position_count'] + len(approved_trades) >= effective_max_positions:
+                    logger.warning(f"{ticker}: Position limit would be exceeded")
+                    rejected_trades.append({
+                        'ticker': ticker,
+                        'reason': f'Position limit ({effective_max_positions}) would be exceeded',
+                        'original_decision': decision
+                    })
+                    continue
+                
+                # Check buying power
+                required_capital = decision['position_size'] * BUYING_POWER_BUFFER
+                if account_info['buying_power'] < required_capital:
+                    logger.warning(f"{ticker}: Insufficient buying power (need ${required_capital:,.2f}, have ${account_info['buying_power']:,.2f})")
+                    rejected_trades.append({
+                        'ticker': ticker,
+                        'reason': f'Insufficient buying power (need ${required_capital:,.2f} with buffer)',
+                        'original_decision': decision
+                    })
+                    continue
+                
+                # Build new position dict for risk check
+                trade_type = decision.get('trade_type', 'STOCK')
+                unit_count = decision.get('shares', 0)
+                if trade_type == 'OPTION' or decision.get('type') == 'OPTION':
+                    # Canonicalize option decision fields to avoid schema drift.
+                    try:
+                        decision = normalize_option_decision(decision)
+                        trade_type = 'OPTION'
+                        unit_count = decision.get('contracts', 0)
+                    except Exception as e:
+                        logger.error(f"{ticker}: Failed to normalize option decision: {type(e).__name__}: {str(e)}")
+                        rejected_trades.append({
+                            'ticker': ticker,
+                            'reason': f'Option decision normalization failed: {type(e).__name__}: {str(e)}',
+                            'original_decision': decision
+                        })
+                        continue
+ 
+                new_position = {
                     'ticker': ticker,
-                    'reason': f'Insufficient buying power (need ${required_capital:,.2f} with buffer)',
-                    'original_decision': decision
-                })
-                continue
-            
-            # Build new position dict for risk check
-            new_position = {
-                'ticker': ticker,
-                'size': decision['shares'],
-                'value': decision['position_size'],
-                'sector': get_sector_from_candidates(ticker, candidates)
-            }
-            
-            # Check risk limits (async)
-            risk_check = await asyncio.to_thread(check_risk_limits, portfolio_data, new_position)
-            
-            if risk_check['approved']:
-                logger.info(f"{ticker}: APPROVED - {risk_check['reason']}")
-                
-                # Check if position size was adjusted
-                if 'adjusted_size' in risk_check:
-                    decision['shares'] = int(risk_check['adjusted_size'])
-                    decision['position_size'] = decision['shares'] * decision['entry_price']
-                    decision['risk_adjusted'] = True
-                    logger.info(f"{ticker}: Position size adjusted to {decision['shares']} shares")
-                else:
-                    decision['risk_adjusted'] = False
-                
-                decision['risk_check'] = risk_check
-                approved_trades.append(decision)
-                
-                # Track decision for performance analysis
-                signal_id = f"{ticker}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                track_decision(signal_id, {
-                    'ticker': ticker,
-                    'action': 'BUY',
-                    'entry_price': decision['entry_price'],
-                    'shares': decision['shares'],
-                    'position_size': decision['position_size'],
-                    'confidence': decision['confidence'],
-                    'reasoning': decision['reasoning'],
-                    'metrics': {
-                        'rsi': decision.get('rsi'),
-                        'drop_pct': decision.get('drop_pct'),
-                        'volume_ratio': decision.get('volume_ratio'),
-                        'confidence': decision['confidence']
-                    },
-                    'grok_sentiment': decision.get('grok_sentiment'),
-                    'vision_analysis': decision.get('vision_analysis'),
-                    'fundamental_analysis': decision.get('fundamental_analysis'),
-                    'timestamp': datetime.now().isoformat()
-                })
-                try:
-                    from config.addon_loader import invoke_after_trade
-                    invoke_after_trade(decision, "logged")
-                except Exception as e:
-                    logger.debug("Add-on after_trade (logged): %s", e)
-                
-                # Update portfolio data for next iteration
-                portfolio_data['positions'].append({
-                    'ticker': ticker,
+                    'size': unit_count,
                     'value': decision['position_size'],
-                    'sector': new_position['sector']
-                })
-            else:
-                logger.warning(f"{ticker}: REJECTED - {risk_check['reason']}")
-                rejected_trades.append({
-                    'ticker': ticker,
-                    'reason': risk_check['reason'],
-                    'original_decision': decision
-                })
-        
-        # Step 5: Execute approved trades (in parallel); add-ons can modify decision before execution
-        logger.info("Step 5: Executing approved trades...")
-        try:
-            from config.addon_loader import invoke_before_trade
-            approved_for_execution = [invoke_before_trade(t) for t in approved_trades]
-        except Exception:
-            approved_for_execution = approved_trades
-        
-        async def execute_trade(trade):
-            """Execute a single trade asynchronously."""
-            if trade.get('type') == 'OPTION':
-                ticker = trade['ticker']
-                strike = trade['strike']
-                expiration = trade['expiration']
-                contracts = trade['contracts']
-                call = trade.get('call', True)
-
-                # Format option symbol
-                option_symbol = format_option_symbol(ticker, expiration, strike, call)
-                logger.info(f"Executing OPTION order: {option_symbol} x {contracts} contracts")
-
-                # Submit option order (pseudo-code, replace with actual Alpaca API call)
-                # order_result = await asyncio.to_thread(submit_option_order, option_symbol, contracts)
-
-                # Simulate order result for demonstration
-                order_result = {'success': True, 'order_id': '12345', 'status': 'filled', 'filled_qty': contracts, 'filled_price': strike}
-
-            else:
-                ticker = trade['ticker']
-                shares = trade['shares']
-                entry_price = trade['entry_price']
-                logger.info(f"Executing STOCK order: {ticker} x {shares} shares")
-
-                # Execute buy order
-                order_result = await asyncio.to_thread(execute_buy_order, ticker, shares, entry_price)
-
-            if order_result['success']:
-                logger.info(f"{ticker}: Order executed successfully - ID: {order_result['order_id']}")
+                    'sector': get_sector_from_candidates(ticker, candidates)
+                }
                 
-                # Add order info to trade
-                trade['order_id'] = order_result['order_id']
-                trade['order_status'] = order_result['status']
-                trade['filled_qty'] = order_result['filled_qty']
-                trade['filled_price'] = order_result['filled_price']
-                trade['executed'] = True
-                trade['execution_time'] = datetime.now().isoformat()
+                # Check risk limits (async)
+                risk_check = await asyncio.to_thread(check_risk_limits, portfolio_data, new_position, strict_mode=strict_mode)
                 
-                try:
-                    from config.addon_loader import invoke_after_trade
-                    invoke_after_trade(trade, "executed")
-                except Exception as e:
-                    logger.debug("Add-on after_trade (executed): %s", e)
-                
-                # Add to positions file
-                await asyncio.to_thread(add_position, {
-                    'ticker': ticker,
-                    'shares': trade.get('shares', 0),
-                    'entry_price': trade.get('entry_price', 0),
-                    'entry_date': datetime.now().isoformat(),
-                    'order_id': order_result['order_id'],
-                    'sector': get_sector_from_candidates(ticker, candidates),
-                    'stop_loss_pct': current_params['stop_loss_pct'],
-                    'take_profit_pct': current_params.get('take_profit_pct', 15.0)
-                })
-                
-                return ('success', trade)
-            else:
-                logger.error(f"{ticker}: Order execution failed - {order_result['error']}")
-                trade['executed'] = False
-                trade['execution_error'] = order_result['error']
-                return ('failure', trade)
-        
-        # Execute all trades in parallel (using add-on-modified decisions)
-        execution_results = await asyncio.gather(*[execute_trade(t) for t in approved_for_execution])
-        
-        executed_trades = [trade for status, trade in execution_results if status == 'success']
-        execution_failures = [trade for status, trade in execution_results if status == 'failure']
+                if risk_check['approved']:
+                    logger.info(f"{ticker}: APPROVED - {risk_check['reason']}")
+                    # Check if position size was adjusted
+                    if 'adjusted_size' in risk_check:
+                        if trade_type == 'OPTION':
+                            decision['contracts'] = int(risk_check['adjusted_size'])
+                            # Option entry_price is option premium; multiply by 100 contracts multiplier.
+                            decision['position_size'] = decision['contracts'] * decision['entry_price'] * 100
+                        else:
+                            decision['shares'] = int(risk_check['adjusted_size'])
+                            decision['position_size'] = decision['shares'] * decision['entry_price']
+                        decision['risk_adjusted'] = True
+                        logger.info(
+                            f"{ticker}: Position size adjusted (trade_type={trade_type})"
+                        )
+                    else:
+                        decision['risk_adjusted'] = False
+                    
+                    decision['risk_check'] = risk_check
+                    approved_trades.append(decision)
+                    
+                    # Track decision for performance analysis
+                    signal_id = f"{ticker}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    track_decision(signal_id, {
+                        'ticker': ticker,
+                        'action': 'BUY',
+                        'entry_price': decision['entry_price'],
+                        # Keep legacy `shares` key for performance logging; for options this is contract count.
+                        'shares': decision.get('shares', decision.get('contracts', 0)),
+                        'position_size': decision['position_size'],
+                        'confidence': decision['confidence'],
+                        # Some agents use `reason`, some use `reasoning`.
+                        'reasoning': decision.get('reasoning') or decision.get('reason'),
+                        'metrics': {
+                            'rsi': decision.get('rsi'),
+                            'drop_pct': decision.get('drop_pct'),
+                            'volume_ratio': decision.get('volume_ratio'),
+                            'confidence': decision['confidence']
+                        },
+                        'grok_sentiment': decision.get('grok_sentiment'),
+                        'vision_analysis': decision.get('vision_analysis'),
+                        'fundamental_analysis': decision.get('fundamental_analysis'),
+                        'timestamp': datetime.now().isoformat()
+                    })
+                    
+                    # Update portfolio data for next iteration
+                    portfolio_data['positions'].append({
+                        'ticker': ticker,
+                        'value': decision['position_size'],
+                        'sector': new_position['sector']
+                    })
+                else:
+                    logger.warning(f"{ticker}: REJECTED - {risk_check['reason']}")
+                    rejected_trades.append({
+                        'ticker': ticker,
+                        'reason': risk_check['reason'],
+                        'original_decision': decision,
+                        'reject_stage': 'risk_guardian'
+                    })
+
+        # Risk gate transparency (approved vs rejected, aggregated by reason).
+        risk_rejected_trades = [
+            d for d in rejected_trades
+            if isinstance(d, dict) and d.get("reject_stage") == "risk_guardian"
+        ]
+        risk_reason_counter = Counter(
+            d.get("reason") or "Unknown"
+            for d in risk_rejected_trades
+        )
+        top_rejected_reasons = [
+            {"reason": reason, "count": count}
+            for reason, count in risk_reason_counter.most_common(6)
+        ]
+        risk_gate_summary = {
+            "approved_count": len(approved_trades),
+            "rejected_count": len(risk_rejected_trades),
+            "top_rejected_reasons": top_rejected_reasons
+        }
+
+        # Step 5: Execute approved trades (autonomous) or queue for human review
+        from utils.pending_execution_queue import append_pending_batch
+
+        mode = get_execution_mode()
+        if mode == "human_in_loop" and approved_trades:
+            logger.info("Step 5: Human-in-the-loop — deferring broker submission; writing pending queue…")
+            append_pending_batch(
+                source="daily_screening",
+                run_id=run_id,
+                candidates=candidates,
+                trades=approved_trades,
+                data_dir=DATA_DIR,
+            )
+            append_trust_event(
+                "execution_deferred_hitl",
+                {
+                    "run_id": run_id,
+                    "pending_count": len(approved_trades),
+                    "policy_profile": policy.get("active_profile"),
+                },
+            )
+            executed_trades = []
+            execution_failures = []
+            execution_gate_summary = {
+                "executed_count": 0,
+                "failed_count": 0,
+                "pending_human_review": len(approved_trades),
+                "execution_mode": mode,
+                "top_failure_reasons": [],
+            }
+            logger.info(
+                "Human-in-the-loop: %d approved trade(s) queued to data/pending_execution_queue.json — "
+                "after review run: python orchestrator.py execute_pending",
+                len(approved_trades),
+            )
+        else:
+            logger.info("Step 5: Executing approved trades…")
+            execution_results = await asyncio.gather(
+                *[submit_approved_screening_trade(t, candidates, current_params) for t in approved_trades]
+            )
+
+            executed_trades = [trade for status, trade in execution_results if status == "success"]
+            execution_failures = [trade for status, trade in execution_results if status == "failure"]
+
+            # Execution transparency (approved trades that actually executed/fail).
+            failure_reason_counter = Counter(
+                (t.get("execution_error") or t.get("error") or "Unknown")
+                for t in execution_failures
+                if isinstance(t, dict)
+            )
+            top_failure_reasons = [
+                {"reason": reason, "count": count}
+                for reason, count in failure_reason_counter.most_common(6)
+            ]
+            execution_gate_summary = {
+                "executed_count": len(executed_trades),
+                "failed_count": len(execution_failures),
+                "execution_mode": mode,
+                "top_failure_reasons": top_failure_reasons,
+            }
         
         # Step 6: Compile results
         end_time = datetime.now()
@@ -739,6 +1296,10 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
             'duration_seconds': duration,
             'candidates_found': len(candidates),
             'candidates': candidates,
+            'screening_meta': screening_meta,
+            'entry_gate_summary': entry_gate_summary,
+            'risk_gate_summary': risk_gate_summary,
+            'execution_gate_summary': execution_gate_summary,
             'approved_trades': approved_trades,
             'executed_trades': executed_trades,
             'execution_failures': execution_failures,
@@ -746,8 +1307,7 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
             'risk_status': get_risk_status(),
             'portfolio_value': portfolio_value,
             'account_info': account_info,
-            'fundamental_cost': fundamental_total_cost,
-            'universe_size': get_last_screening_universe_size(),
+            'fundamental_cost': fundamental_total_cost
         }
         
         logger.info("=" * 80)
@@ -755,14 +1315,32 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         logger.info(f"Duration: {duration:.2f} seconds")
         logger.info("=" * 80)
         
-        try:
-            from config.addon_loader import invoke_screen_done
-            invoke_screen_done(candidates)
-        except Exception as e:
-            logger.debug("Add-on screen_done: %s", e)
-        
         # Step 7: Save results
         save_daily_signals(result)
+        append_trust_event("screening_completed", {
+            "run_id": run_id,
+            "policy_profile": policy.get("active_profile"),
+            "candidates_found": len(candidates),
+            "approved_count": len(approved_trades),
+            "executed_count": len(executed_trades),
+            "rejected_count": len(rejected_trades),
+            "strict_mode": strict_mode,
+            "hedge_gate_passed": hedge_gate_summary.get("passed"),
+            "duration_seconds": duration,
+        })
+        log_screening_completed(
+            run_id,
+            {
+                "policy_profile": policy.get("active_profile"),
+                "candidates_found": len(candidates),
+                "approved_count": len(approved_trades),
+                "executed_count": len(executed_trades),
+                "rejected_count": len(rejected_trades),
+                "strict_mode": strict_mode,
+                "hedge_gate_passed": hedge_gate_summary.get("passed"),
+                "duration_seconds": duration,
+            },
+        )
         
         return result
         
@@ -778,10 +1356,43 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
             'candidates_found': 0,
             'approved_trades': [],
             'rejected_trades': [],
+            'screening_meta': {},
+            'entry_gate_summary': {},
+            'risk_gate_summary': {},
+            'execution_gate_summary': {},
             'risk_status': get_risk_status()
         }
         save_daily_signals(result)
+        append_trust_event("screening_failed", {
+            "run_id": run_id,
+            "policy_profile": policy.get("active_profile"),
+            "error_type": type(e).__name__,
+            "error": str(e),
+        })
+        log_screening_failed(run_id, type(e).__name__, str(e))
         return result
+
+
+def run_fortress():
+    """Run complete fortress hedging system."""
+    from agents.fortress_orchestrator import fortress_daily_check
+    
+    logger.info("=" * 80)
+    logger.info("FORTRESS HEDGING SYSTEM")
+    logger.info("=" * 80)
+    
+    try:
+        result = fortress_daily_check()
+        
+        if result:
+            logger.info("Fortress check complete")
+            logger.info(f"Market regime: {result.get('market_conditions', {}).get('regime', 'N/A')}")
+            logger.info(f"Strategies evaluated: {len(result.get('recommendations', {}))}")
+        
+        return result
+    except Exception as e:
+        logger.error(f"Fortress error: {e}")
+        return None
 
 
 def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
@@ -796,39 +1407,6 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
     """
     return asyncio.run(run_daily_screening_async(portfolio_value))
 
-
-def run_fortress():
-    """Run complete fortress hedging system. Gated by license tier."""
-    try:
-        from config.license import get_plan
-        from config.tiers import fortress_allowed
-        if not fortress_allowed(get_plan().tier):
-            logger.warning("Fortress hedging not included in this license tier. Upgrade to Pro or Enterprise.")
-            return None
-    except Exception:
-        pass
-    logger.info("=" * 80)
-    logger.info("FORTRESS HEDGING SYSTEM")
-    logger.info("=" * 80)
-    
-    try:
-        # Run daily check
-        result = fortress_daily_check()
-        
-        if result:
-            logger.info("Fortress check complete")
-            logger.info(f"Strategies evaluated: {len(result)}")
-            for strategy, data in (result or {}).items():
-                if data:
-                    logger.info(f"{strategy}: {data}")
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Fortress error: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
 
 async def monitor_positions_async():
     """
@@ -871,6 +1449,7 @@ async def monitor_positions_async():
         
         # Load open positions
         positions = load_positions()
+        positions_by_ticker = {p.get('ticker'): p for p in positions}
         
         if len(positions) == 0:
             logger.info("No open positions to monitor.")
@@ -900,41 +1479,52 @@ async def monitor_positions_async():
         
         async def execute_exit(signal):
             """Execute a single exit order asynchronously."""
-            SELL_ACTIONS = {'SELL_ALL', 'SELL_HALF', 'SELL_20%', 'SELL_30%', 'SELL_50%'}
-            if signal['action'] not in SELL_ACTIONS:
+            action = signal.get('action')
+            if not isinstance(action, str) or not action.startswith('SELL'):
                 return None
-
+            
             ticker = signal['ticker']
             sell_qty = signal.get('sell_qty', 0)
-
+            
             if sell_qty <= 0:
-                logger.warning(f"{ticker}: sell_qty=0 for action={signal['action']} — skipping")
                 return None
-
+            
             # Execute sell order
             order_result = await asyncio.to_thread(execute_sell_order, ticker, sell_qty)
-
-            if order_result['success']:
-                logger.info(f"{ticker}: Exit order executed ({signal['action']}) - ID: {order_result['order_id']}")
-
+            order_result = await asyncio.to_thread(_refresh_order_result, order_result)
+            
+            if order_result['success'] and _order_is_filled(order_result):
+                logger.info(f"{ticker}: Exit order executed - ID: {order_result['order_id']}")
+                
                 signal['order_id'] = order_result['order_id']
                 signal['order_status'] = order_result['status']
                 signal['filled_qty'] = order_result['filled_qty']
                 signal['filled_price'] = order_result['filled_price']
                 signal['executed'] = True
                 signal['execution_time'] = datetime.now().isoformat()
-
+                
                 # Update positions file
                 if signal['action'] == 'SELL_ALL':
                     await asyncio.to_thread(remove_position, ticker)
-                else:  # partial sell — reduce quantity
-                    await asyncio.to_thread(update_position_quantity, ticker, sell_qty)
+                else:  # SELL_HALF
+                    await asyncio.to_thread(
+                        update_position_quantity,
+                        ticker,
+                        sell_qty,
+                        signal.get('tier')
+                    )
                 
                 return ('success', signal)
             else:
-                logger.error(f"{ticker}: Exit order failed - {order_result['error']}")
+                status = order_result.get("status")
+                detail = order_result.get("error") or f"not filled yet (status={status})"
+                logger.warning(f"{ticker}: Exit order not finalized - {detail}")
+                signal['order_id'] = order_result.get('order_id')
+                signal['order_status'] = status
+                signal['filled_qty'] = order_result.get('filled_qty')
+                signal['filled_price'] = order_result.get('filled_price')
                 signal['executed'] = False
-                signal['execution_error'] = order_result['error']
+                signal['execution_error'] = detail
                 return ('failure', signal)
         
         # Execute all exits in parallel
@@ -942,6 +1532,182 @@ async def monitor_positions_async():
         
         executed_exits = [signal for result in exit_results if result and result[0] == 'success' for _, signal in [result]]
         exit_failures = [signal for result in exit_results if result and result[0] == 'failure' for _, signal in [result]]
+
+        # Update risk guardian state and write realized P&L ledger for next screening run.
+        ledger_order_ids = _read_pnl_ledger_order_ids()
+        for signal in executed_exits:
+            try:
+                pos = positions_by_ticker.get(signal.get('ticker'))
+                filled_price = signal.get('filled_price')
+                sell_qty = signal.get('sell_qty', 0)
+
+                if filled_price is None or sell_qty is None or float(sell_qty) <= 0:
+                    continue
+
+                filled_price = float(filled_price)
+                sell_qty = float(sell_qty)
+
+                trade_type = (pos or {}).get('type', 'STOCK')
+                if trade_type == 'OPTION':
+                    entry_price = float((pos or {}).get('entry_premium', 0) or 0)
+                    # Option premium is per share; contract multiplier is 100.
+                    pnl_dollars = (filled_price - entry_price) * sell_qty * 100
+                else:
+                    # If position already rotated out of the local file, infer entry from pnl_pct.
+                    if pos:
+                        entry_price = float(pos.get('entry_price', 0) or 0)
+                    else:
+                        derived = _derive_entry_price_from_signal(signal, filled_price)
+                        if derived is None:
+                            continue
+                        entry_price = derived
+                    pnl_dollars = (filled_price - entry_price) * sell_qty
+
+                update_consecutive_losses({'pnl': pnl_dollars})
+
+                _append_pnl_ledger_once({
+                    'timestamp': datetime.now().isoformat(),
+                    'order_id': signal.get('order_id'),
+                    'ticker': signal.get('ticker'),
+                    'underlying_ticker': (pos or {}).get('underlying_ticker'),
+                    'type': trade_type,
+                    'pnl': pnl_dollars,
+                    'pnl_pct': signal.get('pnl_pct')
+                }, ledger_order_ids)
+            except Exception as e:
+                logger.warning(f"Failed to record P&L ledger entry: {type(e).__name__}: {str(e)}")
+
+        # Reconcile delayed fills from earlier monitor runs that were not filled at submit-time.
+        # This closes the accounting gap where exit order eventually fills but pnl_ledger stays empty.
+        try:
+            date_str = datetime.now().strftime('%Y%m%d')
+            exit_file = DATA_DIR / f"exit_signals_{date_str}.json"
+            signal_by_order_id = {}
+            if exit_file.exists() and alpaca_client is not None:
+                runs_blob = json.loads(exit_file.read_text())
+                runs = runs_blob.get('runs', [])
+                for run in runs:  # scan full day history for delayed fills
+                    for signal in run.get('exit_signals', []):
+                        order_id = signal.get('order_id')
+                        action = signal.get('action')
+                        if not order_id or not isinstance(action, str) or not action.startswith("SELL"):
+                            continue
+                        if str(order_id) in ledger_order_ids:
+                            continue
+                        signal_by_order_id[str(order_id)] = signal
+                        try:
+                            order = alpaca_client.get_order_by_id(str(order_id))
+                            status = str(getattr(order, "status", "")).strip().lower()
+                            if not (status == "filled" or status.endswith(".filled")):
+                                continue
+                            filled_price = getattr(order, "filled_avg_price", None)
+                            filled_qty = getattr(order, "filled_qty", None)
+                            if filled_price is None or filled_qty is None:
+                                continue
+                            filled_price = float(filled_price)
+                            sell_qty = float(signal.get('sell_qty') or filled_qty or 0)
+                            if sell_qty <= 0:
+                                continue
+
+                            pos = positions_by_ticker.get(signal.get('ticker'))
+                            trade_type = (pos or {}).get('type', 'STOCK')
+                            if trade_type == 'OPTION':
+                                entry_price = float((pos or {}).get('entry_premium', 0) or 0)
+                                pnl_dollars = (filled_price - entry_price) * sell_qty * 100
+                            else:
+                                if pos:
+                                    entry_price = float(pos.get('entry_price', 0) or 0)
+                                else:
+                                    derived = _derive_entry_price_from_signal(signal, filled_price)
+                                    if derived is None:
+                                        continue
+                                    entry_price = derived
+                                pnl_dollars = (filled_price - entry_price) * sell_qty
+
+                            if _append_pnl_ledger_once({
+                                'timestamp': datetime.now().isoformat(),
+                                'order_id': str(order_id),
+                                'ticker': signal.get('ticker'),
+                                'underlying_ticker': (pos or {}).get('underlying_ticker'),
+                                'type': trade_type,
+                                'pnl': pnl_dollars,
+                                'pnl_pct': signal.get('pnl_pct')
+                            }, ledger_order_ids):
+                                update_consecutive_losses({'pnl': pnl_dollars})
+                        except Exception:
+                            continue
+
+                # Second reconciliation source: Alpaca filled SELL order history.
+                # Captures fills that happened outside exit_signals (manual/API sell path).
+                try:
+                    after_ts = datetime.now(pytz.UTC) - timedelta(days=2)
+                    req = GetOrdersRequest(status=QueryOrderStatus.CLOSED, after=after_ts, nested=False)
+                    try:
+                        recent_orders = alpaca_client.get_orders(filter=req)
+                    except TypeError:
+                        recent_orders = alpaca_client.get_orders(req)
+                    except Exception:
+                        recent_orders = []
+
+                    for order in recent_orders or []:
+                        try:
+                            order_id = str(getattr(order, "id", "") or "")
+                            if not order_id or order_id in ledger_order_ids:
+                                continue
+                            status = str(getattr(order, "status", "")).strip().lower()
+                            if not (status == "filled" or status.endswith(".filled")):
+                                continue
+                            side = str(getattr(order, "side", "")).strip().lower()
+                            if not (side == "sell" or side.endswith(".sell")):
+                                continue
+
+                            ticker = str(getattr(order, "symbol", "") or "").strip().upper()
+                            if not ticker:
+                                continue
+                            filled_price = getattr(order, "filled_avg_price", None)
+                            filled_qty = getattr(order, "filled_qty", None)
+                            if filled_price is None or filled_qty is None:
+                                continue
+                            filled_price = float(filled_price)
+                            sell_qty = float(filled_qty)
+                            if sell_qty <= 0:
+                                continue
+
+                            pos = positions_by_ticker.get(ticker)
+                            trade_type = (pos or {}).get('type', 'STOCK')
+                            signal = signal_by_order_id.get(order_id) or {}
+                            if trade_type == 'OPTION':
+                                entry_price = float((pos or {}).get('entry_premium', 0) or 0)
+                                if entry_price <= 0:
+                                    continue
+                                pnl_dollars = (filled_price - entry_price) * sell_qty * 100
+                            else:
+                                if pos:
+                                    entry_price = float(pos.get('entry_price', 0) or 0)
+                                else:
+                                    # If position is fully closed, infer from available pnl_pct.
+                                    derived = _derive_entry_price_from_signal(signal, filled_price)
+                                    if derived is None:
+                                        continue
+                                    entry_price = derived
+                                pnl_dollars = (filled_price - entry_price) * sell_qty
+
+                            if _append_pnl_ledger_once({
+                                'timestamp': datetime.now().isoformat(),
+                                'order_id': order_id,
+                                'ticker': ticker,
+                                'underlying_ticker': (pos or {}).get('underlying_ticker'),
+                                'type': trade_type,
+                                'pnl': pnl_dollars,
+                                'pnl_pct': signal.get('pnl_pct')
+                            }, ledger_order_ids):
+                                update_consecutive_losses({'pnl': pnl_dollars})
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"PnL reconciliation skipped: {type(e).__name__}: {str(e)}")
         
         # Compile results
         end_time = datetime.now()
@@ -1070,13 +1836,14 @@ def remove_position(ticker):
         logger.error(f"Error removing position: {type(e).__name__}: {str(e)}")
 
 
-def update_position_quantity(ticker, qty_sold):
+def update_position_quantity(ticker, qty_sold, tier=None):
     """
     Update position quantity after partial sale.
     
     Args:
         ticker: Stock ticker
         qty_sold: Number of shares sold
+        tier: Optional tier name (e.g. 'tier1', 'tier2', 'tier3') to mark as sold
     """
     try:
         # Load existing positions
@@ -1094,6 +1861,10 @@ def update_position_quantity(ticker, qty_sold):
                     pos['shares'] = new_qty
                 if 'qty' in pos:
                     pos['qty'] = new_qty
+
+                # Mark tier as sold so we don't repeatedly sell the same tranche.
+                if tier and 'tiers_sold' in pos and isinstance(pos['tiers_sold'], dict):
+                    pos['tiers_sold'][tier] = True
                 
                 logger.info(f"Updated position: {ticker} - {old_qty} -> {new_qty} shares")
                 break
@@ -1117,17 +1888,66 @@ def build_portfolio_data(positions, portfolio_value):
     Returns:
         dict: Portfolio data for risk_guardian
     """
-    # Calculate today's P&L (simplified - would need actual tracking)
-    today_pnl = 0
+    # Risk guardian expects each position to have:
+    # - `value` (notional/exposure used for risk checks)
+    # - `sector` (for concentration checks)
+    #
+    # Stored positions historically omitted `value`, so compute it here.
+    enhanced_positions = []
     for pos in positions:
-        if 'current_pnl' in pos:
-            today_pnl += pos['current_pnl']
-    
+        pos = dict(pos)
+        trade_type = pos.get('type', 'STOCK')
+        sector = pos.get('sector', 'Unknown')
+
+        if trade_type == 'OPTION':
+            qty = float(pos.get('qty', 0) or 0)
+            entry_premium = float(pos.get('entry_premium', 0) or 0)
+            computed_value = qty * entry_premium * 100.0
+        else:
+            shares = float(pos.get('shares', pos.get('qty', 0)) or 0)
+            entry_price = float(pos.get('entry_price', 0) or 0)
+            computed_value = shares * entry_price
+
+        if pos.get('value') is None:
+            pos['value'] = computed_value
+        else:
+            try:
+                pos['value'] = float(pos.get('value'))
+            except Exception:
+                pos['value'] = computed_value
+
+        pos['sector'] = sector
+        enhanced_positions.append(pos)
+
+    positions = enhanced_positions
+
+    # Realized P&L is tracked in pnl_ledger.jsonl (written on exit executions).
+    today_pnl = 0.0
+    week_pnl = 0.0
+    now = datetime.now()
+
+    if PNL_LEDGER_FILE.exists():
+        try:
+            with open(PNL_LEDGER_FILE, "r") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    rec = json.loads(line)
+                    ts = datetime.fromisoformat(rec["timestamp"])
+                    pnl = float(rec.get("pnl", 0))
+
+                    if ts.date() == now.date():
+                        today_pnl += pnl
+                    if ts >= (now - timedelta(days=7)):
+                        week_pnl += pnl
+        except Exception as e:
+            logger.warning(f"Failed reading PnL ledger: {type(e).__name__}: {str(e)}")
+
     return {
         'equity': portfolio_value,
         'positions': positions,
         'today_pnl': today_pnl,
-        'week_pnl': None  # Would need historical tracking
+        'week_pnl': week_pnl
     }
 
 
@@ -1201,20 +2021,57 @@ def save_exit_signals(result):
         logger.error(f"Error saving exit signals: {type(e).__name__}: {str(e)}")
 
 
+def flush_pending_execution_queue() -> dict:
+    """
+    Submit all trades queued in ``data/pending_execution_queue.json`` (human-in-the-loop).
+
+    Clears the queue after processing (check logs / trust ledger for failures).
+    """
+    from utils.pending_execution_queue import clear_batches, load_batches
+
+    batches = load_batches(DATA_DIR)
+    if not batches:
+        logger.info("execute_pending: no pending batches in data/pending_execution_queue.json")
+        return {"ok": True, "message": "no pending batches", "batches": 0, "executed": 0, "failed": 0}
+
+    current_params = load_current_params()
+
+    async def _run_all():
+        out = []
+        for batch in batches:
+            if not isinstance(batch, dict):
+                continue
+            candidates = batch.get("candidates") or []
+            trades = batch.get("trades") or []
+            for trade in trades:
+                if isinstance(trade, dict):
+                    out.append(await submit_approved_screening_trade(trade, candidates, current_params))
+        return out
+
+    results = asyncio.run(_run_all())
+    succeeded = sum(1 for st, _ in results if st == "success")
+    failed = sum(1 for st, _ in results if st == "failure")
+    clear_batches(DATA_DIR)
+    append_trust_event(
+        "pending_execution_flushed",
+        {
+            "batches": len(batches),
+            "executed": succeeded,
+            "failed": failed,
+        },
+    )
+    logger.info(
+        "execute_pending: batches=%d trade_results success=%d fail=%d (queue cleared)",
+        len(batches),
+        succeeded,
+        failed,
+    )
+    return {"ok": True, "batches": len(batches), "executed": succeeded, "failed": failed}
+
+
 if __name__ == "__main__":
     import sys
-
-    # Ensure cwd is project root (critical when run from cron)
-    os.chdir(_ORCH_ROOT)
-
-    # Touch orchestrator.log so Command Center "last run" is fresh for any command
-    try:
-        with open(log_dir / "orchestrator.log", "a", encoding="utf-8") as f:
-            cmd = sys.argv[1] if len(sys.argv) > 1 else "?"
-            f.write(f"{datetime.now().isoformat()} - orchestrator started: {cmd}\n")
-    except Exception:
-        pass
-
+    
     # Command-line interface
     if len(sys.argv) < 2:
         print("Usage:")
@@ -1229,8 +2086,9 @@ if __name__ == "__main__":
         print("  python orchestrator.py architect                  - Run meta-architect improvement cycle")
         print("  python orchestrator.py fortress                   - Run complete hedging system")
         print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
+        print("  python orchestrator.py execute_pending            - Submit queued HITL trades (see FORTRESS_EXECUTION_MODE)")
         sys.exit(1)
-
+    
     command = sys.argv[1].lower()
     
     if command == "screen":
@@ -1246,13 +2104,19 @@ if __name__ == "__main__":
         print(f"Approved trades: {len(result['approved_trades'])}")
         print(f"Rejected trades: {len(result['rejected_trades'])}")
         
+        eg = result.get("execution_gate_summary") or {}
+        if eg.get("pending_human_review"):
+            print(f"\nHuman-in-the-loop: {eg['pending_human_review']} approved trade(s) queued — run: python orchestrator.py execute_pending")
+
         if result.get('executed_trades'):
             print("\nExecuted Trades:")
             for trade in result['executed_trades']:
                 print(f"  {trade['ticker']}: {trade['shares']} shares @ ${trade['entry_price']:.2f} = ${trade['position_size']:.2f}")
                 print(f"    Order ID: {trade['order_id']}")
                 print(f"    Status: {trade['order_status']}")
-                print(f"    Confidence: {trade['confidence']:.2f}")
+                conf = trade.get("confidence")
+                if conf is not None:
+                    print(f"    Confidence: {conf:.2f}")
                 if trade.get('risk_adjusted'):
                     print(f"    (Position size adjusted by risk management)")
         
@@ -1547,14 +2411,29 @@ if __name__ == "__main__":
                     print(f"  - {agent['agent_name']}: {agent.get('reason', agent.get('error', 'Unknown'))}")
     
 
+    elif command == "fortress":
+        print("\nRunning complete fortress hedging system...")
+        result = run_fortress()
+        
+        print("\n" + "=" * 80)
+        print("FORTRESS HEDGING SYSTEM RESULTS")
+        print("=" * 80)
+        if result:
+            print(f"Market regime: {result.get('market_conditions', {}).get('regime', 'N/A')}")
+            print(f"Strategies evaluated: {len(result.get('recommendations', {}))}")
+            for strategy, data in result.get('recommendations', {}).items():
+                if data:
+                    print(f"{strategy}: {data}")
+        else:
+            print("No results returned from fortress hedging system.")
+
+    elif command == "execute_pending":
+        print("\nFlushing human-in-the-loop pending queue (data/pending_execution_queue.json)…")
+        out = flush_pending_execution_queue()
+        print(json.dumps(out, indent=2))
+
     elif command == "snipe":
         portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else 10000
-        # Append a timestamp line so Command Center sees a fresh run when cron runs
-        try:
-            with open(log_dir / "sniper.log", "a", encoding="utf-8") as f:
-                f.write(f"{datetime.now().isoformat()} - orchestrator snipe started (portfolio={portfolio_value:,.0f})\n")
-        except Exception:
-            pass
         logger.info(f"Running intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
         opportunities = scan_intraday_opportunities(portfolio_value)
         
@@ -1563,15 +2442,138 @@ if __name__ == "__main__":
         logger.info("=" * 80)
         logger.info(f"Opportunities found: {len(opportunities)}")
         
-        if opportunities:
-            for opp in opportunities:
-                logger.info(f"{opp['ticker']} @ ${opp['entry_price']:.2f}")
-                logger.info(f"  Metrics: {opp['metrics']}")
-        else:
+        if not opportunities:
             logger.info("No opportunities found")
+            sys.exit(0)
 
-    else:
-        print(f"Unknown command: {command}")
-        print("Use: screen, monitor, status, costs, watchdog, preload, tune, review, architect, fortress, snipe")
-        sys.exit(1)
+        # Risk profile (match daily strict-mode behavior)
+        risk_status = get_risk_status()
+        consecutive_losses = int(risk_status.get("consecutive_losses") or 0)
+        circuit_breaker_active = bool(risk_status.get("circuit_breaker_active"))
+        strict_mode = circuit_breaker_active or consecutive_losses >= 2
+
+        account_info = get_account_info()
+        if not account_info:
+            logger.error("Intraday sniper: could not load Alpaca account info; execution disabled.")
+            sys.exit(0)
+
+        current_positions = load_positions()
+        portfolio_data = build_portfolio_data(current_positions, portfolio_value)
+        existing_tickers = {str(p.get("ticker") or "").upper() for p in current_positions if p.get("ticker")}
+
+        policy = get_profile_bundle()
+        exec_cfg = policy.get("execution") or {}
+        max_trades_per_run = int(exec_cfg.get("sniper_max_trades_per_run") or os.getenv("SNIPER_MAX_TRADES_PER_RUN", "3"))
+        executed = 0
+        approved = []
+        rejected = []
+        deferred_snipe_trades: list[dict] = []
+
+        for opp in opportunities:
+            if executed >= max_trades_per_run:
+                break
+
+            ticker = str(opp.get("ticker") or "").strip().upper()
+            entry_price = float(opp.get("entry_price") or 0)
+            metrics = opp.get("metrics") or {}
+
+            if not ticker or entry_price <= 0:
+                continue
+            if ticker in existing_tickers:
+                continue
+
+            decision = evaluate_quick_entry(ticker, entry_price, metrics, portfolio_value=portfolio_value)
+            if not isinstance(decision, dict) or decision.get("action") != "BUY":
+                rejected.append({"ticker": ticker, "reason": (decision or {}).get("reason") or "not_buy"})
+                continue
+
+            shares = int(decision.get("shares") or 0)
+            position_value = float(decision.get("position_value") or 0)
+            if shares < 1 or position_value <= 0:
+                rejected.append({"ticker": ticker, "reason": "invalid_position_size"})
+                continue
+
+            required_capital = position_value * BUYING_POWER_BUFFER
+            if account_info.get("buying_power", 0) < required_capital:
+                rejected.append({"ticker": ticker, "reason": "insufficient_buying_power"})
+                continue
+
+            new_position = {
+                "ticker": ticker,
+                "size": shares,
+                "value": position_value,
+                "sector": "Unknown",
+            }
+            risk_check = check_risk_limits(portfolio_data, new_position, strict_mode=strict_mode)
+            if not risk_check.get("approved"):
+                rejected.append({"ticker": ticker, "reason": risk_check.get("reason") or "risk_rejected"})
+                continue
+
+            if "adjusted_size" in risk_check:
+                shares = int(risk_check["adjusted_size"])
+                position_value = shares * entry_price
+                decision["shares"] = shares
+                decision["position_value"] = position_value
+
+            order_result = execute_buy_order(ticker, shares, entry_price)
+            if order_result.get("success") and _order_is_filled(order_result):
+                order_id = order_result.get("order_id")
+                add_position({
+                    "ticker": ticker,
+                    "shares": shares,
+                    "entry_price": entry_price,
+                    "entry_date": datetime.now().isoformat(),
+                    "order_id": order_id,
+                    "sector": "Unknown",
+                    "stop_loss_pct": -0.02,
+                    "take_profit_pct": 0.05,
+                    "tiers_sold": {"tier1": False, "tier2": False, "tier3": False},
+                })
+
+                portfolio_data["positions"].append({"ticker": ticker, "value": position_value, "sector": "Unknown"})
+                existing_tickers.add(ticker)
+                executed += 1
+                approved.append({"ticker": ticker, "shares": shares, "entry_price": entry_price, "order_id": order_id})
+
+        if get_execution_mode() == "human_in_loop" and deferred_snipe_trades:
+            from utils.pending_execution_queue import append_pending_batch
+
+            snipe_rid = f"snipe_{int(pytime.time())}"
+            append_pending_batch(
+                source="intraday_sniper",
+                run_id=snipe_rid,
+                candidates=[],
+                trades=deferred_snipe_trades,
+                data_dir=DATA_DIR,
+            )
+            append_trust_event(
+                "execution_deferred_hitl",
+                {
+                    "run_id": snipe_rid,
+                    "pending_count": len(deferred_snipe_trades),
+                    "source": "intraday_sniper",
+                },
+            )
+
+        if get_execution_mode() == "human_in_loop":
+            logger.info(
+                "Intraday sniper (human-in-the-loop): queued=%d rejected=%d strict_mode=%s — run: python orchestrator.py execute_pending",
+                len(deferred_snipe_trades),
+                len(rejected),
+                strict_mode,
+            )
+            for a in deferred_snipe_trades:
+                logger.info(
+                    "  QUEUED %s shares=%s @ %.2f",
+                    a["ticker"],
+                    a["shares"],
+                    a["entry_price"],
+                )
+        else:
+            logger.info(
+                f"Intraday sniper: executed={len(approved)} rejected={len(rejected)} strict_mode={strict_mode}"
+            )
+            if approved:
+                for a in approved:
+                    logger.info(f"  APPROVED {a['ticker']} shares={a['shares']} @ {a['entry_price']:.2f} order_id={a['order_id']}")
 
