@@ -9,6 +9,8 @@
 | **Mac role** | **Mirror + editor** — not a second production runtime. Avoid running the same trading cron or “live” bot on the Mac unless you explicitly mean a throwaway test. |
 | **Mac → Oracle** | **On purpose only** — when you need to push a tree from the Mac to the server, use `deploy_to_oracle.sh`; then return to editing on Oracle as truth. |
 
+**After you finish changes on the Mac:** run `git add -A && git commit -m "describe change"` (so nothing is left unstaged), then **`./deploy_to_oracle.sh`** (with your host/user flags) so the VM matches Git.
+
 Production **code** you care about should be edited, run, and committed on the **Oracle** VM (`~/trading-bot`). Your Mac is a **convenience mirror** for Cursor / reading — **not** a second canonical git remote unless you use a shared host (GitHub).
 
 ---
