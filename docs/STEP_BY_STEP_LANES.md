@@ -62,7 +62,7 @@ These are still **mostly lanes 2–3** (enforcement); you verify on **lane 1** w
 
 1. ~~Wire **API routes / backtest / exports** to `config.tiers` via `utils/license_gates.py` (dashboard + CLI).~~ **Done in v1.0.1.**
 2. ~~**Universe size caps** — screener + intraday sniper use `effective_max_universe_size()` / `apply_license_universe_cap()`; telemetry in `data/last_screening_meta.json` (`universe_license_cap`).~~ **Done in v1.0.2.**
-3. Add **Stripe/Paddle** (later) → write `license.json` + set `FORTRESS_LICENSE_PATH` on customer machines.
+3. **Stripe (done for webhooks)** — `POST /api/billing/stripe-webhook` + `utils/stripe_license_sync.py` + `docs/BILLING_STRIPE.md`. **You still do:** Stripe Dashboard products/prices, webhook URL, paste secrets into `.env`, `pip install stripe`, restart dashboard. **Paddle:** not implemented yet; same pattern possible later.
 
 **Lane 1 execution steps (deploy, `.env`, tests):** `docs/LANE1_OPERATOR_CHECKLIST.md`
 

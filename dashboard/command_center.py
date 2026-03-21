@@ -59,6 +59,7 @@ _DASH_PUBLIC_PATHS = frozenset({
     "/api/setup/test_connection",
     "/manifest.json",
     "/api/hooks/tradingview",
+    "/api/billing/stripe-webhook",
 })
 _DASH_PUBLIC_PREFIXES = ("/static/",)
 
@@ -2071,6 +2072,39 @@ def api_hooks_tradingview():
         return jsonify({"ok": True, "received_at": row.get("timestamp")}), 200
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)[:200]}), 500
+
+
+@app.route("/api/billing/stripe-webhook", methods=["POST"])
+def api_billing_stripe_webhook():
+    """
+    Stripe → license file (Lanes 2–3). Public URL; verified with Stripe-Signature + STRIPE_WEBHOOK_SECRET.
+    Dashboard URL: https://YOUR_HOST:8083/api/billing/stripe-webhook
+    """
+    secret = (os.environ.get("STRIPE_WEBHOOK_SECRET") or "").strip()
+    if not secret:
+        return jsonify({"error": "stripe_webhook_not_configured"}), 501
+    payload = request.get_data(cache=False, as_text=False) or b""
+    sig = request.headers.get("Stripe-Signature") or ""
+    try:
+        import stripe
+
+        event = stripe.Webhook.construct_event(payload, sig, secret)
+    except Exception:
+        return jsonify({"error": "webhook_verify_failed"}), 400
+
+    from utils.stripe_license_sync import process_stripe_webhook_event
+
+    path = process_stripe_webhook_event(event)
+    if path is None:
+        return jsonify({"received": True, "ignored": True}), 200
+    try:
+        append_trust_event(
+            "stripe_license_updated",
+            {"path": str(path), "event_type": event.get("type")},
+        )
+    except Exception:
+        pass
+    return jsonify({"received": True, "license_path": str(path)}), 200
 
 
 @app.route("/api/tradingview_signals")

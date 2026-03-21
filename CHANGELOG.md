@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. Version in `VERSION` should match the latest release tag when you cut one.
 
+## [1.0.3] — 2026-03-21
+
+### Added
+
+- **Stripe webhook → license file** — `POST /api/billing/stripe-webhook` (public; signature-verified), `utils/stripe_license_sync.py`, `stripe==11.4.1`, `docs/BILLING_STRIPE.md`. Maps Price IDs to Starter/Pro/Enterprise via env; writes `STRIPE_LICENSE_OUT_PATH` for `FORTRESS_LICENSE_PATH`.
+
 ## [1.0.2] — 2026-03-21
 
 ### Added
