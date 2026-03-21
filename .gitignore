@@ -6,3 +6,5 @@ data/
 venv/
 .aider*
 .DS_Store
+# Local command history — often contains pasted API keys; never commit
+COMMANDS.txt
