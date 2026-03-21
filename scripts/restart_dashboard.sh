@@ -1,26 +1,12 @@
 #!/usr/bin/env bash
 # Restart Fortress Command Center (Flask on COMMAND_CENTER_PORT, default 8083).
 # Run from repo root on the machine that serves the dashboard (OCI, laptop, etc.).
-#
-# On servers using systemd (fortress-dashboard.service), do NOT use this script —
-# it starts a second copy on the same port and systemd will crash-loop.
-# Use: sudo ./scripts/restart_dashboard_systemd.sh
-# Override (not recommended): RESTART_DASHBOARD_ALLOW_NOHUP=1 ./scripts/restart_dashboard.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 PORT="${COMMAND_CENTER_PORT:-8083}"
 VENV="${VENV_PATH:-$ROOT/venv}"
-
-if [[ -z "${RESTART_DASHBOARD_ALLOW_NOHUP:-}" ]] && command -v systemctl >/dev/null 2>&1; then
-  if systemctl is-enabled fortress-dashboard.service &>/dev/null; then
-    echo "[restart] ERROR: fortress-dashboard.service is enabled (systemd)." >&2
-    echo "[restart] Starting nohup here would bind port ${PORT} twice and break systemd." >&2
-    echo "[restart] Use: sudo ./scripts/restart_dashboard_systemd.sh" >&2
-    exit 1
-  fi
-fi
 
 echo "[restart] repo=$ROOT port=$PORT"
 

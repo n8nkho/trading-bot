@@ -2,6 +2,8 @@ import yfinance as yf
 import logging
 from datetime import datetime, timedelta
 
+from utils.market_assets import require_market_assets
+
 # Constants
 SPREAD_WIDTH = 5
 TARGET_DTE = 30
@@ -11,16 +13,24 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 def get_spy_price():
     try:
-        ticker = yf.Ticker("SPY")
+        assets = require_market_assets()
+        underlying_symbol = (assets.get("theta_spreads") or {}).get("underlying_symbol")
+        if not underlying_symbol:
+            return None
+        ticker = yf.Ticker(underlying_symbol)
         data = ticker.history(period='1d')
         return data['Close'].iloc[-1]
     except Exception as e:
-        logging.error(f"Error fetching SPY price: {e}")
+        logging.error(f"Error fetching theta underlying price: {e}")
         return None
 
 def design_bull_put_spread(spy_price):
     try:
-        ticker = yf.Ticker("SPY")
+        assets = require_market_assets()
+        underlying_symbol = (assets.get("theta_spreads") or {}).get("underlying_symbol")
+        if not underlying_symbol:
+            return None
+        ticker = yf.Ticker(underlying_symbol)
         expirations = ticker.options
         target_date = datetime.now() + timedelta(days=TARGET_DTE)
         expiration = min(expirations, key=lambda date: abs(datetime.strptime(date, '%Y-%m-%d') - target_date))

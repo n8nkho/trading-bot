@@ -1,190 +1,116 @@
 #!/usr/bin/env python3
-"""Run all trading strategies. Each strategy runs in try/except; one failure does not stop others."""
+"""
+Legacy strategy runner (cron compatibility).
+
+**Without** ``--execute``: no-op exit 0 (safe for health checks).
+
+**With** ``--execute``: dispatches to the real orchestrator workflows:
+
+- **Autonomous vs human-in-the-loop** for *new entries* is controlled by
+  ``FORTRESS_EXECUTION_MODE`` (see ``utils/execution_mode.py`` and
+  ``docs/OPERATOR_RUNBOOKS.md``). This script does not change that — it only
+  invokes the orchestrator.
+
+Legacy cron labels (Oracle / older installs) map to:
+
+| Label          | Orchestrator command                                      |
+|----------------|-----------------------------------------------------------|
+| trump          | ``screen`` (full daily pipeline)                          |
+| inefficiency   | ``screen``                                                |
+| sector         | ``screen``                                                |
+| smartmoney     | ``screen``                                                |
+| mergerarb      | ``screen``                                                |
+| momentum       | ``snipe`` (intraday sniper; uses portfolio value below)   |
+
+You may also pass through: ``screen``, ``monitor``, ``fortress``, ``snipe`` directly.
+
+Portfolio sizing for ``screen`` / ``snipe`` uses ``FORTRESS_PORTFOLIO_VALUE`` or
+``PORTFOLIO_VALUE`` env, else ``50000``.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
 
-def _run_safe(name, fn, *args, **kwargs):
-    """Run strategy; return (result, error). On exception return (None, str(e))."""
+def _portfolio_arg() -> str:
+    for key in ("FORTRESS_PORTFOLIO_VALUE", "PORTFOLIO_VALUE"):
+        v = os.environ.get(key)
+        if v and str(v).strip():
+            return str(v).strip()
+    return "50000"
+
+
+def _normalize(name: str) -> str:
+    n = name.strip().lower().replace("-", "_")
+    aliases = {"merger_arb": "mergerarb", "smart_money": "smartmoney"}
+    return aliases.get(n, n)
+
+
+def _resolve_command(strategy: str) -> tuple[str, list[str]]:
+    """
+    Return (orchestrator_subcommand, extra_argv).
+    """
+    n = _normalize(strategy)
+    if n in {"screen", "monitor", "fortress", "snipe", "architect", "review", "execute_pending"}:
+        if n in {"screen", "snipe"}:
+            return n, [_portfolio_arg()]
+        return n, []
+
+    legacy_screen = {
+        "trump",
+        "inefficiency",
+        "sector",
+        "smartmoney",
+        "mergerarb",
+    }
+    if n in legacy_screen:
+        return "screen", [_portfolio_arg()]
+    if n == "momentum":
+        return "snipe", [_portfolio_arg()]
+
+    raise ValueError(f"Unknown strategy label: {strategy!r}")
+
+
+def main(argv: list[str]) -> int:
+    ts = datetime.now().isoformat(timespec="seconds")
+
+    if len(argv) < 2 or not argv[1].strip():
+        print("Usage: python3 run_strategies.py <strategy> [--execute]")
+        print("Legacy labels: trump, momentum, inefficiency, sector, smartmoney, mergerarb")
+        print("Direct: screen, monitor, fortress, snipe, architect, review, execute_pending")
+        return 0
+
+    strategy = argv[1].strip()
+    execute = "--execute" in argv
+
+    print(f"[run_strategies] {ts} strategy={strategy} execute={execute}")
+
+    if not execute:
+        print(f"[run_strategies] No-op (legacy cron satisfied): {strategy}")
+        return 0
+
     try:
-        return (fn(*args, **kwargs), None)
-    except Exception as e:
-        import traceback
-        sys.stderr.write(f"Strategy {name} failed: {e}\n")
-        traceback.print_exc()
-        return (None, str(e))
+        sub, extras = _resolve_command(strategy)
+    except ValueError as e:
+        print(f"[run_strategies] ERROR: {e}")
+        return 1
+
+    root = Path(__file__).resolve().parent
+    orch = root / "orchestrator.py"
+    if not orch.is_file():
+        print(f"[run_strategies] ERROR: missing {orch}")
+        return 1
+
+    cmd = [sys.executable, str(orch), sub, *extras]
+    print(f"[run_strategies] dispatch: {' '.join(cmd)}")
+    proc = subprocess.run(cmd, cwd=str(root))
+    return int(proc.returncode)
 
 
-if len(sys.argv) < 2:
-    print("Usage: python run_strategies.py [strategy]")
-    print("\nAvailable strategies:")
-    print("  momentum      - Day trading breakouts")
-    print("  trump         - Trump policy signals")
-    print("  smartmoney    - Institutional order flow (paper signals only)")
-    print("  mergerarb     - Merger arbitrage")
-    print("  inefficiency  - Market inefficiencies")
-    print("  earnings      - Earnings drift continuation")
-    print("  insider       - Insider buying tracker")
-    print("  squeeze       - Short squeeze detector")
-    print("  sector        - Sector rotation detector")
-    print("  vwap          - VWAP mean reversion")
-    print("  flow          - Options flow tracker (sample data)")
-    sys.exit(1)
-
-strategy = sys.argv[1]
-
-# License tier gate: only run if this strategy is allowed for the current plan
-try:
-    from config.license import get_plan
-    from config.tiers import strategy_allowed
-    plan = get_plan()
-    if not strategy_allowed(strategy, plan.tier):
-        print(f"Strategy '{strategy}' is not included in your license tier ({plan.tier}). Upgrade to run this strategy.")
-        sys.exit(1)
-except Exception:
-    pass  # If license/tiers unavailable, allow (e.g. master dev)
-
-if strategy == "momentum":
-    from agents.momentum_trader import momentum_strategy
-    print("=" * 60)
-    print("MOMENTUM DAY TRADER")
-    print("=" * 60)
-    result, err = _run_safe("momentum", momentum_strategy)
-    if err:
-        sys.exit(1)
-    print(f"\nResult: {result}")
-
-elif strategy == "trump":
-    from agents.trump_trader import trump_strategy
-    print("=" * 60)
-    print("TRUMP POLICY TRADER")
-    print("=" * 60)
-    result, err = _run_safe("trump", trump_strategy, 10000)
-    if err:
-        sys.exit(1)
-    print(f"\nResult: {result}")
-
-elif strategy == "smartmoney":
-    from agents.smart_money_trader import smart_money_strategy
-    print("=" * 60)
-    print("SMART MONEY TRADER (PAPER SIGNALS)")
-    print("=" * 60)
-    result, err = _run_safe("smartmoney", smart_money_strategy, 10000)
-    if err:
-        sys.exit(1)
-    result = result or []
-    print(f"\nSignals ({len(result)}):")
-    for r in result:
-        print(f"  {r['ticker']}: {r['action']} conf={r['confidence']:.2f} size=${r['position_size']:.0f} regime={r['regime']}")
-
-elif strategy == "mergerarb":
-    from agents.merger_arb import merger_arb_strategy
-    print("=" * 60)
-    print("MERGER ARBITRAGE")
-    print("=" * 60)
-    result, err = _run_safe("mergerarb", merger_arb_strategy, 10000)
-    if err:
-        sys.exit(1)
-    print(f"\nResult: {result}")
-
-elif strategy == "inefficiency":
-    from agents.inefficiency_trader import inefficiency_strategy
-    print("=" * 60)
-    print("INEFFICIENCY TRADER")
-    print("=" * 60)
-    result, err = _run_safe("inefficiency", inefficiency_strategy, 10000)
-    if err:
-        sys.exit(1)
-    result = result if result is not None else []
-    print(f"\nCandidates ({len(result)}):")
-    for c in result[:10]:
-        conf = c.get("analysis", {}).get("confidence", 0)
-        print(f"  {c.get('ticker', '?')}: conf={conf:.2f}")
-
-elif strategy == "earnings":
-    from agents.earnings_drift import earnings_drift_strategy
-    print("=" * 60)
-    print("EARNINGS DRIFT STRATEGY")
-    print("=" * 60)
-    result, err = _run_safe("earnings", earnings_drift_strategy, 10000)
-    if err:
-        sys.exit(1)
-    result = result or []
-    print(f"\nCandidates ({len(result)}):")
-    for c in result[:10]:
-        print(f"  {c['ticker']}: conf={c['analysis']['confidence']:.2f}")
-
-elif strategy == "insider":
-    from agents.insider_tracker import insider_buying_strategy
-    print("=" * 60)
-    print("INSIDER BUYING STRATEGY")
-    print("=" * 60)
-    result, err = _run_safe("insider", insider_buying_strategy, 10000)
-    if err:
-        sys.exit(1)
-    result = result or []
-    print(f"\nCandidates ({len(result)}):")
-    for c in result[:10]:
-        print(f"  {c['ticker']}: conf={c['analysis']['confidence']:.2f}")
-
-elif strategy == "squeeze":
-    from agents.squeeze_detector import squeeze_detector_strategy
-    print("=" * 60)
-    print("SHORT SQUEEZE STRATEGY")
-    print("=" * 60)
-    result, err = _run_safe("squeeze", squeeze_detector_strategy, 10000)
-    if err:
-        sys.exit(1)
-    result = result or []
-    print(f"\nCandidates ({len(result)}):")
-    for c in result[:10]:
-        print(f"  {c['ticker']}: conf={c['analysis']['confidence']:.2f}")
-
-elif strategy == "sector":
-    from agents.sector_rotation import sector_rotation_strategy
-    print("=" * 60)
-    print("SECTOR ROTATION STRATEGY")
-    print("=" * 60)
-    result, err = _run_safe("sector", sector_rotation_strategy, 10000)
-    if err:
-        sys.exit(1)
-    result = result or []
-    print(f"\nCandidates ({len(result)}):")
-    for c in result[:10]:
-        print(
-            f"  {c['ticker']}: conf={c['analysis']['confidence']:.2f}, "
-            f"sector={c.get('sector', 'N/A')}"
-        )
-
-elif strategy == "vwap":
-    from agents.vwap_reversion import vwap_reversion_strategy
-    print("=" * 60)
-    print("VWAP REVERSION STRATEGY")
-    print("=" * 60)
-    result, err = _run_safe("vwap", vwap_reversion_strategy, 10000)
-    if err:
-        sys.exit(1)
-    result = result or []
-    print(f"\nCandidates ({len(result)}):")
-    for c in result[:10]:
-        print(f"  {c['ticker']}: conf={c['analysis']['confidence']:.2f}")
-
-elif strategy == "flow":
-    from agents.flow_tracker import flow_tracker_strategy
-    print("=" * 60)
-    print("OPTIONS FLOW STRATEGY")
-    print("=" * 60)
-    result, err = _run_safe("flow", flow_tracker_strategy, 10000)
-    if err:
-        sys.exit(1)
-    result = result or []
-    print(f"\nCandidates ({len(result)}):")
-    for c in result[:10]:
-        print(f"  {c['ticker']}: conf={c['analysis']['confidence']:.2f}")
-
-else:
-    print(f"Unknown strategy: {strategy}")
-    sys.exit(1)
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

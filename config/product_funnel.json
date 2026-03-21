@@ -1,0 +1,12 @@
+{
+  "stages": [
+    {"id": "awareness", "title": "Discover Fortress", "cta": "See Proof Center", "path": "/proof"},
+    {"id": "trust", "title": "Verify Safety Posture", "cta": "Trust Report API", "path": "/api/trust_report"},
+    {"id": "trial", "title": "Paper Trade First", "cta": "Alpaca Paper + Setup Wizard", "path": "/setup"},
+    {"id": "adopt", "title": "Choose Tier", "cta": "Review Pricing Gates", "path": "/api/pricing_gates"}
+  ],
+  "brand": {
+    "product_name": "Swarm Fortress",
+    "tagline": "Agentic trading with capital-first guardrails."
+  }
+}

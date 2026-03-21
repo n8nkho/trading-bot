@@ -1,5 +1,4 @@
 import logging
-import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
 import sys
@@ -8,7 +7,8 @@ import os
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.local_llm import call_ollama
-from utils.ai_router import ask_ai, parse_json_response
+from agents.screener_agent import get_news_headlines
+from utils.option_contract_schema import normalize_option_position
 
 logging.basicConfig(
     filename='logs/exit_monitor.log',
@@ -18,30 +18,226 @@ logging.basicConfig(
 
 # Exit Configuration
 STOP_LOSS_PCT = -0.02  # -2% stop loss
-TAKE_PROFIT_T1_PCT = 0.01   # +1.0% take profit tier 1
+TAKE_PROFIT_T1_PCT = 0.015  # +1.5% take profit tier 1
 TAKE_PROFIT_T2_PCT = 0.03  # +3% take profit tier 2
 TAKE_PROFIT_T3_PCT = 0.05  # +5% take profit tier 3
-MAX_HOLD_DAYS = 2  # Maximum hold period
+MAX_HOLD_DAYS = 3  # Maximum hold period
 
 # Tier sell percentages
 TIER_1_SELL_PCT = 0.50  # Sell 50% at tier 1
 TIER_2_SELL_PCT = 0.30  # Sell 30% at tier 2
 TIER_3_SELL_PCT = 0.20  # Sell remaining 20% at tier 3
 
-def calculate_atr(prices_df, period=14):
-    """Calculate Average True Range."""
-    high = prices_df["High"]
-    low = prices_df["Low"]
-    close = prices_df["Close"]
-    prev_close = close.shift(1)
-    tr = pd.concat([
-        high - low,
-        (high - prev_close).abs(),
-        (low - prev_close).abs()
-    ], axis=1).max(axis=1)
-    atr = tr.ewm(span=period, min_periods=period).mean()
-    return float(atr.iloc[-1])
+# In-memory cache for option chains to avoid repeated network calls.
+_OPTION_CHAIN_CACHE = {}
 
+
+def _get_option_chain(underlying_ticker: str, expiration_date: str):
+    """
+    Fetch option chain once per (underlying, expiration) during a run.
+    Returns an object with .calls and .puts DataFrames.
+    """
+    key = (underlying_ticker, str(expiration_date))
+    if key in _OPTION_CHAIN_CACHE:
+        return _OPTION_CHAIN_CACHE[key]
+
+    stock = yf.Ticker(underlying_ticker)
+    chain = stock.option_chain(str(expiration_date))
+    _OPTION_CHAIN_CACHE[key] = chain
+    return chain
+
+def monitor_positions(positions):
+    """
+    Monitor open positions and generate exit decisions.
+    
+    Args:
+        positions: List of position dicts with:
+            - ticker: Stock symbol
+            - entry_price: Entry price per share
+            - qty or shares: Number of shares
+            - entry_time or entry_date: Entry timestamp (ISO format string or datetime)
+            - tiers_sold: Optional dict tracking which tiers have been sold
+            
+    Returns:
+        List of exit decision dicts with action and reasoning
+    """
+    logging.info(f"Starting exit monitoring for {len(positions)} positions")
+    
+    decisions = []
+    
+    for pos in positions:
+        # Canonicalize any option-shaped positions so exit logic doesn't crash.
+        try:
+            if pos.get('type') == 'OPTION':
+                pos = normalize_option_position(pos)
+        except Exception:
+            # Fail safe: if normalization fails, treat as HOLD (exit monitor should never crash).
+            pos = dict(pos)
+            pos['type'] = 'STOCK'
+        ticker = pos['ticker']
+        logging.info(f"Monitoring position: {ticker} ({pos.get('type', 'STOCK')})")
+        
+        try:
+            if pos.get('type') == 'OPTION':
+                decision = check_option_exit(pos)
+            else:
+                decision = evaluate_exit(pos)
+            decisions.append(decision)
+            
+            logging.info(f"{ticker}: {decision['action']} - {decision['reason']}")
+            
+        except Exception as e:
+            logging.error(f"Error monitoring {ticker}: {type(e).__name__}: {str(e)}")
+            decisions.append({
+                'ticker': ticker,
+                'action': 'HOLD',
+                'reason': f'Error during evaluation: {str(e)}',
+                'current_price': None,
+                'pnl_pct': None,
+                'timestamp': datetime.now().isoformat()
+            })
+    
+    action_summary = {}
+    for d in decisions:
+        action = d['action']
+        action_summary[action] = action_summary.get(action, 0) + 1
+    
+    logging.info(f"Exit monitoring complete: {action_summary}")
+    
+    return decisions
+    """
+    Evaluate exit conditions for an option position.
+    
+    Args:
+        position: Position dict with ticker, entry_premium, qty, expiration_date, type
+        
+    Returns:
+        Decision dict with action, reason, sell_qty, current_price, pnl_pct
+    """
+def check_option_exit(position):
+    """
+    Option exit logic based on option premium movement.
+
+    Expected position fields:
+    - ticker: option contract symbol (used for sell orders)
+    - underlying_ticker: underlying equity ticker (used to fetch option chain)
+    - entry_premium: premium paid at entry
+    - strike: selected strike
+    - expiration_date: contract expiration (YYYY-MM-DD)
+    - call: True for calls, False for puts
+    - qty: number of option contracts remaining
+    """
+    option_symbol = position['ticker']
+    underlying_ticker = position.get('underlying_ticker') or option_symbol
+    entry_premium = float(position['entry_premium'])
+    qty = int(position.get('qty', 0))
+    strike = float(position.get('strike'))
+    call = bool(position.get('call', True))
+
+    expiration_date = datetime.fromisoformat(position['expiration_date'])
+    
+    # Calculate days to expiration (DTE)
+    dte = (expiration_date - datetime.now()).days
+    logging.info(f"{option_symbol}: Days to expiration (DTE): {dte}")
+    
+    # Fetch current option premium from the options chain.
+    logging.info(f"{option_symbol}: Fetching current option premium from chain...")
+    chain = _get_option_chain(underlying_ticker, position["expiration_date"])
+    rows = chain.calls if call else chain.puts
+
+    if rows is None or rows.empty:
+        logging.warning(f"{option_symbol}: No option chain rows returned")
+        return create_hold_decision(option_symbol, "No option chain data available", None, None)
+
+    # Find the row closest to the target strike (float comparisons can be noisy).
+    nearest_idx = (rows['strike'] - strike).abs().idxmin()
+    row = rows.loc[nearest_idx]
+
+    # Prefer lastPrice; fall back to mid of bid/ask.
+    current_premium = row.get('lastPrice')
+    try:
+        if current_premium is None or (isinstance(current_premium, float) and current_premium != current_premium):  # NaN
+            bid = row.get('bid', 0) or 0
+            ask = row.get('ask', 0) or 0
+            current_premium = (bid + ask) / 2 if (bid and ask) else None
+    except Exception:
+        current_premium = None
+
+    if current_premium is None:
+        logging.warning(f"{option_symbol}: Could not determine current premium (missing last/bid/ask)")
+        return create_hold_decision(option_symbol, "Could not determine current premium", None, None)
+
+    current_premium = float(current_premium)
+    profit_pct = ((current_premium - entry_premium) / entry_premium) * 100
+
+    logging.info(
+        f"{option_symbol}: Entry Premium: ${entry_premium:.4f}, Current Premium: ${current_premium:.4f}, Profit: {profit_pct:.2f}%"
+    )
+    
+    # Check 1: Stop Loss (tight to protect capital)
+    OPTION_STOP_LOSS_PCT = -15.0
+    if profit_pct <= OPTION_STOP_LOSS_PCT:
+        reason = f"Option stop loss triggered: {profit_pct:.2f}% <= {OPTION_STOP_LOSS_PCT:.2f}%"
+        logging.warning(f"{option_symbol}: {reason}")
+        return create_exit_decision(
+            option_symbol, 'SELL_ALL', reason, qty, current_premium, profit_pct, 
+            stop_loss=True
+        )
+    
+    # Check 2: Time Exit (close earlier to reduce theta bleed)
+    if dte < 10:
+        reason = f"Time exit: {dte} DTE < 10"
+        logging.info(f"{option_symbol}: {reason}")
+        return create_exit_decision(
+            option_symbol, 'SELL_ALL', reason, qty, current_premium, profit_pct,
+            time_limit=True
+        )
+    
+    # Check 3: Theta Exit (< 5 DTE)
+    if dte < 5:
+        reason = f"Theta exit: {dte} DTE < 5"
+        logging.info(f"{option_symbol}: {reason}")
+        return create_exit_decision(
+            option_symbol, 'SELL_ALL', reason, qty, current_premium, profit_pct,
+            time_limit=True
+        )
+    
+    # Check 4: Tiered Take Profits
+    # Tier 3: +100% (sell remaining)
+    if profit_pct >= 100:
+        reason = f"Option take profit tier 3: {profit_pct:.2f}% >= 100%"
+        logging.info(f"{option_symbol}: {reason}")
+        return create_exit_decision(
+            option_symbol, 'SELL_ALL', reason, qty, current_premium, profit_pct,
+            tier='tier3'
+        )
+    
+    # Tier 2: +50% (sell 30%)
+    if profit_pct >= 50:
+        sell_qty = int(qty * 0.30)
+        if sell_qty > 0:
+            reason = f"Option take profit tier 2: {profit_pct:.2f}% >= 50%"
+            logging.info(f"{option_symbol}: {reason}")
+            return create_exit_decision(
+                option_symbol, 'SELL_30%', reason, sell_qty, current_premium, profit_pct,
+                tier='tier2'
+            )
+    
+    # Tier 1: +25% (sell 50%)
+    if profit_pct >= 25:
+        sell_qty = int(qty * 0.50)
+        if sell_qty > 0:
+            reason = f"Option take profit tier 1: {profit_pct:.2f}% >= 25%"
+            logging.info(f"{option_symbol}: {reason}")
+            return create_exit_decision(
+                option_symbol, 'SELL_50%', reason, sell_qty, current_premium, profit_pct,
+                tier='tier1'
+            )
+    
+    # No exit conditions met - HOLD
+    reason = f"No option exit conditions met (Profit: {profit_pct:.2f}%, DTE: {dte})"
+    logging.info(f"{option_symbol}: {reason}")
+    return create_hold_decision(option_symbol, reason, current_premium, profit_pct)
 
 def monitor_positions(positions):
     """
@@ -71,14 +267,9 @@ def monitor_positions(positions):
                 decision = check_option_exit(pos)
             else:
                 decision = evaluate_exit(pos)
-            if not decision or not isinstance(decision, dict):
-                decision = {
-                    'ticker': ticker, 'action': 'HOLD', 'reason': 'No decision returned',
-                    'current_price': None, 'pnl_pct': None, 'timestamp': datetime.now().isoformat()
-                }
             decisions.append(decision)
             
-            logging.info(f"{ticker}: {decision.get('action', 'HOLD')} - {decision.get('reason', '')}")
+            logging.info(f"{ticker}: {decision['action']} - {decision['reason']}")
             
         except Exception as e:
             logging.error(f"Error monitoring {ticker}: {type(e).__name__}: {str(e)}")
@@ -99,96 +290,6 @@ def monitor_positions(positions):
     logging.info(f"Exit monitoring complete: {action_summary}")
     
     return decisions
-
-
-def check_option_exit(position):
-    ticker = position['ticker']
-    entry_premium = position['entry_premium']
-    qty = position['qty']
-    expiration_date = datetime.fromisoformat(position['expiration_date'])
-    
-    # Calculate days to expiration (DTE)
-    dte = (expiration_date - datetime.now()).days
-    logging.info(f"{ticker}: Days to expiration (DTE): {dte}")
-    
-    # Fetch current option premium
-    logging.info(f"{ticker}: Fetching current option premium...")
-    option = yf.Ticker(ticker)
-    current_data = option.history(period="1d", interval="1m")
-    
-    if len(current_data) == 0:
-        logging.warning(f"{ticker}: No current premium data available")
-        return create_hold_decision(ticker, "No current premium data available", None, None)
-    
-    current_premium = current_data['Close'].iloc[-1]
-    profit_pct = (current_premium - entry_premium) / entry_premium * 100
-    
-    logging.info(f"{ticker}: Entry Premium: ${entry_premium:.2f}, Current Premium: ${current_premium:.2f}, Profit: {profit_pct:.2f}%")
-    
-    # Check 1: Stop Loss (-50%)
-    if profit_pct <= -50:
-        reason = f"Option stop loss triggered: {profit_pct:.2f}% <= -50%"
-        logging.warning(f"{ticker}: {reason}")
-        return create_exit_decision(
-            ticker, 'SELL_ALL', reason, qty, current_premium, profit_pct, 
-            stop_loss=True
-        )
-    
-    # Check 2: Time Exit (< 14 DTE)
-    if dte < 14:
-        reason = f"Time exit: {dte} DTE < 14"
-        logging.info(f"{ticker}: {reason}")
-        return create_exit_decision(
-            ticker, 'SELL_ALL', reason, qty, current_premium, profit_pct,
-            time_limit=True
-        )
-    
-    # Check 3: Theta Exit (< 7 DTE)
-    if dte < 7:
-        reason = f"Theta exit: {dte} DTE < 7"
-        logging.info(f"{ticker}: {reason}")
-        return create_exit_decision(
-            ticker, 'SELL_ALL', reason, qty, current_premium, profit_pct,
-            time_limit=True
-        )
-    
-    # Check 4: Tiered Take Profits
-    # Tier 3: +200% (sell remaining)
-    if profit_pct >= 200:
-        reason = f"Option take profit tier 3: {profit_pct:.2f}% >= 200%"
-        logging.info(f"{ticker}: {reason}")
-        return create_exit_decision(
-            ticker, 'SELL_ALL', reason, qty, current_premium, profit_pct,
-            tier='tier3'
-        )
-    
-    # Tier 2: +100% (sell 30%)
-    if profit_pct >= 100:
-        sell_qty = int(qty * 0.30)
-        if sell_qty > 0:
-            reason = f"Option take profit tier 2: {profit_pct:.2f}% >= 100%"
-            logging.info(f"{ticker}: {reason}")
-            return create_exit_decision(
-                ticker, 'SELL_30%', reason, sell_qty, current_premium, profit_pct,
-                tier='tier2'
-            )
-    
-    # Tier 1: +50% (sell 50%)
-    if profit_pct >= 50:
-        sell_qty = int(qty * 0.50)
-        if sell_qty > 0:
-            reason = f"Option take profit tier 1: {profit_pct:.2f}% >= 50%"
-            logging.info(f"{ticker}: {reason}")
-            return create_exit_decision(
-                ticker, 'SELL_50%', reason, sell_qty, current_premium, profit_pct,
-                tier='tier1'
-            )
-    
-    # No exit conditions met - HOLD
-    reason = f"No option exit conditions met (Profit: {profit_pct:.2f}%, DTE: {dte})"
-    logging.info(f"{ticker}: {reason}")
-    return create_hold_decision(ticker, reason, current_premium, profit_pct)
-
 
 def evaluate_exit(position):
     """
@@ -216,67 +317,22 @@ def evaluate_exit(position):
     logging.info(f"{ticker}: Fetching current price...")
     stock = yf.Ticker(ticker)
     current_data = stock.history(period="1d", interval="1m")
-
-    if current_data is None or len(current_data) == 0:
+    
+    if len(current_data) == 0:
         logging.warning(f"{ticker}: No current price data available")
         return create_hold_decision(ticker, "No current price data available", None, None)
-
-    # Normalize MultiIndex columns (yfinance >=0.2.x may return (Price, Ticker) MultiIndex)
-    if isinstance(current_data.columns, __import__('pandas').MultiIndex):
-        current_data.columns = current_data.columns.get_level_values(0)
-
-    if 'Close' not in current_data.columns:
-        logging.warning(f"{ticker}: 'Close' column missing from price data (columns: {list(current_data.columns)})")
-        return create_hold_decision(ticker, "Price data missing 'Close' column", None, None)
-
-    raw_price = current_data['Close'].iloc[-1]
-    if raw_price is None or (hasattr(raw_price, '__class__') and raw_price != raw_price):
-        # NaN check: NaN != NaN is True
-        logging.warning(f"{ticker}: Current price is null/NaN")
-        return create_hold_decision(ticker, "Current price is null/NaN", None, None)
-
-    try:
-        current_price = float(raw_price)
-    except (TypeError, ValueError) as e:
-        logging.warning(f"{ticker}: Cannot convert price to float: {raw_price!r} ({e})")
-        return create_hold_decision(ticker, f"Invalid price value: {raw_price!r}", None, None)
-
+    
+    current_price = current_data['Close'].iloc[-1]
     pnl_pct = (current_price - entry_price) / entry_price
-
+    
     logging.info(f"{ticker}: Entry: ${entry_price:.2f}, Current: ${current_price:.2f}, P&L: {pnl_pct*100:.2f}%")
-
-    # Compute ATR-based stops; fall back to fixed pct on failure
-    try:
-        price_data = stock.history(period="1mo")
-        atr = calculate_atr(price_data)
-        stop_loss_price = entry_price - 2.0 * atr
-        take_profit_price = entry_price + 3.0 * atr
-        dynamic_stop_pct = (stop_loss_price - entry_price) / entry_price
-        logging.info(f"{ticker}: ATR={atr:.2f}, dynamic_stop={dynamic_stop_pct*100:.2f}%")
-    except Exception as e:
-        logging.warning(f"{ticker}: ATR calculation failed, using fixed stop: {e}")
-        dynamic_stop_pct = STOP_LOSS_PCT
-        atr = None
-
-    # Trailing stop: activate when gain > 5%
-    trailing_stop_price = position.get("trailing_stop_price")
-    if atr and pnl_pct > 0.05:
-        new_trailing = current_price - 1.5 * atr
-        if trailing_stop_price is None or new_trailing > trailing_stop_price:
-            trailing_stop_price = new_trailing
-            logging.info(f"{ticker}: Trailing stop updated to ${trailing_stop_price:.2f}")
-        if current_price <= trailing_stop_price:
-            reason = f"Trailing stop triggered at ${trailing_stop_price:.2f} (P&L: {pnl_pct*100:.2f}%)"
-            logging.warning(f"{ticker}: {reason}")
-            return create_exit_decision(ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct, stop_loss=True)
-
-    # Check 1: Stop Loss (ATR-based or fixed)
-    effective_stop = dynamic_stop_pct if dynamic_stop_pct is not None else STOP_LOSS_PCT
-    if pnl_pct <= effective_stop:
-        reason = f"Stop loss triggered: {pnl_pct*100:.2f}% <= {effective_stop*100:.2f}%"
+    
+    # Check 1: Stop Loss (-2%)
+    if pnl_pct <= STOP_LOSS_PCT:
+        reason = f"Stop loss triggered: {pnl_pct*100:.2f}% <= {STOP_LOSS_PCT*100:.2f}%"
         logging.warning(f"{ticker}: {reason}")
         return create_exit_decision(
-            ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct,
+            ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct, 
             stop_loss=True
         )
     
@@ -352,13 +408,8 @@ def check_negative_news(ticker):
     try:
         logging.info(f"{ticker}: Checking for negative news...")
         
-        # Lazy import so exit_monitor loads without screener_agent (e.g. no scipy)
-        try:
-            from agents.screener_agent import get_news_headlines
-            headlines = get_news_headlines(ticker, limit=5) or []
-        except Exception as imp_err:
-            logging.warning(f"{ticker}: News unavailable (screener not loaded): {imp_err}")
-            headlines = []
+        # Get recent news headlines
+        headlines = get_news_headlines(ticker, limit=5)
         
         if not headlines:
             logging.info(f"{ticker}: No news headlines found")
@@ -380,8 +431,8 @@ Respond with ONLY a JSON object in this exact format:
 Consider negative: earnings misses, regulatory issues, lawsuits, management changes, downgrades, guidance cuts.
 Consider neutral/positive: normal market moves, analyst upgrades, product launches."""
 
-        # Route to Grok (real-time news, ~2s) with Llama fallback
-        response = ask_ai("news", prompt, ticker=ticker, max_tokens=80)
+        # Call local LLM
+        response = call_ollama(prompt, model="llama3.1:8b", timeout=30)
         
         # Parse response
         import json
@@ -392,7 +443,7 @@ Consider neutral/positive: normal market moves, analyst upgrades, product launch
             lines = response.split('\n')
             response = '\n'.join([l for l in lines if not l.startswith('```')])
         
-        result = parse_json_response(response) or json.loads(response)
+        result = json.loads(response)
         
         has_negative = result.get('has_negative_news', False)
         summary = result.get('summary', 'Unable to analyze')
@@ -443,54 +494,7 @@ def create_hold_decision(ticker, reason, current_price, pnl_pct):
     }
 
 if __name__ == "__main__":
-    # Test with sample positions
-    import json
-    
-    sample_positions = [
-        {
-            'ticker': 'AAPL',
-            'entry_price': 150.00,
-            'qty': 10,
-            'entry_time': (datetime.now() - timedelta(hours=2)).isoformat(),
-            'tiers_sold': {'tier1': False, 'tier2': False, 'tier3': False}
-        },
-        {
-            'ticker': 'MSFT',
-            'entry_price': 300.00,
-            'qty': 5,
-            'entry_time': (datetime.now() - timedelta(days=2)).isoformat(),
-            'tiers_sold': {'tier1': True, 'tier2': False, 'tier3': False}
-        },
-        {
-            'ticker': 'GOOGL',
-            'entry_price': 140.00,
-            'qty': 8,
-            'entry_time': (datetime.now() - timedelta(days=4)).isoformat(),
-            'tiers_sold': {'tier1': False, 'tier2': False, 'tier3': False}
-        }
-    ]
-    
-    print("Exit Monitor Test Run")
-    print("=" * 60)
-    
-    decisions = monitor_positions(sample_positions)
-    
-    print("\nExit Decisions:")
-    print("-" * 60)
-    for decision in decisions:
-        print(f"\n{decision['ticker']}: {decision['action']}")
-        print(f"  Reason: {decision['reason']}")
-        if decision['current_price']:
-            print(f"  Current Price: ${decision['current_price']:.2f}")
-        if decision['pnl_pct'] is not None:
-            print(f"  P&L: {decision['pnl_pct']*100:.2f}%")
-        if decision['sell_qty'] > 0:
-            print(f"  Sell Quantity: {decision['sell_qty']} shares")
-        if decision['tier']:
-            print(f"  Tier: {decision['tier']}")
-    
-    # Save decisions to file
-    filename = f"data/exit_decisions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    with open(filename, 'w') as f:
-        json.dump(decisions, f, indent=2)
-    print(f"\nDecisions saved to {filename}")
+    # Module self-test:
+    # Exit decisions should be tested using real `data/positions.json` or by
+    # providing sample positions from an external harness (no hard-coded tickers here).
+    print("Exit monitor self-test: no hard-coded ticker examples in this build.")

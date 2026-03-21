@@ -1,6 +1,7 @@
 from agents.vix_insurance import get_current_vix, should_buy_insurance, calculate_insurance_position
 from agents.bond_manager import get_market_regime, calculate_bond_target
 from agents.commodity_trader import get_usd_strength, commodity_hedge_strategy
+from agents.forex_hedger import forex_hedge_strategy
 from agents.theta_spreads import theta_strategy
 from agents.dividend_capture import dividend_capture_strategy
 from agents.pairs_trader import pairs_trading_strategy, analyze_all_pairs
@@ -63,15 +64,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 def get_portfolio_status():
     """Connect to Alpaca and get portfolio status."""
-    ak = os.getenv('APCA_API_KEY_ID') or os.getenv('ALPACA_API_KEY')
-    sk = os.getenv('APCA_API_SECRET_KEY') or os.getenv('ALPACA_SECRET_KEY')
-    if not ak or not sk:
-        return {'balance': 0, 'positions': [], 'total_value': 0}
-    try:
-        client = TradingClient(ak, sk, paper=True)
-    except (ValueError, Exception) as e:
-        logging.warning(f"fortress_orchestrator: Alpaca client failed: {e}")
-        return {'balance': 0, 'positions': [], 'total_value': 0}
+    api_key = os.getenv('APCA_API_KEY_ID') or os.getenv('ALPACA_API_KEY')
+    secret_key = os.getenv('APCA_API_SECRET_KEY') or os.getenv('ALPACA_SECRET_KEY')
+    if not api_key or not secret_key:
+        raise ValueError("Missing Alpaca credentials (APCA_* or ALPACA_* environment variables)")
+    client = TradingClient(api_key, secret_key, paper=True)
     account = client.get_account()
     positions = client.get_all_positions()
     total_value = float(account.equity)
@@ -131,12 +128,10 @@ def run_all_hedge_strategies(portfolio_value):
         recommendations['bonds'] = {'target': calculate_bond_target(portfolio_value, get_market_regime())}
 
         # Commodities
-        result = commodity_hedge_strategy(portfolio_value)
-        if isinstance(result, tuple):
-            action, reason = result
-            recommendations['commodities'] = {'action': action, 'reason': reason}
-        else:
-            recommendations['commodities'] = result
+        recommendations['commodities'] = commodity_hedge_strategy(portfolio_value)
+
+        # Forex hedging (recommendations-only in fortress layer)
+        recommendations['forex'] = forex_hedge_strategy(portfolio_value)
 
         # Theta Spreads
         result = theta_strategy(portfolio_value)

@@ -1,4 +1,3 @@
-# aider-chat is optional (dev only); install separately if needed: pip install aider-chat
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.3
 aiosignal==1.4.0
@@ -15,7 +14,6 @@ blinker==1.9.0
 certifi==2026.1.4
 cffi==2.0.0
 charset-normalizer==3.4.4
-cryptography>=44.0.0
 click==8.3.1
 ConfigArgParse==1.7.1
 contourpy==1.3.3
@@ -30,6 +28,7 @@ fastuuid==0.14.0
 filelock==3.20.3
 flake8==7.3.0
 Flask==3.1.3
+flask-cors==6.0.2
 fonttools==4.61.1
 frozendict==2.4.7
 frozenlist==1.8.0
@@ -140,4 +139,5 @@ websockets==16.0
 Werkzeug==3.1.6
 yarl==1.22.0
 yfinance==1.2.0
+oandapyV20
 zipp==3.23.0

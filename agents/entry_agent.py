@@ -1,72 +1,8 @@
-import json
 import logging
 import yfinance as yf
 from datetime import datetime
-from pathlib import Path
 import pytz
 import numpy as np
-
-DATA_DIR = Path("data")
-DECISIONS_LOG = DATA_DIR / "decisions_log.jsonl"
-
-
-def kelly_position_size(
-    win_rate: float,
-    avg_win_pct: float,
-    avg_loss_pct: float,
-    account_equity: float,
-    min_size: float = 300.0,
-    max_size: float = 750.0,
-    default_size: float = 500.0
-) -> float:
-    """
-    Half-Kelly position sizing. Falls back to default_size if inputs are invalid.
-    win_rate: 0.0-1.0
-    avg_win_pct / avg_loss_pct: as fractions (e.g., 0.10 for 10%)
-    """
-    try:
-        if avg_loss_pct <= 0 or win_rate <= 0 or win_rate >= 1:
-            return default_size
-        b = avg_win_pct / avg_loss_pct  # win/loss ratio
-        kelly_f = win_rate - (1 - win_rate) / b
-        if kelly_f <= 0:
-            return min_size
-        half_kelly_pct = kelly_f * 0.5
-        size = account_equity * half_kelly_pct
-        return max(min_size, min(size, max_size))
-    except Exception:
-        return default_size
-
-
-def _load_win_stats() -> dict:
-    """Load historical win rate and avg win/loss from decisions log."""
-    try:
-        if not DECISIONS_LOG.exists():
-            return {}
-        wins, losses, win_pnl, loss_pnl = 0, 0, 0.0, 0.0
-        with open(DECISIONS_LOG) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                entry = json.loads(line)
-                pnl = entry.get("pnl_pct", 0)
-                if pnl > 0:
-                    wins += 1
-                    win_pnl += pnl
-                elif pnl < 0:
-                    losses += 1
-                    loss_pnl += abs(pnl)
-        total = wins + losses
-        if total < 5:
-            return {}
-        return {
-            "win_rate": wins / total,
-            "avg_win_pct": (win_pnl / wins) if wins > 0 else 0.10,
-            "avg_loss_pct": (loss_pnl / losses) if losses > 0 else 0.05,
-        }
-    except Exception:
-        return {}
 
 logging.basicConfig(
     filename='logs/entry.log',
@@ -184,6 +120,8 @@ def evaluate_option_trade(ticker, current_price, stock_confidence):
             'premium': premium,
             'contracts': max_contracts,
             'cost': max_contracts * premium * 100,
+            # This strategy currently only selects call options.
+            'call': True,
             'breakeven': breakeven,
             'leverage': leverage,
             'bid_ask_spread_pct': bid_ask_spread_pct
@@ -304,7 +242,16 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                     decision = {
                         'ticker': ticker,
                         'trade_type': 'OPTION',
+                        'action': 'BUY',
                         'option_details': option_trade,
+                        # Keys consumed by orchestrator/execution
+                        'strike': option_trade['strike'],
+                        'expiration': option_trade['expiration'],
+                        'contracts': option_trade['contracts'],
+                        'call': option_trade.get('call', True),
+                        'entry_price': option_trade['premium'],  # option premium per share-equivalent
+                        'position_size': option_trade['cost'],   # total premium cost
+                        'confidence': stock_confidence,
                         'reason': 'Option trade offers better ROI'
                     }
                     logging.info(f"{ticker}: OPTION decision - {decision}")
@@ -325,6 +272,7 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
             decisions.append({
                 'ticker': ticker,
                 'action': 'SKIP',
+                'trade_type': 'NONE',
                 'reason': f'Error during evaluation: {str(e)}',
                 'position_size': 0,
                 'shares': 0,
@@ -405,31 +353,10 @@ def evaluate_single_entry(candidate, portfolio_value):
     current_time_et = get_current_time_et()
     logging.info(f"{ticker}: ✓ Time window check passed ({current_time_et.strftime('%H:%M')} ET)")
     
-    # Bounded position size (customer_settings when allowed, else defaults)
-    try:
-        from config.customer_settings import get_customer_value
-        pos_min = get_customer_value("position_size_min", 300.0)
-        pos_max = get_customer_value("position_size_max", 750.0)
-        default_size = (pos_min + pos_max) / 2.0
-    except Exception:
-        pos_min, pos_max, default_size = 300.0, 750.0, 500.0
-    win_stats = _load_win_stats()
-    if win_stats:
-        position_size = kelly_position_size(
-            win_rate=win_stats["win_rate"],
-            avg_win_pct=win_stats["avg_win_pct"],
-            avg_loss_pct=win_stats["avg_loss_pct"],
-            account_equity=portfolio_value,
-            min_size=pos_min,
-            max_size=pos_max,
-            default_size=default_size,
-        )
-        position_size = position_size * confidence  # scale by confidence
-    else:
-        base_position = portfolio_value * BASE_POSITION_PCT
-        adjusted_position = base_position * confidence
-        position_size = min(adjusted_position, float(pos_max))
-    position_size = max(pos_min, min(float(pos_max), position_size))
+    # Calculate position size using fractional Kelly
+    base_position = portfolio_value * BASE_POSITION_PCT
+    adjusted_position = base_position * confidence
+    position_size = min(adjusted_position, MAX_POSITION_SIZE)
     shares = int(position_size / current_price)
     
     # Ensure at least 1 share

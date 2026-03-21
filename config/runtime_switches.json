@@ -1,8 +1,0 @@
-{
-  "global_trading_enabled": true,
-  "auto_equity_trading_enabled": true,
-  "options_trading_enabled": true,
-  "forex_trading_enabled": true,
-  "risk_mode": "normal"
-}
-

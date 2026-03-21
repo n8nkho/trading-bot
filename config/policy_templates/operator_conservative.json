@@ -1,0 +1,19 @@
+{
+  "profile_name": "operator_conservative",
+  "set_active": false,
+  "description": "Tight risk for cautious operators: small sleeves, few names, human review recommended.",
+  "risk": {
+    "max_positions": 2,
+    "max_position_size_pct": 1.5,
+    "max_total_risk_pct": 4.0,
+    "daily_loss_limit_pct": -1.0,
+    "weekly_loss_limit_pct": -2.5
+  },
+  "screening": {
+    "target_candidates_per_run": 3,
+    "max_priority_tiers_to_scan": 3
+  },
+  "execution": {
+    "sniper_max_trades_per_run": 1
+  }
+}

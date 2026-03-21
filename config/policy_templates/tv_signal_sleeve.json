@@ -1,0 +1,19 @@
+{
+  "profile_name": "tv_signal_sleeve",
+  "set_active": false,
+  "description": "Sleeve for external signals (e.g. TradingView): modest size, low concurrency — pair with webhook queue + human approval.",
+  "risk": {
+    "max_positions": 3,
+    "max_position_size_pct": 2.0,
+    "max_total_risk_pct": 5.0,
+    "daily_loss_limit_pct": -1.5,
+    "weekly_loss_limit_pct": -3.5
+  },
+  "screening": {
+    "target_candidates_per_run": 4,
+    "max_priority_tiers_to_scan": 4
+  },
+  "execution": {
+    "sniper_max_trades_per_run": 2
+  }
+}

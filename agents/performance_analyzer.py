@@ -45,7 +45,7 @@ def track_decision(signal_id, decision_data):
     Record a trading decision for future analysis.
     
     Args:
-        signal_id: Unique identifier for this signal (e.g., "AAPL_20260221_093000")
+        signal_id: Unique identifier for this signal (e.g., "<TICKER>_YYYYMMDD_HHMMSS")
         decision_data: Dict containing:
             - ticker: Stock ticker
             - action: BUY/SKIP
@@ -163,19 +163,15 @@ def analyze_performance(lookback_days=30):
         
         with open(DECISIONS_LOG, 'r') as f:
             for line in f:
-                try:
-                    record = json.loads(line.strip())
-                    decision = record.get('decision') if isinstance(record.get('decision'), dict) else None
-                    if not decision:
-                        continue
-                    outcome = record.get('outcome')
-                    # Only include completed trades (BUY with outcome)
-                    if (decision.get('action') == 'BUY' and outcome is not None and isinstance(outcome, dict)):
-                        logged_at = datetime.fromisoformat(record['logged_at'])
-                        if logged_at >= cutoff_date:
-                            trades.append(record)
-                except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-                    continue
+                record = json.loads(line.strip())
+                
+                # Only include completed trades (BUY with outcome)
+                if (record['decision']['action'] == 'BUY' and 
+                    record['outcome'] is not None):
+                    
+                    logged_at = datetime.fromisoformat(record['logged_at'])
+                    if logged_at >= cutoff_date:
+                        trades.append(record)
         
         if len(trades) == 0:
             logger.info("No completed trades found in lookback period")

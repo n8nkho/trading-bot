@@ -3,10 +3,11 @@ Risk Guardian Agent - Portfolio Protection System
 Monitors and enforces risk limits to protect capital
 """
 
-import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
+import json
+from utils.policy_profile import get_profile_bundle
 
 # Setup logging
 log_dir = Path("logs")
@@ -25,8 +26,8 @@ logger = logging.getLogger(__name__)
 
 # Risk limits configuration
 MAX_POSITIONS = 5
-MAX_POSITION_SIZE_PCT = 5.0  # % of portfolio
-MAX_TOTAL_RISK_PCT = 10.0    # % of portfolio
+MAX_POSITION_SIZE_PCT = 3.0  # % of portfolio
+MAX_TOTAL_RISK_PCT = 7.0    # % of portfolio
 DAILY_LOSS_LIMIT_PCT = -2.0  # % of equity
 WEEKLY_LOSS_LIMIT_PCT = -5.0 # % of equity
 MAX_SECTOR_CONCENTRATION_PCT = 30.0  # % of portfolio
@@ -35,79 +36,63 @@ MAX_SECTOR_CONCENTRATION_PCT = 30.0  # % of portfolio
 CIRCUIT_BREAKER_REDUCE_THRESHOLD = 3  # consecutive losses
 CIRCUIT_BREAKER_HALT_THRESHOLD = 5    # consecutive losses
 
-# Track consecutive losses (persisted to disk)
+# Strict "risk elimination" profile (triggered only when system is already under stress).
+# Goal: prevent capital drawdown while hedging/strategies are expected to stabilize risk.
+STRICT_MODE_MAX_POSITIONS = 4
+STRICT_MODE_MAX_POSITION_SIZE_PCT = 2.0
+STRICT_MODE_MAX_TOTAL_RISK_PCT = 5.0
+STRICT_MODE_DAILY_LOSS_LIMIT_PCT = -1.0
+STRICT_MODE_WEEKLY_LOSS_LIMIT_PCT = -2.0
+STRICT_MODE_CIRCUIT_BREAKER_REDUCE_THRESHOLD = 2
+STRICT_MODE_CIRCUIT_BREAKER_HALT_THRESHOLD = 4
+
+# Track consecutive losses (in-memory for now)
 consecutive_losses = 0
 circuit_breaker_active = False
 position_size_reduction = 1.0  # multiplier for position sizing
 
-RISK_STATE_FILE = Path("data/risk_state.json")
+STATE_FILE = Path("data") / "risk_guardian_state.json"
 
 
-def _save_risk_state():
-    state = {
-        "consecutive_losses": consecutive_losses,
-        "circuit_breaker_active": circuit_breaker_active,
-        "position_size_reduction": position_size_reduction,
-        "last_updated": datetime.now().isoformat()
-    }
-    try:
-        RISK_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(RISK_STATE_FILE, "w") as f:
-            json.dump(state, f, indent=2)
-    except Exception as e:
-        logger.error(f"Could not save risk state: {e}")
-
-
-def _load_risk_state():
+def _load_risk_state() -> None:
+    """
+    Load persisted risk state so the circuit breaker isn't lost on restart.
+    """
     global consecutive_losses, circuit_breaker_active, position_size_reduction
     try:
-        if RISK_STATE_FILE.exists():
-            with open(RISK_STATE_FILE) as f:
-                state = json.load(f)
-            consecutive_losses = state.get("consecutive_losses", 0)
-            circuit_breaker_active = state.get("circuit_breaker_active", False)
-            position_size_reduction = state.get("position_size_reduction", 1.0)
-            logger.info(f"Loaded risk state: {consecutive_losses} consecutive losses, breaker={circuit_breaker_active}")
+        if STATE_FILE.exists():
+            with open(STATE_FILE, "r") as f:
+                data = json.load(f)
+            consecutive_losses = int(data.get("consecutive_losses", 0) or 0)
+            circuit_breaker_active = bool(data.get("circuit_breaker_active", False))
+            position_size_reduction = float(data.get("position_size_reduction", 1.0) or 1.0)
+            logger.info(f"Loaded persisted risk state: consecutive_losses={consecutive_losses}")
     except Exception as e:
-        logger.error(f"Could not load risk state: {e}")
+        logger.warning(f"Could not load risk state from {STATE_FILE}: {type(e).__name__}: {str(e)}")
 
 
-_load_risk_state()
-
-
-def check_portfolio_correlation(new_ticker: str, existing_tickers: list, lookback_days: int = 60, max_avg_corr: float = 0.70) -> dict:
+def _persist_risk_state() -> None:
     """
-    Block entry if new position would increase average portfolio correlation above threshold.
-    Returns {"approved": bool, "reason": str, "avg_correlation": float}
+    Persist risk state whenever it changes.
     """
-    if not existing_tickers:
-        return {"approved": True, "reason": "No existing positions to correlate with", "avg_correlation": 0.0}
     try:
-        import yfinance as yf
-        import numpy as np
-        all_tickers = existing_tickers + [new_ticker]
-        data = yf.download(all_tickers, period=f"{lookback_days}d", auto_adjust=True, progress=False)["Close"]
-        if data.empty or new_ticker not in data.columns:
-            return {"approved": True, "reason": "Could not fetch correlation data", "avg_correlation": 0.0}
-        returns = data.pct_change().dropna()
-        if len(returns) < 20:
-            return {"approved": True, "reason": "Insufficient data for correlation", "avg_correlation": 0.0}
-        corr_matrix = returns.corr()
-        new_ticker_corrs = corr_matrix[new_ticker].drop(new_ticker)
-        avg_corr = float(new_ticker_corrs.abs().mean())
-        if avg_corr > max_avg_corr:
-            return {
-                "approved": False,
-                "reason": f"{new_ticker} avg correlation {avg_corr:.2f} with existing book exceeds {max_avg_corr} limit",
-                "avg_correlation": avg_corr
-            }
-        return {"approved": True, "reason": f"Correlation OK ({avg_corr:.2f})", "avg_correlation": avg_corr}
+        STATE_FILE.parent.mkdir(exist_ok=True, parents=True)
+        with open(STATE_FILE, "w") as f:
+            json.dump(
+                {
+                    "consecutive_losses": consecutive_losses,
+                    "circuit_breaker_active": circuit_breaker_active,
+                    "position_size_reduction": position_size_reduction,
+                    "updated_at": datetime.now().isoformat(),
+                },
+                f,
+                indent=2,
+            )
     except Exception as e:
-        logger.warning(f"Correlation check failed, allowing trade: {e}")
-        return {"approved": True, "reason": f"Correlation check error (allowing): {e}", "avg_correlation": 0.0}
+        logger.warning(f"Could not persist risk state to {STATE_FILE}: {type(e).__name__}: {str(e)}")
 
 
-def check_risk_limits(portfolio_data, new_position):
+def check_risk_limits(portfolio_data, new_position, strict_mode: bool = False):
     """
     Check if a new position meets all risk management criteria.
     
@@ -126,61 +111,116 @@ def check_risk_limits(portfolio_data, new_position):
     Returns:
         dict: {"approved": bool, "reason": str, "adjusted_size": float (optional)}
     """
-    logger.info(f"Checking risk limits for new position: {new_position['ticker']}")
-    
-    equity = float(portfolio_data.get('equity') or 0)
-    positions = portfolio_data.get('positions') or []
-    today_pnl = portfolio_data.get('today_pnl')
-    if today_pnl is None:
-        today_pnl = 0.0
+    return check_risk_limits_with_profile(portfolio_data, new_position, strict_mode=strict_mode)
+
+
+def get_risk_limits(strict_mode: bool = False) -> dict:
+    """
+    Return effective limits for risk evaluation.
+    This does not change global state; it only affects *this* decision.
+    """
+    policy = get_profile_bundle()
+    risk_cfg = policy.get("risk") or {}
+    if strict_mode:
+        base = {
+            "max_positions": STRICT_MODE_MAX_POSITIONS,
+            "max_position_size_pct": STRICT_MODE_MAX_POSITION_SIZE_PCT,
+            "max_total_risk_pct": STRICT_MODE_MAX_TOTAL_RISK_PCT,
+            "daily_loss_limit_pct": STRICT_MODE_DAILY_LOSS_LIMIT_PCT,
+            "weekly_loss_limit_pct": STRICT_MODE_WEEKLY_LOSS_LIMIT_PCT,
+            "circuit_breaker_reduce_threshold": STRICT_MODE_CIRCUIT_BREAKER_REDUCE_THRESHOLD,
+            "circuit_breaker_halt_threshold": STRICT_MODE_CIRCUIT_BREAKER_HALT_THRESHOLD,
+        }
     else:
-        today_pnl = float(today_pnl)
+        base = {
+        "max_positions": MAX_POSITIONS,
+        "max_position_size_pct": MAX_POSITION_SIZE_PCT,
+        "max_total_risk_pct": MAX_TOTAL_RISK_PCT,
+        "daily_loss_limit_pct": DAILY_LOSS_LIMIT_PCT,
+        "weekly_loss_limit_pct": WEEKLY_LOSS_LIMIT_PCT,
+        "circuit_breaker_reduce_threshold": CIRCUIT_BREAKER_REDUCE_THRESHOLD,
+        "circuit_breaker_halt_threshold": CIRCUIT_BREAKER_HALT_THRESHOLD,
+    }
+    # Policy profile can further tighten/adjust global limits without code changes.
+    for k in ["max_positions", "max_position_size_pct", "max_total_risk_pct", "daily_loss_limit_pct", "weekly_loss_limit_pct"]:
+        if risk_cfg.get(k) is not None:
+            base[k] = risk_cfg.get(k)
+    base["policy_profile"] = policy.get("active_profile")
+    return base
+
+
+def check_risk_limits_with_profile(portfolio_data, new_position, strict_mode: bool = False):
+    """
+    Strict-mode variant of `check_risk_limits`.
+    - strict_mode tightens limits and uses a stricter circuit-breaker threshold.
+    - does not alter persisted global state; it only changes approval for this decision.
+    """
+    logger.info(f"Checking risk limits for new position: {new_position['ticker']} (strict_mode={strict_mode})")
+    
+    equity = portfolio_data.get('equity', 0)
+    positions = portfolio_data.get('positions', [])
+    today_pnl = portfolio_data.get('today_pnl', 0)
     week_pnl = portfolio_data.get('week_pnl', None)
+
+    limits = get_risk_limits(strict_mode=strict_mode)
     
     # Check circuit breaker status
-    circuit_check = check_circuit_breaker()
-    if not circuit_check['approved']:
-        logger.warning(f"Circuit breaker triggered: {circuit_check['reason']}")
-        return circuit_check
+    if strict_mode:
+        if consecutive_losses >= limits["circuit_breaker_halt_threshold"]:
+            return {
+                "approved": False,
+                "reason": f"Strict mode halt: {consecutive_losses} consecutive losses (threshold: {limits['circuit_breaker_halt_threshold']})",
+            }
+    else:
+        circuit_check = check_circuit_breaker()
+        if not circuit_check['approved']:
+            logger.warning(f"Circuit breaker triggered: {circuit_check['reason']}")
+            return circuit_check
     
-    # Apply position size reduction if circuit breaker is in reduce mode
-    adjusted_value = float(new_position.get('value') or 0) * position_size_reduction
-    if position_size_reduction < 1.0:
-        logger.info(f"Position size reduced by {(1-position_size_reduction)*100:.0f}% due to consecutive losses")
+    # Apply position size reduction for this decision only.
+    if strict_mode:
+        effective_reduction = 0.5 if consecutive_losses >= limits["circuit_breaker_reduce_threshold"] else 1.0
+    else:
+        effective_reduction = position_size_reduction
+
+    adjusted_value = new_position["value"] * effective_reduction
+    if effective_reduction < 1.0:
+        logger.info(f"Position size reduced by {(1-effective_reduction)*100:.0f}% due to consecutive losses (strict_mode={strict_mode})")
     
     # 1. Check max concurrent positions
-    if len(positions) >= MAX_POSITIONS:
-        reason = f"Maximum {MAX_POSITIONS} concurrent positions reached. Current: {len(positions)}"
+    max_positions = limits["max_positions"]
+    if len(positions) >= max_positions:
+        reason = f"Maximum {max_positions} concurrent positions reached. Current: {len(positions)}"
         logger.warning(reason)
         return {"approved": False, "reason": reason}
     
     # 2. Check position size limit
     position_pct = (adjusted_value / equity) * 100
-    if position_pct > MAX_POSITION_SIZE_PCT:
-        reason = f"Position size {position_pct:.2f}% exceeds {MAX_POSITION_SIZE_PCT}% limit"
+    if position_pct > limits["max_position_size_pct"]:
+        reason = f"Position size {position_pct:.2f}% exceeds {limits['max_position_size_pct']}% limit"
         logger.warning(reason)
         return {"approved": False, "reason": reason}
     
     # 3. Check total portfolio risk
-    total_position_value = sum(float(p.get('value') or 0) for p in positions) + adjusted_value
+    total_position_value = sum(p.get('value', 0) for p in positions) + adjusted_value
     total_risk_pct = (total_position_value / equity) * 100
-    if total_risk_pct > MAX_TOTAL_RISK_PCT:
-        reason = f"Total portfolio risk {total_risk_pct:.2f}% exceeds {MAX_TOTAL_RISK_PCT}% limit"
+    if total_risk_pct > limits["max_total_risk_pct"]:
+        reason = f"Total portfolio risk {total_risk_pct:.2f}% exceeds {limits['max_total_risk_pct']}% limit"
         logger.warning(reason)
         return {"approved": False, "reason": reason}
     
     # 4. Check daily loss limit
     daily_loss_pct = (today_pnl / equity) * 100
-    if daily_loss_pct <= DAILY_LOSS_LIMIT_PCT:
-        reason = f"Daily loss limit reached: {daily_loss_pct:.2f}% (limit: {DAILY_LOSS_LIMIT_PCT}%)"
+    if daily_loss_pct <= limits["daily_loss_limit_pct"]:
+        reason = f"Daily loss limit reached: {daily_loss_pct:.2f}% (limit: {limits['daily_loss_limit_pct']}%)"
         logger.error(reason)
         return {"approved": False, "reason": reason}
     
     # 5. Check weekly loss limit (if provided)
     if week_pnl is not None:
         weekly_loss_pct = (week_pnl / equity) * 100
-        if weekly_loss_pct <= WEEKLY_LOSS_LIMIT_PCT:
-            reason = f"Weekly loss limit reached: {weekly_loss_pct:.2f}% (limit: {WEEKLY_LOSS_LIMIT_PCT}%)"
+        if weekly_loss_pct <= limits["weekly_loss_limit_pct"]:
+            reason = f"Weekly loss limit reached: {weekly_loss_pct:.2f}% (limit: {limits['weekly_loss_limit_pct']}%)"
             logger.error(reason)
             return {"approved": False, "reason": reason}
     
@@ -189,15 +229,7 @@ def check_risk_limits(portfolio_data, new_position):
     if not sector_check['approved']:
         logger.warning(sector_check['reason'])
         return sector_check
-
-    # 7. Check portfolio correlation
-    existing_tickers = [p.get("ticker") for p in positions if p.get("ticker")]
-    if existing_tickers:
-        corr_check = check_portfolio_correlation(new_position["ticker"], existing_tickers)
-        if not corr_check["approved"]:
-            logger.warning(corr_check["reason"])
-            return {"approved": False, "reason": corr_check["reason"]}
-
+    
     # All checks passed
     logger.info(f"Position approved: {new_position['ticker']} - {position_pct:.2f}% of portfolio")
     
@@ -206,9 +238,9 @@ def check_risk_limits(portfolio_data, new_position):
         "reason": f"All risk checks passed. Position size: {position_pct:.2f}% of portfolio"
     }
     
-    if position_size_reduction < 1.0:
-        result['adjusted_size'] = new_position['size'] * position_size_reduction
-        result['reason'] += f" (size reduced {(1-position_size_reduction)*100:.0f}% due to consecutive losses)"
+    if effective_reduction < 1.0:
+        result["adjusted_size"] = new_position["size"] * effective_reduction
+        result["reason"] += f" (size reduced {(1-effective_reduction)*100:.0f}% due to consecutive losses)"
     
     return result
 
@@ -232,11 +264,10 @@ def check_sector_concentration(positions, new_position, equity, new_position_val
     sector_exposure = {}
     for pos in positions:
         sector = pos.get('sector', 'Unknown')
-        value = float(pos.get('value') or 0)
+        value = pos.get('value', 0)
         sector_exposure[sector] = sector_exposure.get(sector, 0) + value
     
     # Add new position to sector exposure
-    new_position_value = float(new_position_value or 0)
     sector_exposure[new_sector] = sector_exposure.get(new_sector, 0) + new_position_value
     
     # Check if any sector exceeds limit
@@ -280,12 +311,12 @@ def update_consecutive_losses(trade_result):
     if pnl < 0:
         consecutive_losses += 1
         logger.warning(f"Consecutive losses: {consecutive_losses}")
-
+        
         # Apply position size reduction
         if consecutive_losses >= CIRCUIT_BREAKER_REDUCE_THRESHOLD:
             position_size_reduction = 0.5
             logger.warning(f"Position size reduced to 50% after {consecutive_losses} consecutive losses")
-
+        
         # Activate circuit breaker halt
         if consecutive_losses >= CIRCUIT_BREAKER_HALT_THRESHOLD:
             circuit_breaker_active = True
@@ -297,7 +328,8 @@ def update_consecutive_losses(trade_result):
         consecutive_losses = 0
         position_size_reduction = 1.0
         circuit_breaker_active = False
-    _save_risk_state()
+
+    _persist_risk_state()
 
 
 def reset_circuit_breaker():
@@ -310,7 +342,7 @@ def reset_circuit_breaker():
     consecutive_losses = 0
     position_size_reduction = 1.0
     circuit_breaker_active = False
-    _save_risk_state()
+    _persist_risk_state()
 
 
 def get_risk_status():
@@ -320,6 +352,7 @@ def get_risk_status():
     Returns:
         dict: Current risk status including circuit breaker state
     """
+    policy = get_profile_bundle()
     return {
         "consecutive_losses": consecutive_losses,
         "position_size_reduction": position_size_reduction,
@@ -329,43 +362,18 @@ def get_risk_status():
         "max_total_risk_pct": MAX_TOTAL_RISK_PCT,
         "daily_loss_limit_pct": DAILY_LOSS_LIMIT_PCT,
         "weekly_loss_limit_pct": WEEKLY_LOSS_LIMIT_PCT,
-        "max_sector_concentration_pct": MAX_SECTOR_CONCENTRATION_PCT
+        "max_sector_concentration_pct": MAX_SECTOR_CONCENTRATION_PCT,
+        "policy_profile": policy.get("active_profile"),
     }
+
+
+# Load persisted state at import time.
+_load_risk_state()
 
 
 # Example usage and testing
 if __name__ == "__main__":
-    # Mock portfolio data
-    mock_portfolio = {
-        "equity": 100000,
-        "positions": [
-            {"ticker": "AAPL", "value": 3000, "sector": "Technology"},
-            {"ticker": "MSFT", "value": 2500, "sector": "Technology"}
-        ],
-        "today_pnl": -500,
-        "week_pnl": -1000
-    }
-    
-    # Mock new position
-    mock_position = {
-        "ticker": "GOOGL",
-        "size": 10,
-        "value": 4000,
-        "sector": "Technology"
-    }
-    
-    # Test risk check
-    result = check_risk_limits(mock_portfolio, mock_position)
-    print(f"\nRisk Check Result: {result}")
-    
-    # Test circuit breaker
-    print(f"\nInitial Risk Status: {get_risk_status()}")
-    
-    # Simulate consecutive losses
-    for i in range(6):
-        update_consecutive_losses({"pnl": -100})
-        print(f"\nAfter loss {i+1}: {get_risk_status()}")
-        
-        # Try to place a trade
-        result = check_risk_limits(mock_portfolio, mock_position)
-        print(f"Trade approval: {result}")
+    # Self-test note:
+    # Risk Guardian should be tested via an external harness using real positions.
+    # This module intentionally contains no hard-coded ticker examples.
+    print("risk_guardian self-test: no hard-coded ticker examples in this build.")

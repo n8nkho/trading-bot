@@ -89,23 +89,8 @@ See table in `run_strategies.py` docstring for label → command mapping.
 
 ---
 
-## Sync: Oracle is source of truth (code)
-
-`deploy_to_oracle.sh` does **not** copy `.git/` to the server. Pulling from Oracle with **`rsync --delete`** can **wipe your Mac’s `.git`** — use the safe script:
-
-```bash
-./scripts/sync_pull_from_oracle.sh ubuntu@YOUR_ORACLE_IP
-```
-
-Read **`docs/SYNC_ORACLE_SOURCE_OF_TRUTH.md`** before using optional `SYNC_PULL_DELETE=1`.
-
-To deploy Mac → Oracle (overwrite server, intentional only): `./deploy_to_oracle.sh ... --service fortress-dashboard`.
-
----
-
 ## Related docs
 
-- `docs/SYNC_ORACLE_SOURCE_OF_TRUTH.md` — safe Oracle → Mac sync (avoid git corruption)
 - `docs/OPERATOR_EXCELLENCE.md` — trust / compliance surfaces
 - `docs/TRADINGVIEW_WEBHOOK_SETUP.md` — signal ingest (not auto-trade)
 - `docs/INSTALL.md` — VM / systemd install

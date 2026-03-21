@@ -4,11 +4,13 @@ import logging
 from datetime import datetime, timedelta
 import os
 
+# Instrument/ticker config (no hard-coded ticker literals).
+from utils.market_assets import require_market_assets
+
 # Constants
 MIN_DIVIDEND_YIELD = 0.004  # 0.4% quarterly minimum
 MAX_HOLD_DAYS = 3
 CAPTURE_ALLOCATION_PCT = 0.10  # 10% of portfolio
-SAFE_TICKERS = ['JPM', 'JNJ', 'PG', 'KO', 'PEP', 'XOM', 'CVX', 'WMT', 'HD', 'T']
 
 def load_dividend_calendar():
     """Load and parse the dividend calendar."""
@@ -40,7 +42,11 @@ def calculate_dividend_return(dividend_amount, stock_price):
 
 def select_best_dividend_opportunity(calendar_list):
     """Select the best dividend opportunity."""
-    filtered = [entry for entry in calendar_list if entry['ticker'] in SAFE_TICKERS]
+    assets = require_market_assets()
+    safe_tickers = (assets.get("dividend_capture") or {}).get("safe_tickers") or []
+    safe_tickers_set = {str(x).strip().upper() for x in safe_tickers if x}
+
+    filtered = [entry for entry in calendar_list if str(entry.get("ticker") or "").strip().upper() in safe_tickers_set]
     filtered = [entry for entry in filtered if calculate_dividend_return(entry['dividend_amount'], get_stock_info(entry['ticker'])['price']) > MIN_DIVIDEND_YIELD]
     filtered = [entry for entry in filtered if get_stock_info(entry['ticker'])['volume'] > 1_000_000]
     filtered.sort(key=lambda x: (calculate_dividend_return(x['dividend_amount'], get_stock_info(x['ticker'])['price']), get_stock_info(x['ticker'])['volume']), reverse=True)
@@ -77,11 +83,18 @@ def dividend_capture_strategy(portfolio_value):
 
 def create_sample_calendar():
     """Create a sample dividend calendar."""
-    sample_data = [
-        {'ticker': 'JPM', 'ex_date': '2026-03-15', 'dividend_amount': 1.00},
-        {'ticker': 'JNJ', 'ex_date': '2026-03-20', 'dividend_amount': 1.13},
-        {'ticker': 'PG', 'ex_date': '2026-03-25', 'dividend_amount': 0.94}
-    ]
+    assets = require_market_assets()
+    safe_tickers = (assets.get("dividend_capture") or {}).get("safe_tickers") or []
+    safe_tickers = [str(x).strip().upper() for x in safe_tickers if x]
+
+    # Deterministic "sample" entries based on config tickers (no hard-coded ticker literals).
+    sample_data = []
+    for i, t in enumerate(safe_tickers[:3]):
+        sample_data.append({
+            'ticker': t,
+            'ex_date': (datetime.now() + timedelta(days=5 + i * 3)).strftime('%Y-%m-%d'),
+            'dividend_amount': round(0.8 + i * 0.2, 2),
+        })
     df = pd.DataFrame(sample_data)
     os.makedirs('data', exist_ok=True)
     df.to_csv('data/dividend_calendar.csv', index=False)

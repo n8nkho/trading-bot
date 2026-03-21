@@ -126,39 +126,53 @@ def detect_sudden_move(df):
     return metrics if is_opportunity else None
 
 
-def _get_sniper_tickers():
-    """Use same screening universe as screener (base + universe_extra + defensive in RISK_OFF)."""
-    try:
-        from agents.screener_agent import _get_screening_universe
-        universe = _get_screening_universe()
-        return [s["ticker"] for s in universe if isinstance(s, dict) and s.get("ticker")]
-    except Exception as e:
-        logger.warning(f"Could not load screener universe: {e}; falling back to config watchlist")
-    watchlist_file = Path(__file__).resolve().parent.parent / "config" / "watchlist.json"
-    if not watchlist_file.exists():
-        return []
-    with open(watchlist_file, "r") as f:
-        data = json.load(f)
-    # Support both quality_stocks (list of dicts) and tickers (list of strings)
-    quality = data.get("quality_stocks", [])
-    if quality:
-        return [s.get("ticker") if isinstance(s, dict) else s for s in quality if (s.get("ticker") if isinstance(s, dict) else s)]
-    return data.get("tickers", [])
-
-
 def scan_intraday_opportunities(portfolio_value=10000):
     """Scan for intraday scalping opportunities"""
     logger.info("Starting intraday opportunity scan...")
     
-    watchlist = _get_sniper_tickers()
-    if not watchlist:
-        logger.warning("Sniper watchlist is empty; check screener universe or config/watchlist.json")
+    # Load watchlist
+    watchlist_file = Path("config/watchlist.json")
+    if not watchlist_file.exists():
+        logger.error("Watchlist file not found")
         return []
-    logger.info(f"Sniper scanning {len(watchlist)} tickers (same universe as screener)")
+    
+    with open(watchlist_file, 'r') as f:
+        watchlist_data = json.load(f)
+        # Prefer the same universe source as the screener.
+        quality_stocks = watchlist_data.get("quality_stocks") or []
+        watchlist = []
+        if isinstance(quality_stocks, list) and quality_stocks:
+            watchlist = [
+                str(x.get("ticker")).strip().upper()
+                for x in quality_stocks
+                if isinstance(x, dict) and x.get("ticker")
+            ]
+        if not watchlist:
+            # Backward compatibility (older configs).
+            watchlist = [str(t).strip().upper() for t in (watchlist_data.get("tickers") or [])]
+
+    # Bound intraday workload (important when universe grows).
+    max_tickers_per_run = int(watchlist_data.get("sniper_max_tickers_per_run") or os.getenv("SNIPER_MAX_TICKERS_PER_RUN") or 25)
+    # Deterministic 5-minute bucket sharding based on current epoch.
+    tickers = list(dict.fromkeys(watchlist))  # preserve order, dedupe
+    if not tickers:
+        logger.warning("No tickers found for intraday sniper")
+        return []
+
+    num_chunks = (len(tickers) + max_tickers_per_run - 1) // max_tickers_per_run
+    now_bucket_5min = int(datetime.now().timestamp() // 300)
+    chunk_index = now_bucket_5min % max(1, num_chunks)
+    start = chunk_index * max_tickers_per_run
+    end = start + max_tickers_per_run
+    scan_tickers = tickers[start:end]
+    logger.info(
+        f"Intraday sniper scan slice: chunk_index={chunk_index}/{num_chunks-1} "
+        f"tickers={len(scan_tickers)}/{len(tickers)}"
+    )
     
     opportunities = []
     
-    for ticker in watchlist:
+    for ticker in scan_tickers:
         logger.info(f"Scanning {ticker}...")
         
         # Get 1-minute data

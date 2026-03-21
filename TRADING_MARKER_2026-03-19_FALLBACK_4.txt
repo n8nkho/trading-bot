@@ -1,0 +1,16 @@
+Trading readiness fallback marker (end-to-end smoke + Alpaca paper trade/cancel harness).
+Timestamp(UTC): 2026-03-19T05:05:16Z
+
+Tests:
+- smoke_test_end_to_end PASS
+- live_single_aapl_option_test PASS
+  - Alpaca order lifecycle: submitted (ACCEPTED) then canceled
+  - Verified final status via Alpaca API: `OrderStatus.CANCELED`
+
+Runtime behavior notes:
+- `live_single_aapl_option_test.py` now robustly derives option premium by trying nearby strikes and treating `ask/bid <= 0` as invalid (yfinance often returns 0 for ask/bid).
+- Strict risk-elimination + hedge gate transparency are already enabled in the orchestrator + dashboard from the previous fallback commit.
+
+Next step after this marker:
+- Sync Mac repo to Oracle server (deploy_to_oracle.sh) and re-run pristine verification.
+

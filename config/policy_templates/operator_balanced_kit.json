@@ -1,0 +1,19 @@
+{
+  "profile_name": "balanced",
+  "set_active": false,
+  "description": "Reinstall Fortress default balanced risk/screening/execution block (merge into existing balanced key).",
+  "risk": {
+    "max_positions": 5,
+    "max_position_size_pct": 3.0,
+    "max_total_risk_pct": 7.0,
+    "daily_loss_limit_pct": -2.0,
+    "weekly_loss_limit_pct": -5.0
+  },
+  "screening": {
+    "target_candidates_per_run": 5,
+    "max_priority_tiers_to_scan": 5
+  },
+  "execution": {
+    "sniper_max_trades_per_run": 3
+  }
+}

@@ -1,0 +1,22 @@
+Trading readiness fallback marker (risk-elimination mode strict + hedge gates transparency).
+Timestamp(UTC): 2026-03-19T05:02:33Z
+Mac in sync verified via sha256sum with Oracle for key runtime files:
+- orchestrator.py
+- agents/risk_guardian.py
+- dashboard/command_center.py
+- dashboard/templates/command_center.html
+- smoke_order_filled_gate.py
+
+Tests:
+- smoke_deploy_import_gate PASS
+- smoke_risk_state_persistence PASS
+- smoke_exit_monitor_option_chain_cache PASS
+- smoke_order_filled_gate PASS
+- smoke_test_end_to_end PASS
+- Oracle /api/pristine PASS
+
+Runtime behavior notes:
+- Strict risk-elimination mode (triggered when consecutive losses >= 2 OR circuit breaker is active) tightens risk gates.
+- In strict mode, BUY entries are additionally blocked unless hedge/strategy gates show at least 1 hedge applied OR bonds target exists.
+- Command Center dashboard now exposes strict mode + hedge gate transparency in the LATEST SCREENING panel.
+

@@ -1,0 +1,62 @@
+{
+  "market_headline_tickers": ["SPY"],
+  "vix_symbol": "^VIX",
+  "vix_insurance": {
+    "underlying_symbol": "SPY",
+    "vix_low_threshold": 15,
+    "vix_high_threshold": 25,
+    "insurance_allocation_pct": 0.01,
+    "expiration_days": 30,
+    "put_type_label": "SPY_PUT",
+    "put_reason_suffix": "puts for crash protection"
+  },
+  "bond_manager": {
+    "bond_ticker": "TLT",
+    "risk_on_bond_pct": 0.15,
+    "risk_off_bond_pct": 0.40
+  },
+  "theta_spreads": {
+    "underlying_symbol": "SPY",
+    "spread_width": 5,
+    "target_dte": 30
+  },
+  "pairs_trading": {
+    "allocation_pct": 0.10,
+    "correlation_threshold": 0.70,
+    "spread_entry_zs": 2.0,
+    "spread_exit_zs": 0.5,
+    "lookback_days": 60,
+    "pairs": [
+      ["AAPL", "MSFT"],
+      ["JPM", "BAC"],
+      ["XOM", "CVX"],
+      ["HD", "LOW"],
+      ["KO", "PEP"]
+    ]
+  },
+  "forex_hedger": {
+    "fx_proxy_ticker": "EURUSD=X",
+    "pair_label": "EURUSD",
+    "allocation_pct": 0.03,
+    "usd_strong_threshold": 100,
+    "usd_weak_threshold": 92,
+    "vix_elevated_threshold": 20,
+    "stop_long_multiplier": 0.995,
+    "stop_short_multiplier": 1.005,
+    "target_long_multiplier": 1.01,
+    "target_short_multiplier": 0.99
+  },
+  "commodity_trader": {
+    "usd_strength_ticker": "DX-Y.NYB",
+    "gold_label": "GOLD",
+    "silver_label": "SILVER",
+    "gold_pair_instrument": "XAU_USD",
+    "silver_pair_instrument": "XAG_USD",
+    "commodity_allocation_pct": 0.08,
+    "usd_strength_threshold": 95
+  },
+  "dividend_capture": {
+    "safe_tickers": ["JPM", "JNJ", "PG", "KO", "PEP", "XOM", "CVX", "WMT", "HD", "T"]
+  }
+}
+

@@ -1,0 +1,28 @@
+[Unit]
+Description=Fortress Command Center (dashboard / Flask)
+Documentation=file:@FORTRESS_HOME@/docs/TRUST_AND_GO_LIVE_PLAYBOOK.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@FORTRESS_USER@
+Group=@FORTRESS_GROUP@
+# Traverse /var/spool/cron/crontabs (group crontab). Kept even when using crontab -l.
+SupplementaryGroups=crontab
+WorkingDirectory=@FORTRESS_HOME@
+Environment=PYTHONPATH=@FORTRESS_HOME@
+Environment=COMMAND_CENTER_PORT=8083
+# Optional: load extra env (Alpaca keys, etc.)
+EnvironmentFile=-@FORTRESS_HOME@/.env
+ExecStart=@FORTRESS_HOME@/venv/bin/python3 @FORTRESS_HOME@/dashboard/command_center.py
+Restart=on-failure
+RestartSec=5
+# NoNewPrivileges=true blocks /usr/bin/crontab setgid; user crontab then missing from health (cron_count stays 0).
+PrivateTmp=true
+
+StandardOutput=append:@FORTRESS_HOME@/logs/dashboard_systemd.log
+StandardError=append:@FORTRESS_HOME@/logs/dashboard_systemd.log
+
+[Install]
+WantedBy=multi-user.target

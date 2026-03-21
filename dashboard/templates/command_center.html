@@ -3,6 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#00f5d4">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.json">
   <title>Fortress Command Center</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -104,6 +108,28 @@
       margin-bottom: 0.75rem;
       padding-bottom: 0.5rem;
       border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      position: relative;
+      padding-right: 1.15rem;
+    }
+    .panel-title::after {
+      content: '▾';
+      position: absolute;
+      right: 0;
+      top: 0;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      line-height: 1.1rem;
+    }
+    .panel.collapsed > :not(.panel-title) {
+      display: none;
+    }
+    .panel.collapsed .panel-title::after {
+      content: '▸';
+    }
+    .panel.collapsed .panel-title {
+      margin-bottom: 0.35rem;
+      padding-bottom: 0.35rem;
     }
     .col-4 { grid-column: span 4; }
     .col-6 { grid-column: span 6; }
@@ -150,6 +176,7 @@
     }
     .agent-dot.fresh { background: var(--green); box-shadow: 0 0 8px var(--green); }
     .agent-dot.stale { background: var(--amber); }
+    .agent-dot.err { background: var(--red); box-shadow: 0 0 8px var(--red); }
     .agent-activity { font-size: 11px; color: var(--text-muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* Performance */
@@ -271,6 +298,82 @@
     .pristine-item.ok { color: var(--green); }
     .pristine-item.fail { color: var(--red); }
     .pristine-item .detail { color: var(--text-muted); font-size: 10px; }
+
+    /* Hedging */
+    .hedge-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+    @media (max-width: 900px) { .hedge-grid { grid-template-columns: 1fr; } }
+    .hedge-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.85rem;
+      overflow: hidden;
+    }
+    .hedge-card .h-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      color: var(--amber);
+      margin: 0 0 0.5rem 0;
+    }
+    .hedge-kv { display: grid; grid-template-columns: 140px 1fr; gap: 0.35rem 0.75rem; font-size: 11px; }
+    .hedge-kv .k { color: var(--text-muted); }
+    .hedge-kv .v { color: var(--text); }
+    .halt-strip {
+      display: none;
+      width: 100%;
+      padding: 0.55rem 1rem;
+      margin-bottom: 1rem;
+      border-radius: 6px;
+      border: 1px solid var(--red);
+      background: rgba(249, 65, 68, 0.12);
+      color: var(--red);
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.72rem;
+      letter-spacing: 0.1em;
+      text-align: center;
+    }
+    .halt-strip.visible { display: block; }
+    /* Single ▼ above Morning Brief: collapse/expand all panels below it (amber vs panel ▾) */
+    .bulk-collapse-row {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      margin-bottom: 0.2rem;
+      padding-right: 0.15rem;
+      min-height: 1.1rem;
+    }
+    .btn-bulk-detail-only {
+      background: transparent;
+      border: none;
+      color: var(--amber);
+      font-size: 0.8rem;
+      line-height: 1;
+      padding: 0.2rem 0.4rem;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .btn-bulk-detail-only:hover {
+      color: var(--cyan);
+    }
+    .btn-bulk-detail-only:focus-visible {
+      outline: 2px solid var(--cyan);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+    .hedge-pre {
+      margin-top: 0.5rem;
+      padding: 0.6rem;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      overflow: auto;
+      max-height: 180px;
+      font-size: 11px;
+      line-height: 1.35;
+      white-space: pre;
+    }
   </style>
 </head>
 <body>
@@ -278,24 +381,43 @@
     <header>
       <div class="logo">FORTRESS <span>COMMAND CENTER</span></div>
       <div class="refresh">
+        <a href="/proof" target="_blank" rel="noopener" style="color:var(--cyan);font-size:11px;text-decoration:none;margin-right:0.75rem;">Proof Center</a>
         <button type="button" id="btnRefresh">Refresh</button>
         <span id="lastUpdate">—</span>
       </div>
     </header>
+    <div id="haltStrip" class="halt-strip" role="alert" aria-live="polite"></div>
     <div id="licenseUpgradeBanner" role="note"></div>
 
+    <div class="bulk-collapse-row">
+      <button type="button" id="btnBulkDetailPanels" class="btn-bulk-detail-only" aria-label="Collapse all sections below Morning Brief">▼</button>
+    </div>
+
     <div class="grid">
+      <div class="panel col-12">
+        <div class="panel-title">OPERATOR MORNING BRIEF <span class="text-muted" style="font-size:0.65em;font-weight:400;">informational · not advice</span></div>
+        <div id="operatorBrief" class="loading" style="font-size:12px;line-height:1.5;">Loading…</div>
+      </div>
+      <div class="panel col-12">
+        <div class="panel-title">TRADINGVIEW SIGNAL QUEUE <span class="text-muted" style="font-size:0.65em;font-weight:400;">webhook · not auto-trade</span></div>
+        <div id="tradingViewSignals" class="feed-list loading">Loading…</div>
+      </div>
       <div class="panel col-4">
         <div class="panel-title">SYSTEM HEALTH</div>
         <div id="health" class="health-grid loading">Loading…</div>
       </div>
-      <div class="panel col-4">
-        <div class="panel-title">TRADING SNAPSHOT</div>
+      <div class="panel col-4" id="performance-panel">
+        <div class="panel-title">PERFORMANCE &amp; TRADING SNAPSHOT <span class="text-muted" style="font-size:0.65em;font-weight:400;">primary analytics · <a href="/#performance-panel" style="color:inherit;">permalink</a></span></div>
         <div id="perfSummary" class="perf-summary loading">Loading…</div>
+        <div id="perfStrategies" class="perf-strategies" style="margin-top:0.75rem;font-size:0.85rem;"></div>
       </div>
       <div class="panel col-4">
         <div class="panel-title">LATEST SCREENING</div>
         <div id="screening" class="loading">Loading…</div>
+      </div>
+      <div class="panel col-4">
+        <div class="panel-title">SAFETY STATUS</div>
+        <div id="safetyStatus" class="loading">Loading…</div>
       </div>
 
       <div class="panel col-4">
@@ -315,12 +437,51 @@
         <div class="panel-title">RECOMMENDATIONS <span id="recCount" class="text-muted"></span></div>
         <div id="recommendations" class="rec-list loading">Loading…</div>
       </div>
-
-      <div class="panel col-8">
-        <div class="panel-title">RECENT TRADES & PERFORMANCE</div>
-        <div id="perfTable" class="loading">Loading…</div>
+      <div class="panel col-12">
+        <div class="panel-title">PRIORITIZED ACTION QUEUE</div>
+        <div id="actionQueue" class="rec-list loading">Loading…</div>
+      </div>
+      <div class="panel col-12">
+        <div class="panel-title">OPERATOR RUN REGISTRY (SCREENING)</div>
+        <div id="operatorRuns" class="feed-list loading">Loading…</div>
+      </div>
+      <div class="panel col-12">
+        <div class="panel-title">TRUST LEDGER (RECENT RUN EVENTS)</div>
+        <div id="trustLedger" class="feed-list loading">Loading…</div>
+      </div>
+      <div class="panel col-6">
+        <div class="panel-title">WHY THIS TRADE?</div>
+        <div id="whyTrade" class="rec-list loading">Loading…</div>
+      </div>
+      <div class="panel col-6">
+        <div class="panel-title">ONE-CLICK RUNBOOKS</div>
+        <div id="runbooks" class="rec-list loading">Loading…</div>
       </div>
       <div class="panel col-4">
+        <div class="panel-title">DRIFT STATUS</div>
+        <div id="driftStatus" class="loading">Loading…</div>
+      </div>
+      <div class="panel col-8">
+        <div class="panel-title">TRUST REPORT (AGGREGATE)</div>
+        <div id="trustReport" class="loading" style="font-size:12px;line-height:1.45;">Loading…</div>
+      </div>
+
+      <div class="panel col-12">
+        <div class="panel-title">PRICE CHART (DAILY)</div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-bottom:0.5rem;">
+          <label class="text-muted" style="font-size:11px;">Ticker</label>
+          <input id="chartTicker" type="text" value="SPY" maxlength="8" autocomplete="off" style="width:80px;padding:0.3rem 0.45rem;background:var(--bg-card);border:1px solid var(--border);color:var(--text);font-family:inherit;border-radius:4px;">
+          <button type="button" id="btnChartLoad" style="font-family:inherit;background:var(--bg-card);border:1px solid var(--border);color:var(--cyan);padding:0.35rem 0.75rem;cursor:pointer;border-radius:4px;">Load chart</button>
+        </div>
+        <div id="chartHost" style="width:100%;min-height:280px;"></div>
+      </div>
+
+      <div class="panel col-12">
+        <div class="panel-title">HEDGING — COMMODITIES & FOREX</div>
+        <div id="hedgeDetails" class="loading">Loading…</div>
+      </div>
+
+      <div class="panel col-12">
         <div class="panel-title">NEWS IMPACTING STRATEGY <span class="text-muted" style="font-size:0.7em;font-weight:400;">(Top 10, scrollable: positions → opportunities → defensive → market)</span></div>
         <div id="news" class="news-list loading">Loading…</div>
       </div>
@@ -351,8 +512,57 @@
     </div>
   </div>
 
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
   <script>
-    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', feed: '/api/feed', pristine: '/api/pristine' };
+    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine' };
+
+    let priceChart = null;
+    let candleSeries = null;
+    function ensurePriceChart() {
+      const host = document.getElementById('chartHost');
+      if (!host || typeof LightweightCharts === 'undefined') return false;
+      if (!priceChart) {
+        priceChart = LightweightCharts.createChart(host, {
+          width: host.clientWidth,
+          height: 280,
+          layout: { background: { type: 'solid', color: '#0d1117' }, textColor: '#8b949e' },
+          grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
+          timeScale: { borderColor: '#21262d' },
+          rightPriceScale: { borderColor: '#21262d' },
+        });
+        candleSeries = priceChart.addCandlestickSeries({
+          upColor: '#43b883', downColor: '#f94144', borderVisible: false,
+          wickUpColor: '#43b883', wickDownColor: '#f94144',
+        });
+      }
+      return true;
+    }
+    async function loadPriceChart() {
+      const inp = document.getElementById('chartTicker');
+      const ticker = (inp && inp.value ? inp.value : 'SPY').trim().toUpperCase() || 'SPY';
+      try {
+        const r = await fetch('/api/chart_bars?ticker=' + encodeURIComponent(ticker) + '&days=180');
+        const d = await r.json();
+        if (!ensurePriceChart() || !candleSeries || !d.bars) return;
+        candleSeries.setData(d.bars.map(b => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
+        priceChart.timeScale().fitContent();
+      } catch (e) { console.warn('chart', e); }
+    }
+
+    async function postOperatorHalt(active) {
+      const reason = active ? (window.prompt('Halt reason (optional):') || '') : '';
+      const r = await fetch('/api/operator/halt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active, reason, actor: 'dashboard' }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        window.alert((j && j.error) ? j.error : 'Halt API error');
+        return false;
+      }
+      return true;
+    }
 
     function setUpdated() {
       document.getElementById('lastUpdate').textContent = 'Updated ' + new Date().toLocaleTimeString();
@@ -392,7 +602,6 @@
         const tierLabel = (lic.tier || 'master').toUpperCase();
         items.push({ label: 'License', value: tierLabel + (lic.valid === false ? ' (invalid)' : ''), cls: lic.valid === false ? 'err' : 'ok' });
       }
-      el.innerHTML = items.map(i => `<div class="health-item ${i.cls}"><div class="label">${i.label}</div><div class="value">${i.value}</div></div>`).join('');
       el.innerHTML = items.map(i => `<div class="health-item ${i.cls}"><div class="label">${i.label}</div><div class="value">${i.value}</div></div>`).join('');
       if (data.license && data.license.upgrade_message) {
         const banner = document.getElementById('licenseUpgradeBanner');
@@ -475,34 +684,53 @@
 
     function renderPerformance(data) {
       const el = document.getElementById('perfSummary');
-      const tableEl = document.getElementById('perfTable');
+      const hedgeEl = document.getElementById('hedgeDetails');
       if (!data) {
         el.innerHTML = '<span class="empty">No data</span>';
-        tableEl.innerHTML = '<span class="empty">No data</span>';
+        if (hedgeEl) hedgeEl.innerHTML = '<span class="empty">No data</span>';
         return;
       }
       const pos = data.positions_count || 0;
       const wr = data.win_rate_30d != null ? data.win_rate_30d + '%' : '—';
       const pnl = data.total_pnl != null ? (data.total_pnl >= 0 ? '+' : '') + data.total_pnl.toFixed(2) : '—';
+      const realized = data.realized_pnl != null ? (data.realized_pnl >= 0 ? '+' : '') + data.realized_pnl.toFixed(2) : '—';
+      const unrealized = data.unrealized_pnl != null ? (data.unrealized_pnl >= 0 ? '+' : '') + data.unrealized_pnl.toFixed(2) : '—';
       el.innerHTML = `
         <div class="perf-stat"><div class="label">Open positions</div><div class="num">${pos}</div></div>
         <div class="perf-stat"><div class="label">Win rate (30d)</div><div class="num">${wr}</div></div>
         <div class="perf-stat"><div class="label">Total P&L</div><div class="num ${(data.total_pnl || 0) >= 0 ? 'pos' : 'neg'}">${pnl}</div></div>
+        <div class="perf-stat"><div class="label">Realized P&L</div><div class="num ${(data.realized_pnl || 0) >= 0 ? 'pos' : 'neg'}">${realized}</div></div>
+        <div class="perf-stat"><div class="label">Unrealized P&L</div><div class="num ${(data.unrealized_pnl || 0) >= 0 ? 'pos' : 'neg'}">${unrealized}</div></div>
       `;
+      const exLabel = data.execution_mode === 'human_in_loop' ? 'human in loop' : 'autonomous';
+      el.innerHTML += `
+        <div class="perf-stat"><div class="label">Execution mode</div><div class="num" style="font-size:0.85rem;">${exLabel}</div></div>
+      `;
+      if ((data.pending_execution_trades || 0) > 0) {
+        el.innerHTML += `
+          <div class="perf-stat"><div class="label">Queued (HITL)</div><div class="num" style="color:var(--amber);font-size:0.9rem;">${data.pending_execution_trades} trade(s) · ${data.pending_execution_batches || 0} batch(es) — run <code style="font-size:0.65rem;">python3 orchestrator.py execute_pending</code></div></div>
+        `;
+      }
       // Hedging snapshot
       const hedging = data.hedging || {};
       if (hedging && (hedging.regime || hedging.bonds_target || hedging.commodities || hedging.pairs_trading)) {
+        const gate = hedging.strategy_gate_metrics || {};
         const commoditiesLabel = hedging.commodities
           ? `Commodities: ${(hedging.commodities.action || 'NONE')}`
+          : null;
+        const forexLabel = hedging.forex
+          ? `Forex: ${(hedging.forex.action || 'NONE')}`
           : null;
         const hv = [
           hedging.regime ? `Regime: ${hedging.regime}` : null,
           hedging.bonds_target != null ? `Bonds target: $${hedging.bonds_target.toFixed(0)}` : null,
           commoditiesLabel,
+          forexLabel,
           hedging.vix_insurance && hedging.vix_insurance.action ? `VIX: ${hedging.vix_insurance.action}` : null,
           hedging.theta_spreads && hedging.theta_spreads.action ? `Theta: ${hedging.theta_spreads.action}` : null,
           hedging.dividend_capture && hedging.dividend_capture.action ? `Dividend: ${hedging.dividend_capture.action}` : null,
           hedging.pairs_trading && (hedging.pairs_trading.action || hedging.pairs_trading.opportunity) ? 'Pairs: active' : null,
+          (gate.total_known != null && gate.total_known > 0) ? `Hedges: ${gate.applied_count}/${gate.total_known} applied` : null,
         ].filter(Boolean);
         if (hv.length) {
           el.innerHTML += `
@@ -515,6 +743,102 @@
           `;
         }
       }
+
+      // Detailed hedging panel (commodities/forex/targets)
+      if (hedgeEl) {
+        const safe = (t) => (t == null ? '' : String(t)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        const fmtPct = (x) => (x == null || x === '') ? '—' : (Number(x) * 100).toFixed(0) + '%';
+        const fmtNum = (x) => (x == null || x === '') ? '—' : Number(x).toFixed(2);
+
+        const h = hedging || {};
+        const targets = h.target_allocations || {};
+        const commodities = h.commodities || {};
+        const forex = h.forex || {};
+
+        const commodityLegs = Array.isArray(commodities.positions) ? commodities.positions : [];
+        const forexLegs = Array.isArray(forex.positions) ? forex.positions : [];
+
+        const gateText = (() => {
+          const gateDetails = h.strategy_gate_details || {};
+          if (!gateDetails || typeof gateDetails !== 'object' || !Object.keys(gateDetails).length) {
+            return 'No strategy gate data';
+          }
+          return Object.entries(gateDetails).map(([name, d]) => {
+            const status = d && d.status ? d.status : '—';
+            const action = d && d.action ? d.action : '';
+            const reason = d && d.reason ? d.reason : '';
+            const target = d && d.target != null ? ` target=${d.target}` : '';
+            const actionPart = action ? ` (${action})` : '';
+            const reasonPart = reason ? ` - ${reason}` : '';
+            return `${name}: ${status}${actionPart}${target}${reasonPart}`;
+          }).join('\n');
+        })();
+
+        hedgeEl.classList.remove('loading');
+        hedgeEl.innerHTML = `
+          <div class="hedge-grid">
+            <div class="hedge-card">
+              <div class="h-title">MARKET CONTEXT</div>
+              <div class="hedge-kv">
+                <div class="k">Regime</div><div class="v">${safe(h.regime || '—')}</div>
+                <div class="k">VIX</div><div class="v">${safe(fmtNum(h.vix))}</div>
+                <div class="k">USD strength (DXY)</div><div class="v">${safe(fmtNum(h.usd_strength))}</div>
+                <div class="k">Note</div><div class="v">${safe(h.note || '—')}</div>
+              </div>
+            </div>
+
+            <div class="hedge-card">
+              <div class="h-title">TARGET ALLOCATION</div>
+              <div class="hedge-kv">
+                <div class="k">Bonds</div><div class="v">${safe(fmtPct(targets.bonds))}</div>
+                <div class="k">Commodities</div><div class="v">${safe(fmtPct(targets.commodities))}</div>
+                <div class="k">Forex</div><div class="v">${safe(fmtPct(targets.forex))}</div>
+                <div class="k">Pairs</div><div class="v">${safe(fmtPct(targets.pairs))}</div>
+                <div class="k">Theta</div><div class="v">${safe(fmtPct(targets.theta_spreads))}</div>
+                <div class="k">Dividend</div><div class="v">${safe(fmtPct(targets.dividend))}</div>
+              </div>
+            </div>
+
+            <div class="hedge-card">
+              <div class="h-title">HEDGE STRATEGY GATES</div>
+              <div class="hedge-pre">${safe(gateText)}</div>
+            </div>
+
+            <div class="hedge-card">
+              <div class="h-title">COMMODITIES</div>
+              <div class="hedge-kv">
+                <div class="k">Action</div><div class="v">${safe(commodities.action || '—')}</div>
+                <div class="k">Reason</div><div class="v">${safe(commodities.reason || '—')}</div>
+              </div>
+              <div class="hedge-pre">${safe(commodityLegs.length ? JSON.stringify(commodityLegs, null, 2) : 'No commodity legs')}</div>
+            </div>
+
+            <div class="hedge-card">
+              <div class="h-title">FOREX</div>
+              <div class="hedge-kv">
+                <div class="k">Action</div><div class="v">${safe(forex.action || '—')}</div>
+                <div class="k">Reason</div><div class="v">${safe(forex.reason || '—')}</div>
+              </div>
+              <div class="hedge-pre">${safe(forexLegs.length ? JSON.stringify(forexLegs, null, 2) : 'No FX legs')}</div>
+            </div>
+          </div>
+        `;
+      }
+      const stratEl = document.getElementById('perfStrategies');
+      if (stratEl) {
+        const safeCell = (t) => (t == null ? '' : String(t)).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+        const rows = (data.strategies && data.strategies.length)
+          ? data.strategies.slice(0, 10).map(function (s) {
+              const wrs = s.win_rate != null ? s.win_rate + '%' : '—';
+              const pn = s.pnl != null ? (s.pnl >= 0 ? '+' : '') + Number(s.pnl).toFixed(2) : '—';
+              const cls = (s.pnl || 0) >= 0 ? 'pos' : 'neg';
+              return '<tr><td>' + safeCell(s.name) + '</td><td>' + safeCell(s.trades) + '</td><td>' + wrs + '</td><td class="' + cls + '">' + pn + '</td></tr>';
+            }).join('')
+          : '';
+        stratEl.innerHTML = rows
+          ? '<div class="text-muted" style="margin-bottom:0.35rem;">Realized performance by strategy (ledger / sells)</div><table class="mini-table" style="width:100%;border-collapse:collapse;"><thead><tr><th align="left">Strategy</th><th>Trades</th><th>Win</th><th>P&amp;L</th></tr></thead><tbody>' + rows + '</tbody></table>'
+          : '<span class="text-muted">No per-strategy breakdown yet (needs realized closes in pnl ledger / decisions).</span>';
+      }
       const screen = data.latest_screening || {};
       const screenEl = document.getElementById('screening');
       if (!screen.date) {
@@ -523,59 +847,59 @@
         const timePart = screen.time ? ` ${screen.time}` : '';
         const candList = (screen.top_candidates || []).join(', ');
         const candPart = candList ? `<br>Top candidates: ${candList}` : '';
-        const universe = screen.universe_size != null ? ` | Volume screened: ${screen.universe_size}` : '';
+        const universe = screen.universe_size != null ? ` | Universe: ${screen.universe_size}` : '';
+        const prefilterPassed = screen.prefilter_passed != null ? ` | Prefilter passed: ${screen.prefilter_passed}` : '';
+        const prefilterFiltered = screen.prefilter_filtered != null ? ` | Prefilter filtered: ${screen.prefilter_filtered}` : '';
+        const entryGate = (screen.entry_buy != null || screen.entry_skip != null)
+          ? ` | Entry: BUY ${screen.entry_buy ?? 0} | SKIP ${screen.entry_skip ?? 0}`
+          : '';
+        const riskGate = (screen.risk_approved != null || screen.risk_rejected != null)
+          ? ` | Risk: Approved ${screen.risk_approved ?? 0} | Rejected ${screen.risk_rejected ?? 0}`
+          : '';
+        const strictLine = (screen.strict_mode === true) ? ' | Strict: ON' : ' | Strict: OFF';
+        const tierLine = (screen.tiers_scanned != null && screen.tiers_configured != null)
+          ? ' | Tiers: ' + screen.tiers_scanned + '/' + screen.tiers_configured +
+              (screen.tier_stop_reason ? ' (' + screen.tier_stop_reason + ')' : '')
+          : '';
+        const screenPerfLine = (screen.screening_target_candidates_per_run != null)
+          ? ` | Target: ${screen.screening_target_candidates_per_run} / run`
+          : '';
+        const workersLine = (screen.prefilter_workers != null)
+          ? ` | Workers: ${screen.prefilter_workers}`
+          : '';
+        const runtimeLine = (screen.max_screening_runtime_seconds != null)
+          ? ` | Runtime cap: ${screen.max_screening_runtime_seconds}s`
+          : '';
+        const durationLine = (screen.screening_duration_seconds != null)
+          ? ` | Last duration: ${screen.screening_duration_seconds}s`
+          : '';
+        const startTsLine = screen.screening_started_at
+          ? ` | Started: ${new Date(screen.screening_started_at).toLocaleTimeString()}`
+          : '';
+        const finishTsLine = screen.screening_finished_at
+          ? ` | Finished: ${new Date(screen.screening_finished_at).toLocaleTimeString()}`
+          : '';
+
+        const hedgeLine = (screen.hedge_gate_passed != null)
+          ? ` | Hedge gate: ${screen.hedge_gate_passed ? 'PASS' : 'FAIL'}${
+              (screen.hedge_gate_applied_count != null && screen.hedge_gate_total_known != null)
+                ? ` (${screen.hedge_gate_applied_count}/${screen.hedge_gate_total_known})`
+                : ''
+            }`
+          : '';
+        const topSkip = (screen.top_entry_skip_reasons && screen.top_entry_skip_reasons.length)
+          ? ` | Top SKIP: ${screen.top_entry_skip_reasons.slice(0,3).map(r => `${r.reason} (${r.count})`).join(', ')}`
+          : '';
+        const topPrefilter = (screen.top_prefilter_reasons && screen.top_prefilter_reasons.length)
+          ? ` | Top prefilter rejects: ${screen.top_prefilter_reasons.slice(0,3).map(r => `${r.reason} (${r.count})`).join(', ')}`
+          : '';
         screenEl.innerHTML =
           `Date: ${screen.date}${timePart}` +
-          `<br>Candidates: ${screen.candidates_found || 0} | Approved: ${screen.approved || 0} | Auto: ${screen.auto_executed || 0}${universe}` +
+          `<br>Candidates: ${screen.candidates_found || 0} | Approved: ${screen.approved || 0} | Auto: ${screen.auto_executed || 0}${universe}${prefilterPassed}${prefilterFiltered}${tierLine}${screenPerfLine}${workersLine}${runtimeLine}${durationLine}${startTsLine}${finishTsLine}${entryGate}${riskGate}${strictLine}${hedgeLine}` +
+          `<br>${topSkip}${topPrefilter}` +
           candPart;
       }
 
-      const rows = (data.recent_trades || []).slice(0, 12);
-      const strategies = data.strategies || [];
-      let html = '';
-      if (strategies.length) {
-        html += `
-          <div class="perf-stat" style="margin-bottom:0.5rem;">
-            <div class="label">Top strategies</div>
-          </div>
-          <table class="trade-table" style="margin-bottom:0.75rem;">
-            <thead><tr><th>Strategy</th><th>Trades</th><th>Win%</th><th>P&L</th></tr></thead>
-            <tbody>
-              ${strategies.slice(0, 6).map(s => `
-                <tr>
-                  <td>${(s.name || '').toString().slice(0, 24)}</td>
-                  <td>${s.trades}</td>
-                  <td>${s.win_rate != null ? s.win_rate.toFixed(1) + '%' : '—'}</td>
-                  <td class="${(s.pnl || 0) >= 0 ? 'pos' : 'neg'}">${(s.pnl >= 0 ? '+' : '') + s.pnl.toFixed(2)}</td>
-                </tr>`).join('')}
-            </tbody>
-          </table>
-        `;
-      }
-      if (rows.length) {
-        html += `
-          <table class="trade-table">
-            <thead><tr><th>Ticker</th><th>Exit</th><th>P&L</th><th>P&L %</th><th>Outcome</th></tr></thead>
-            <tbody>
-              ${rows.map(t => {
-                const pnlPct = t.pnl_pct != null ? t.pnl_pct.toFixed(2) + '%' : '—';
-                const pnlClass = (t.pnl_pct || 0) >= 0 ? 'pos' : 'neg';
-                return `<tr>
-                  <td>${t.ticker || '—'}</td>
-                  <td>${(t.exit_time || t.timestamp || '—').toString().slice(0,16)}</td>
-                  <td class="${pnlClass}">${t.pnl != null ? t.pnl.toFixed(2) : '—'}</td>
-                  <td class="${pnlClass}">${pnlPct}</td>
-                  <td>${t.outcome || '—'}</td>
-                </tr>`;
-              }).join('')}
-            </tbody>
-          </table>
-        `;
-      }
-      if (!html) {
-        html = '<span class="empty">No recent trades</span>';
-      }
-      tableEl.innerHTML = html;
     }
 
     function renderNews(data) {
@@ -612,6 +936,183 @@
           <div class="action">${(r.action || '').replace(/</g, '&lt;')}</div>
         </div>`;
       }).join('');
+    }
+
+    function renderSafetyStatus(data) {
+      const el = document.getElementById('safetyStatus');
+      if (!el || !data) return;
+      const strip = document.getElementById('haltStrip');
+      if (strip) {
+        const on = data.trading_halt_active === true;
+        strip.textContent = on ? 'KILL SWITCH: TRADING HALTED (see Safety Status for env vs file)' : '';
+        strip.classList.toggle('visible', on);
+      }
+      const cb = data.circuit_breaker_active ? 'TRIPPED' : 'OK';
+      const strict = data.strict_mode === true ? `ON (${data.strict_mode_reason || 'risk_stress'})` : 'OFF';
+      const hb = data.cron_heartbeat_last_run ? new Date(data.cron_heartbeat_last_run).toLocaleTimeString() : '—';
+      const screenTs = data.last_screening_finished_at ? new Date(data.last_screening_finished_at).toLocaleString() : '—';
+      el.classList.remove('loading');
+      const shadowOn = data.shadow_mode_enabled ? 'ON' : 'OFF';
+      const shadowCand = data.shadow_candidate_profile || '—';
+      const roll = data.forced_rollback_profile ? `${data.forced_rollback_profile} (until ${data.forced_rollback_until || '—'})` : 'None';
+      const relSig = data.latest_release_signature ? (data.latest_release_signature.slice(0, 12) + '…') : '—';
+      const th = data.trading_halt || {};
+      const envH = th.env_halt ? 'ON' : 'off';
+      const fileH = (th.file && th.file.active) ? 'ON' : 'off';
+      const haltLine = data.trading_halt_active ? '<strong style="color:var(--red)">HALTED</strong>' : '<strong style="color:var(--green)">NOT HALTED</strong>';
+      el.innerHTML = `
+        <div>Kill switch (effective): ${haltLine}</div>
+        <div class="text-muted" style="font-size:11px;">Env FORTRESS_TRADING_HALT: <strong>${envH}</strong> · file halt: <strong>${fileH}</strong></div>
+        <div style="margin-top:0.45rem;display:flex;gap:0.5rem;flex-wrap:wrap;">
+          <button type="button" id="btnHaltOn" style="font-family:inherit;background:var(--bg-card);border:1px solid var(--red);color:var(--red);padding:0.35rem 0.65rem;border-radius:4px;cursor:pointer;">Halt trading</button>
+          <button type="button" id="btnHaltResume" style="font-family:inherit;background:var(--bg-card);border:1px solid var(--green);color:var(--green);padding:0.35rem 0.65rem;border-radius:4px;cursor:pointer;">Resume trading</button>
+          <button type="button" id="btnBacktestRefresh" style="font-family:inherit;background:var(--bg-card);border:1px solid var(--border);color:var(--cyan);padding:0.35rem 0.65rem;border-radius:4px;cursor:pointer;">Refresh backtest</button>
+        </div>
+        <div style="margin-top:0.65rem;padding-top:0.5rem;border-top:1px solid var(--border);">Policy Profile: <strong>${(data.policy_profile || 'balanced').toUpperCase()}</strong></div>
+        <div>Shadow observe: <strong>${shadowOn}</strong> · candidate <strong>${shadowCand}</strong></div>
+        <div>Forced rollback: <strong>${roll}</strong></div>
+        <div>Release sig: <strong>${relSig}</strong></div>
+        <div>Circuit Breaker: <strong>${cb}</strong></div>
+        <div>Strict Mode: <strong>${strict}</strong></div>
+        <div>Hedge Gate: <strong>${data.hedge_gate_passed === true ? 'PASS' : (data.hedge_gate_passed === false ? 'FAIL' : 'N/A')}</strong></div>
+        <div>Open Positions: <strong>${data.open_positions ?? 0}</strong> | Net P&L: <strong>${data.net_pnl ?? '—'}</strong></div>
+        <div>Last Screening Finish: <strong>${screenTs}</strong></div>
+        <div>Cron Heartbeat: <strong>${hb}</strong></div>
+      `;
+    }
+
+    function renderActionQueue(data) {
+      const el = document.getElementById('actionQueue');
+      if (!el) return;
+      if (!data || !data.items || !data.items.length) {
+        el.innerHTML = '<span class="empty">No queued actions</span>';
+        return;
+      }
+      el.innerHTML = data.items.slice(0, 12).map(i => `
+        <div class="rec-item ${i.severity || 'low'}">
+          <div class="title">P${i.priority} · ${(i.impact || '').toUpperCase()} impact · ${(i.effort || '').toUpperCase()} effort — ${(i.title || '').replace(/</g, '&lt;')}</div>
+          <div class="body">${(i.body || '').replace(/</g, '&lt;').slice(0, 220)}</div>
+          <div class="action">${(i.action || '').replace(/</g, '&lt;')}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderOperatorRuns(data) {
+      const el = document.getElementById('operatorRuns');
+      if (!el) return;
+      const runs = (data && data.runs) ? data.runs : [];
+      if (!runs.length) {
+        el.innerHTML = '<span class="empty">No screening runs recorded yet (operational_runs.jsonl)</span>';
+        el.classList.remove('loading');
+        return;
+      }
+      el.classList.remove('loading');
+      el.innerHTML = runs.slice(0, 12).map(r => {
+        const term = (r.terminal || 'in_progress').replace(/</g, '&lt;');
+        const rid = (r.run_id || '').replace(/</g, '&lt;');
+        const st = (r.started_at || '—').replace(/</g, '&lt;');
+        const fn = (r.finished_at || '—').replace(/</g, '&lt;');
+        const rel = (r.release && r.release.git_head) ? r.release.git_head : (r.release && r.release.deploy_commit ? r.release.deploy_commit.slice(0, 7) : '—');
+        const sm = r.summary || {};
+        return `<div class="feed-line info"><span class="agent">[${term}]</span> <code>${rid}</code> · start ${st} · end ${fn} · rel <strong>${rel}</strong> · cand ${sm.candidates_found ?? '—'} appr ${sm.approved_count ?? '—'} exe ${sm.executed_count ?? '—'}</div>`;
+      }).join('');
+    }
+
+    function renderTrustLedger(data) {
+      const el = document.getElementById('trustLedger');
+      if (!el) return;
+      const items = (data && data.items) ? data.items : [];
+      if (!items.length) {
+        el.innerHTML = '<span class="empty">No trust events yet</span>';
+        return;
+      }
+      el.innerHTML = items.slice().reverse().map(i => {
+        const ts = i.timestamp ? new Date(i.timestamp).toLocaleString() : '—';
+        const typ = (i.event_type || 'event').replace(/</g, '&lt;');
+        const payload = JSON.stringify(i.payload || {}).replace(/</g, '&lt;').slice(0, 300);
+        const note = (i.screening_ledger_note || '').replace(/</g, '&lt;');
+        const st = (i.screening_ledger_status || '').replace(/</g, '&lt;');
+        const badge = note ? `<div class="text-muted" style="font-size:11px;margin:0.15rem 0 0 0;">${st ? '<strong>' + st + '</strong> — ' : ''}${note}</div>` : '';
+        return `<div class="feed-line info"><span class="agent">[${typ}]</span> ${ts} — ${payload}${badge}</div>`;
+      }).join('');
+    }
+
+    function renderWhyTrade(data) {
+      const el = document.getElementById('whyTrade');
+      if (!el) return;
+      const items = (data && data.items) ? data.items : [];
+      if (!items.length) {
+        el.innerHTML = '<span class="empty">No approved trades available yet</span>';
+        return;
+      }
+      el.innerHTML = items.slice(0, 8).map(i => `
+        <div class="rec-item low">
+          <div class="title">${(i.ticker || 'N/A').replace(/</g, '&lt;')} · confidence ${i.confidence ?? '—'}</div>
+          <div class="body">${(i.reasoning || 'No rationale captured').replace(/</g, '&lt;').slice(0, 220)}</div>
+          <div class="action">Risk: ${(i.risk_summary || 'N/A').replace(/</g, '&lt;')}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderRunbooks(data) {
+      const el = document.getElementById('runbooks');
+      if (!el) return;
+      const items = (data && data.items) ? data.items : [];
+      if (!items.length) {
+        el.innerHTML = '<span class="empty">No runbooks configured</span>';
+        return;
+      }
+      el.innerHTML = items.map(i => `
+        <div class="rec-item low">
+          <div class="title">${(i.title || '').replace(/</g, '&lt;')}</div>
+          <div class="body">${(i.impact || '').replace(/</g, '&lt;')}</div>
+          <div class="action"><code>${(i.command || '').replace(/</g, '&lt;')}</code></div>
+        </div>
+      `).join('');
+    }
+
+    function renderTrustReport(data) {
+      const el = document.getElementById('trustReport');
+      if (!el) return;
+      if (!data) {
+        el.innerHTML = '<span class="empty">No trust report</span>';
+        return;
+      }
+      const wf = data.walk_forward || {};
+      const dr = data.drift || {};
+      const rb = data.rollback || {};
+      const snap = data.latest_release_snapshot || {};
+      const cfg = data.configured_active_profile || '—';
+      const eff = data.effective_policy_profile || '—';
+      el.classList.remove('loading');
+      el.innerHTML = `
+        <div>Effective policy: <strong>${eff}</strong> · configured active: <strong>${cfg}</strong></div>
+        <div>Rollback: <strong>${rb.forced_profile || 'none'}</strong>${rb.forced_until ? ' · until ' + rb.forced_until : ''}</div>
+        <div>Drift: <strong>${dr.reason || '—'}</strong> · alert <strong>${dr.drift_alert === true ? 'YES' : (dr.drift_alert === false ? 'no' : 'n/a')}</strong></div>
+        <div>Walk-forward: <strong>${wf.reason || '—'}</strong> · stable <strong>${wf.stable === false ? 'NO' : (wf.stable === true ? 'yes' : 'n/a')}</strong></div>
+        <div>Release: <strong>${snap.signature_sha256 ? snap.signature_sha256.slice(0, 14) + '…' : 'none'}</strong> · commit <strong>${snap.commit || '—'}</strong></div>
+        <div class="text-muted" style="margin-top:0.35rem;">Ledger events (sample): ${(data.trust_ledger_recent || []).length}</div>
+        <div style="margin-top:0.5rem;padding-top:0.35rem;border-top:1px solid var(--border);"><strong>Research verdict</strong> (${(data.research_verdict && data.research_verdict.verdict) || 'n/a'}): ${(data.research_verdict && data.research_verdict.headline) ? (data.research_verdict.headline.replace(/</g, '&lt;')) : '—'}</div>
+        <div style="margin-top:0.35rem;"><strong>Daily backtest (illustrative)</strong>: ${(() => { const b = data.backtest_snapshot || {}; if (b.error) return b.error; if (!b.ticker) return 'Run “Refresh backtest” in Safety (or GET /api/backtest?refresh=1)'; return (b.ticker + ' strat ret ' + (b.strategy_total_return != null ? b.strategy_total_return : '—') + ' · max DD ' + (b.max_drawdown != null ? b.max_drawdown : '—')); })()}</div>
+      `;
+    }
+
+    function renderDrift(data) {
+      const el = document.getElementById('driftStatus');
+      if (!el) return;
+      if (!data) {
+        el.innerHTML = '<span class="empty">No drift data</span>';
+        return;
+      }
+      const status = data.drift_alert === true ? 'ALERT' : (data.drift_alert === false ? 'OK' : 'N/A');
+      el.classList.remove('loading');
+      el.innerHTML = `
+        <div>Status: <strong>${status}</strong></div>
+        <div>Reason: <strong>${(data.reason || 'N/A').replace(/</g, '&lt;')}</strong></div>
+        <div>Recent avg P&L: <strong>${data.recent_avg_pnl ?? '—'}</strong></div>
+        <div>Prior avg P&L: <strong>${data.prior_avg_pnl ?? '—'}</strong></div>
+        <div>Drift ratio: <strong>${data.drift_ratio ?? '—'}</strong></div>
+      `;
     }
 
     function renderFeed(data) {
@@ -675,29 +1176,152 @@
         </tr>`;
       }).join('');
     }
+    async function fetchOperatorBriefSafe() {
+      try {
+        const r = await fetch('/api/operator_brief');
+        const txt = await r.text();
+        try {
+          return JSON.parse(txt);
+        } catch (pe) {
+          return { error: 'bad_json', status: r.status, detail: (txt || '').slice(0, 120) };
+        }
+      } catch (e) {
+        return { error: 'network', detail: String(e) };
+      }
+    }
+
+    function renderOperatorBrief(data) {
+      const el = document.getElementById('operatorBrief');
+      if (!el) return;
+      if (!data) {
+        el.innerHTML = '<span class="empty">Brief unavailable</span>';
+        el.classList.remove('loading');
+        return;
+      }
+      if (data.error) {
+        el.classList.remove('loading');
+        const hint = (data.status === 404)
+          ? ' <span class="text-muted">(404 — deploy latest code and restart <code>fortress-dashboard</code>)</span>'
+          : '';
+        el.innerHTML = '<span class="empty">Morning Brief failed: ' + String(data.error).replace(/</g, '&lt;') +
+          (data.detail ? ' — ' + String(data.detail).replace(/</g, '&lt;').slice(0, 200) : '') + '</span>' + hint;
+        return;
+      }
+      el.classList.remove('loading');
+      const cal = data.calendar || {};
+      const macro = data.macro || {};
+      const tip = data.policy_tip || {};
+      const stack = (data.stack && data.stack.items) ? data.stack.items : [];
+      const book = data.book || [];
+      const disc = (data.disclaimer || '').replace(/</g, '&lt;');
+      const macroLines = Object.keys(macro).filter(k => k !== 'error').map(k => {
+        const m = macro[k];
+        if (!m || typeof m !== 'object') return '';
+        const chg = m.chg_pct_1d != null ? (m.chg_pct_1d >= 0 ? '+' : '') + m.chg_pct_1d + '%' : '—';
+        return `<div><strong>${k.toUpperCase()}</strong> ${m.last != null ? m.last : '—'} <span class="text-muted">(${chg} 1d)</span></div>`;
+      }).join('');
+      const macroErr = macro.error ? `<div class="text-muted">${macro.error}</div>` : '';
+      const stackHtml = stack.map(s => {
+        const ok = s.ok ? 'var(--green)' : 'var(--amber)';
+        return `<div style="display:flex;gap:0.5rem;align-items:flex-start;"><span style="color:${ok};font-weight:700;">${s.ok ? '✓' : '!'}</span><span>${(s.text || '').replace(/</g, '&lt;')}</span></div>`;
+      }).join('');
+      const bookHtml = book.length ? book.map(b => {
+        const e = b.earnings_within_10d ? ` · <strong>earnings</strong> ≤10d ${b.earnings_within_10d}` : '';
+        const ch = b.chg_pct_1d != null ? ` 1d ${b.chg_pct_1d >= 0 ? '+' : ''}${b.chg_pct_1d}%` : '';
+        const n = b.note ? ` <span class="text-muted">${(b.note).replace(/</g, '&lt;')}</span>` : '';
+        return `<div><strong>${(b.ticker || '').replace(/</g, '&lt;')}</strong>${ch}${e}${n}</div>`;
+      }).join('') : '<div class="text-muted">No open positions in positions.json — book-aware section empty.</div>';
+      el.innerHTML = `
+        <div class="text-muted" style="font-size:11px;margin-bottom:0.5rem;">${disc}</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;">
+          <div>
+            <div style="color:var(--cyan);font-family:'Orbitron',sans-serif;font-size:0.7rem;letter-spacing:0.08em;margin-bottom:0.35rem;">SESSION</div>
+            <div>Now: <strong>${(cal.now_et || '—').replace(/</g, '&lt;')}</strong></div>
+            <div>State: <strong>${(cal.session || '—').replace(/</g, '&lt;')}</strong></div>
+            <div>RTH: <strong>${cal.rth_open ? 'open' : 'closed'}</strong> · NYSE full-day closed: <strong>${cal.nyse_full_day_closed ? 'yes' : 'no'}</strong></div>
+          </div>
+          <div>
+            <div style="color:var(--cyan);font-family:'Orbitron',sans-serif;font-size:0.7rem;letter-spacing:0.08em;margin-bottom:0.35rem;">MACRO (1d)</div>
+            ${macroLines || macroErr || '<span class="text-muted">No macro data</span>'}
+          </div>
+          <div>
+            <div style="color:var(--cyan);font-family:'Orbitron',sans-serif;font-size:0.7rem;letter-spacing:0.08em;margin-bottom:0.35rem;">POLICY / OPS TIP</div>
+            <div><strong>${(tip.title || '').replace(/</g, '&lt;')}</strong></div>
+            <div class="text-muted" style="margin-top:0.25rem;">${(tip.body || '').replace(/</g, '&lt;')}</div>
+          </div>
+        </div>
+        <div style="margin-top:0.85rem;padding-top:0.65rem;border-top:1px solid var(--border);">
+          <div style="color:var(--amber);font-family:'Orbitron',sans-serif;font-size:0.7rem;letter-spacing:0.08em;margin-bottom:0.35rem;">STACK CHECKLIST</div>
+          ${stackHtml}
+        </div>
+        <div style="margin-top:0.85rem;padding-top:0.65rem;border-top:1px solid var(--border);">
+          <div style="color:var(--amber);font-family:'Orbitron',sans-serif;font-size:0.7rem;letter-spacing:0.08em;margin-bottom:0.35rem;">BOOK-AWARE (${(data.stack && data.stack.positions_count) || 0} symbols · ${(data.stack && data.stack.book_source) || '—'})</div>
+          ${bookHtml}
+        </div>
+      `;
+    }
+
+    function renderTradingViewSignals(data) {
+      const el = document.getElementById('tradingViewSignals');
+      if (!el) return;
+      const items = (data && data.items) ? data.items : [];
+      el.classList.remove('loading');
+      if (!items.length) {
+        el.innerHTML = '<span class="text-muted">No signals yet. Point TradingView at <code style="font-size:10px;">POST …/api/hooks/tradingview</code> — <a href="/proof" style="color:var(--cyan)">Proof</a> · full steps in <code style="font-size:10px;">docs/TRADINGVIEW_WEBHOOK_SETUP.md</code></span>';
+        return;
+      }
+      el.innerHTML = items.slice().reverse().map(function (it) {
+        const ts = it.timestamp ? new Date(it.timestamp).toLocaleString() : '—';
+        const tg = it.ticker_guess ? '<strong style="color:var(--amber)">' + String(it.ticker_guess).replace(/</g, '&lt;') + '</strong>' : '—';
+        const pk = String(it.parse_kind || '—').replace(/</g, '&lt;');
+        const pl = JSON.stringify(it.payload || {}).replace(/</g, '&lt;').slice(0, 300);
+        return '<div class="feed-line info"><span class="agent">[' + pk + ']</span> ' + ts + ' · ' + tg + ' — ' + pl + '</div>';
+      }).join('');
+    }
+
     async function loadAll() {
       try {
-        const [health, agents, performance, news, recommendations, feed, positions, orders] = await Promise.all([
+        const [health, agents, performance, news, recommendations, safetyStatus, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, drift, trustReport, feed, positions, orders, tvSignals] = await Promise.all([
           fetch(API.health).then(r => r.json()),
           fetch(API.agents).then(r => r.json()),
           fetch(API.performance).then(r => r.json()),
           fetch(API.news).then(r => r.json()),
           fetch(API.recommendations).then(r => r.json()),
+          fetch(API.safetyStatus).then(r => r.json()),
+          fetch(API.actionQueue).then(r => r.json()),
+          fetch(API.operatorRuns).then(r => r.json()),
+          fetch(API.trustLedger).then(r => r.json()),
+          fetch(API.whyTrade).then(r => r.json()),
+          fetch(API.runbooks).then(r => r.json()),
+          fetch(API.drift).then(r => r.json()),
+          fetch(API.trustReport).then(r => r.json()),
           fetch(API.feed).then(r => r.json()),
           fetch('/api/positions').then(r => r.json()),
-          fetch('/api/orders').then(r => r.json())
+          fetch('/api/orders').then(r => r.json()),
+          fetch('/api/tradingview_signals?limit=25').then(function (r) { return r.ok ? r.json() : { items: [] }; }).catch(function () { return { items: [] }; })
         ]);
+        renderOperatorBrief(await fetchOperatorBriefSafe());
+        renderTradingViewSignals(tvSignals);
         renderHealth(health);
         renderAgents(agents);
         renderPerformance(performance);
         renderNews(news);
         renderRecommendations(recommendations);
+        renderSafetyStatus(safetyStatus);
+        renderActionQueue(actionQueue);
+        renderOperatorRuns(operatorRuns);
+        renderTrustLedger(trustLedger);
+        renderWhyTrade(whyTrade);
+        renderRunbooks(runbooks);
+        renderDrift(drift);
+        renderTrustReport(trustReport);
         const recEl = document.getElementById('recCount');
         if (recEl && recommendations && recommendations.items) recEl.textContent = '(' + recommendations.items.length + ')';
         renderFeed(feed);
         renderPositions(positions);
         renderOrders(orders);
         setUpdated();
+        loadPriceChart();
       } catch (e) {
         console.error(e);
         document.querySelectorAll('.loading').forEach(el => { if (el.classList.contains('loading')) el.innerHTML = '<span class="empty">Error loading</span>'; });
@@ -707,6 +1331,86 @@
     document.getElementById('btnRefresh').addEventListener('click', loadAll);
     const btnPristine = document.getElementById('btnPristine');
     if (btnPristine) btnPristine.addEventListener('click', runPristine);
+    const btnChartLoad = document.getElementById('btnChartLoad');
+    if (btnChartLoad) btnChartLoad.addEventListener('click', loadPriceChart);
+
+    (function bindSafetyActions() {
+      const box = document.getElementById('safetyStatus');
+      if (!box || box.dataset.haltBound) return;
+      box.dataset.haltBound = '1';
+      box.addEventListener('click', async (e) => {
+        const t = e.target;
+        if (t && t.id === 'btnHaltOn') {
+          if (await postOperatorHalt(true)) loadAll();
+        } else if (t && t.id === 'btnHaltResume') {
+          if (await postOperatorHalt(false)) loadAll();
+        } else if (t && t.id === 'btnBacktestRefresh') {
+          const inp = document.getElementById('chartTicker');
+          const sym = (inp && inp.value ? inp.value : 'SPY').trim() || 'SPY';
+          try {
+            const r = await fetch('/api/backtest?refresh=1&ticker=' + encodeURIComponent(sym));
+            await r.json();
+            if (!r.ok) window.alert('Backtest refresh failed');
+          } catch (err) { window.alert(String(err)); }
+          loadAll();
+        }
+      });
+    })();
+
+    // Click-to-collapse panel behavior (mobile-friendly) — same ▾/▸ for every panel including Morning Brief
+    (function initPanelCollapsibles() {
+      const panels = Array.from(document.querySelectorAll('.panel'));
+      panels.forEach(panel => {
+        const title = panel.querySelector('.panel-title');
+        if (!title) return;
+        title.addEventListener('click', (e) => {
+          // Only toggle when clicking on the title region itself
+          if (e.target && e.target.closest && (e.target.closest('button') || e.target.closest('a'))) return;
+          panel.classList.toggle('collapsed');
+          syncBulkDetailButton();
+        });
+      });
+      const isMobile = window.innerWidth < 640;
+      if (isMobile) {
+        panels.forEach((panel, idx) => {
+          // Keep first 3 panels open on small screens
+          if (idx >= 3) panel.classList.add('collapsed');
+        });
+      }
+    })();
+
+    function detailPanelsBelowBrief() {
+      return Array.from(document.querySelectorAll('.grid > .panel')).slice(1);
+    }
+
+    function syncBulkDetailButton() {
+      const btn = document.getElementById('btnBulkDetailPanels');
+      if (!btn) return;
+      const ps = detailPanelsBelowBrief();
+      const allCollapsed = ps.length > 0 && ps.every(function (p) { return p.classList.contains('collapsed'); });
+      btn.textContent = allCollapsed ? '▲' : '▼';
+      btn.setAttribute('aria-label', allCollapsed
+        ? 'Expand all sections below Morning Brief'
+        : 'Collapse all sections below Morning Brief');
+      btn.setAttribute('aria-pressed', allCollapsed ? 'true' : 'false');
+      btn.title = allCollapsed ? 'Expand all below Morning Brief' : 'Collapse all below Morning Brief';
+    }
+
+    (function initBulkDetailCollapse() {
+      const btn = document.getElementById('btnBulkDetailPanels');
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        const ps = detailPanelsBelowBrief();
+        const allCollapsed = ps.length > 0 && ps.every(function (p) { return p.classList.contains('collapsed'); });
+        ps.forEach(function (p) {
+          if (allCollapsed) p.classList.remove('collapsed');
+          else p.classList.add('collapsed');
+        });
+        syncBulkDetailButton();
+      });
+      syncBulkDetailButton();
+    })();
+
     loadAll();
     setInterval(loadAll, 30000);
   </script>

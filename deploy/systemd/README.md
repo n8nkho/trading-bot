@@ -29,28 +29,6 @@ sudo journalctl -u fortress-dashboard -f
 tail -f /home/ubuntu/trading-bot/logs/dashboard_systemd.log
 ```
 
-**Prefer this restart** if you ever ran `./scripts/restart_dashboard.sh` (nohup) on the same host — it frees port **8083** first:
-
-```bash
-cd /home/ubuntu/trading-bot
-sudo ./scripts/restart_dashboard_systemd.sh
-```
-
-## Troubleshooting: `Address already in use` / systemd crash loop
-
-**Symptom:** `logs/dashboard_systemd.log` repeats *Port 8083 is in use*; `systemctl status` flaps; `curl /proof` may still return **200** (a **nohup** process is serving, not systemd).
-
-**Cause:** Two dashboards: **systemd** + **manual** `nohup … command_center.py`.
-
-**Fix:**
-
-```bash
-cd /home/ubuntu/trading-bot
-sudo ./scripts/restart_dashboard_systemd.sh
-```
-
-With the unit enabled, use **`restart_dashboard_systemd.sh`**, not **`restart_dashboard.sh`**.
-
 ## Uninstall
 
 ```bash

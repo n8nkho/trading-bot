@@ -5,6 +5,9 @@ import logging
 from datetime import datetime, timedelta
 from scipy import stats
 
+# Instrument/ticker config (no hard-coded ticker literals).
+from utils.market_assets import require_market_assets
+
 # Constants
 PAIRS_ALLOCATION_PCT = 0.10  # 10% total (5% each side)
 CORRELATION_THRESHOLD = 0.70  # Pairs must be 70%+ correlated
@@ -12,13 +15,16 @@ SPREAD_ENTRY_ZSCORE = 2.0  # Enter when 2 std devs from mean
 SPREAD_EXIT_ZSCORE = 0.5  # Exit when normalizes
 LOOKBACK_DAYS = 60
 
-PREDEFINED_PAIRS = [
-    ('AAPL', 'MSFT'),  # Tech giants
-    ('JPM', 'BAC'),    # Big banks
-    ('XOM', 'CVX'),    # Energy
-    ('HD', 'LOW'),     # Home improvement
-    ('KO', 'PEP')      # Beverages
-]
+def _get_pairs() -> list[tuple[str, str]]:
+    assets = require_market_assets()
+    pairs_cfg = (assets.get("pairs_trading") or {}).get("pairs") or []
+    pairs: list[tuple[str, str]] = []
+    for item in pairs_cfg:
+        if isinstance(item, (list, tuple)) and len(item) == 2:
+            a, b = str(item[0]).strip().upper(), str(item[1]).strip().upper()
+            if a and b:
+                pairs.append((a, b))
+    return pairs
 
 def get_price_history(ticker, days=60):
     try:
@@ -50,7 +56,12 @@ def calculate_spread_zscore(ticker1, ticker2, days=60):
 
 def find_pair_opportunity():
     best_opportunity = None
-    for ticker1, ticker2 in PREDEFINED_PAIRS:
+    pairs = _get_pairs()
+    if not pairs:
+        logging.warning("Pairs trading disabled: missing pairs in config/market_assets.json")
+        return None
+
+    for ticker1, ticker2 in pairs:
         correlation = calculate_correlation(ticker1, ticker2, LOOKBACK_DAYS)
         if correlation and correlation > CORRELATION_THRESHOLD:
             z_score = calculate_spread_zscore(ticker1, ticker2, LOOKBACK_DAYS)
@@ -110,7 +121,8 @@ def pairs_trading_strategy(portfolio_value):
 
 def analyze_all_pairs():
     analysis_summary = []
-    for ticker1, ticker2 in PREDEFINED_PAIRS:
+    pairs = _get_pairs()
+    for ticker1, ticker2 in pairs:
         correlation = calculate_correlation(ticker1, ticker2, LOOKBACK_DAYS)
         z_score = calculate_spread_zscore(ticker1, ticker2, LOOKBACK_DAYS)
         analysis_summary.append({
