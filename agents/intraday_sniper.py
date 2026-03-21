@@ -155,6 +155,15 @@ def scan_intraday_opportunities(portfolio_value=10000):
     max_tickers_per_run = int(watchlist_data.get("sniper_max_tickers_per_run") or os.getenv("SNIPER_MAX_TICKERS_PER_RUN") or 25)
     # Deterministic 5-minute bucket sharding based on current epoch.
     tickers = list(dict.fromkeys(watchlist))  # preserve order, dedupe
+    # Same license universe cap as screener (Starter smaller than Pro).
+    try:
+        from utils.license_gates import effective_max_universe_size
+
+        cap = effective_max_universe_size()
+        if cap < 500_000 and len(tickers) > cap:
+            tickers = tickers[:cap]
+    except Exception:
+        pass
     if not tickers:
         logger.warning("No tickers found for intraday sniper")
         return []

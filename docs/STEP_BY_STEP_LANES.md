@@ -61,7 +61,9 @@ Use this as your default checklist. Keep **`docs/DISTRIBUTION.md`** open for the
 These are still **mostly lanes 2–3** (enforcement); you verify on **lane 1** with `master` so nothing breaks for you.
 
 1. ~~Wire **API routes / backtest / exports** to `config.tiers` via `utils/license_gates.py` (dashboard + CLI).~~ **Done in v1.0.1.**
-2. Extend gates to **other routes** if needed (e.g. universe size caps in screener — `get_tier_spec` / `max_universe_size`).
+2. ~~**Universe size caps** — screener + intraday sniper use `effective_max_universe_size()` / `apply_license_universe_cap()`; telemetry in `data/last_screening_meta.json` (`universe_license_cap`).~~ **Done in v1.0.2.**
 3. Add **Stripe/Paddle** (later) → write `license.json` + set `FORTRESS_LICENSE_PATH` on customer machines.
+
+**Lane 1 execution steps (deploy, `.env`, tests):** `docs/LANE1_OPERATOR_CHECKLIST.md`
 
 When you finish a phase, tick it in your own notes and move to the next row in this file.

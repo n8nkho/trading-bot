@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here. Version in `VERSION` should match the latest release tag when you cut one.
 
+## [1.0.2] — 2026-03-21
+
+### Added
+
+- **Universe cap by license** — `utils/license_gates.py`: `effective_max_universe_size()`, `apply_license_universe_cap()`; `agents/screener_agent.py` trims priority tiers; `agents/intraday_sniper.py` caps watchlist. Telemetry: `data/last_screening_meta.json` → `universe_license_cap`.
+- **Lane 1 checklist** — `docs/LANE1_OPERATOR_CHECKLIST.md` (commit → deploy → Oracle verification).
+
 ## [1.0.1] — 2026-03-21
 
 ### Added

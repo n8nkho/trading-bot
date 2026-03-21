@@ -102,6 +102,22 @@ def run_screener():
         # Telemetry should never break screening.
         pass
 
+    # License tier: cap distinct tickers (Starter/Pro/Enterprise); master is effectively unlimited.
+    universe_cap_meta: dict = {}
+    try:
+        from utils.license_gates import apply_license_universe_cap
+
+        tiers, universe_cap_meta = apply_license_universe_cap(tiers)
+        if universe_cap_meta.get("universe_truncated"):
+            logging.warning(
+                "Universe trimmed by license: max=%s configured=%s using=%s",
+                universe_cap_meta.get("license_max_universe"),
+                universe_cap_meta.get("universe_configured_before_cap"),
+                universe_cap_meta.get("universe_after_cap"),
+            )
+    except Exception as exc:
+        logging.warning("License universe cap skipped: %s", exc)
+
     policy = get_profile_bundle()
     screening_cfg = policy.get("screening") or {}
     max_tiers_to_scan = int(
@@ -343,6 +359,7 @@ def run_screener():
             "screening_started_at": screening_started_at,
             "screening_finished_at": datetime.now().isoformat(),
             "screening_duration_seconds": screening_duration_seconds,
+            "universe_license_cap": universe_cap_meta,
             "universe_size": universe_size,
             "screened_tickers": universe_size,
             "candidates_found": len(candidates),

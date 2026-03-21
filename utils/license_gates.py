@@ -14,6 +14,7 @@ from config.license import Plan, get_plan
 from config.tiers import (
     backtest_allowed,
     fortress_allowed,
+    get_tier_spec,
     trust_ledger_export_allowed,
 )
 
@@ -24,6 +25,69 @@ def _ts() -> str:
 
 def get_plan_for_gate() -> Plan:
     return get_plan()
+
+
+def effective_max_universe_size() -> int:
+    """
+    Max distinct tickers for screening / sniper under current license.
+    Invalid or expired license → starter cap (strict).
+    """
+    plan = get_plan_for_gate()
+    tier = plan.tier if plan.valid else "starter"
+    return get_tier_spec(tier).max_universe_size
+
+
+def apply_license_universe_cap(
+    tiers: list,
+) -> tuple[list, dict]:
+    """
+    Trim priority tiers to respect license max universe (order-preserving, deduped by ticker).
+
+    Returns (new_tiers, meta) where meta is safe to JSON-log; empty input → ([], meta).
+    """
+    cap = effective_max_universe_size()
+    total_before = sum(len(t) for t in tiers if isinstance(t, list))
+    meta = {
+        "license_max_universe": cap,
+        "universe_configured_before_cap": total_before,
+        "universe_after_cap": 0,
+        "universe_truncated": False,
+    }
+    if cap >= 500_000:  # master / practical unlimited
+        meta["universe_after_cap"] = total_before
+        return tiers, meta
+
+    seen: set[str] = set()
+    new_tiers: list = []
+    used = 0
+
+    for tier in tiers:
+        if not isinstance(tier, list):
+            continue
+        if used >= cap:
+            meta["universe_truncated"] = True
+            break
+        new_row: list = []
+        for s in tier:
+            if used >= cap:
+                meta["universe_truncated"] = True
+                break
+            t = (s or {}).get("ticker") if isinstance(s, dict) else None
+            if not t and isinstance(s, str):
+                t = s
+            if not t:
+                continue
+            t = str(t).strip().upper()
+            if not t or t in seen:
+                continue
+            seen.add(t)
+            new_row.append(s if isinstance(s, dict) else {"ticker": t})
+            used += 1
+        if new_row:
+            new_tiers.append(new_row)
+
+    meta["universe_after_cap"] = used
+    return new_tiers, meta
 
 
 def check_license_valid(plan: Plan) -> Optional[Dict[str, Any]]:
