@@ -30,7 +30,7 @@ Use this as your default checklist. Keep **`docs/DISTRIBUTION.md`** open for the
 
 | Step | What you do | Lane |
 |------|-------------|------|
-| 2.1 | Confirm smoke/tests on a **clean** tree (usually on Oracle) | **Lane 1** (prep) |
+| 2.1 | Confirm smoke/tests on a **clean** tree (usually on Oracle) — **`docs/TAG_AND_SMOKE_RUNBOOK.md`** | **Lane 1** (prep) |
 | 2.2 | Edit `VERSION` + `CHANGELOG.md` | **Lanes 2–3** artifact prep |
 | 2.3 | `git tag -a v1.0.0 -m "Commercial baseline"` (version must match intent) | **Lanes 2–3** |
 | 2.4 | Give customers **that tag** or a **zip built from that tag** | **Lane 2** (and **3** if they use OCI) |
