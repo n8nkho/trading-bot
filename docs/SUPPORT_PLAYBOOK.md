@@ -4,6 +4,15 @@
 - Confirm process: `python3 dashboard/command_center.py` (or systemd unit).
 - Check port 8083 not in use; restart after deploy.
 
+## New API route 404 but `grep` finds it in `command_center.py`
+Usually a **stale** `python3 …/dashboard/command_center.py` (nohup/manual) still owns **8083** while systemd restarted a **different** process (or the unit failed to bind). **`curl` hits the old interpreter.**
+
+1. `sudo ss -ltnp | grep 8083` or `sudo lsof -i :8083` — note PID / command line.
+2. From repo root: **`sudo ./scripts/restart_dashboard_systemd.sh`** (kills port + stray `command_center.py`, then `systemctl restart fortress-dashboard`).
+3. Re-test: `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8083/api/billing/proof_links_status` → **200**.
+
+`./deploy_to_oracle.sh` with `--service fortress-dashboard` also frees **8083** before restart (same idea).
+
 ## Validation errors in System Health
 - Run Pristine **Run** in UI or `python3 smoke_deploy_import_gate.py` on the server.
 - Fix missing optional deps per error text.

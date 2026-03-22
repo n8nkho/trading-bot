@@ -4,6 +4,8 @@ Stripe sends webhooks to your Command Center; the app writes **`data/stripe_lice
 
 **Lane 1 (you):** you can leave all Stripe vars unset and keep **`FORTRESS_LICENSE_TIER=master`** on Oracle.
 
+**Lane 1 + testing the webhook on the same Oracle VM:** enable **`STRIPE_*`** vars (below) so Stripe can hit your endpoint and write **`STRIPE_LICENSE_OUT_PATH`**. To keep **`master`** for day-to-day trading, **leave `FORTRESS_LICENSE_PATH` unset** — then `get_plan()` still follows **`FORTRESS_LICENSE_TIER=master`** and ignores the JSON file. When you want to **simulate a customer**, set **`FORTRESS_LICENSE_PATH`** to the same path as **`STRIPE_LICENSE_OUT_PATH`** (absolute path recommended); the file’s **`tier`** then overrides env. Remove or clear the path when done testing.
+
 ---
 
 ## 1. Stripe Dashboard (Test mode first)

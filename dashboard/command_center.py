@@ -6,6 +6,7 @@ System health, agent activity, trading performance, strategy-impacting news, rec
 import os
 import re
 import sys
+import getpass
 import json
 import subprocess
 import shutil
@@ -69,6 +70,8 @@ _DASH_PUBLIC_PATHS = frozenset({
     "/manifest.json",
     "/api/hooks/tradingview",
     "/api/billing/stripe-webhook",
+    # No secrets: paths + key names + counts (for debugging /proof billing when Basic auth is on).
+    "/api/billing/proof_links_status",
 })
 _DASH_PUBLIC_PREFIXES = ("/static/",)
 
@@ -1924,13 +1927,17 @@ def _stripe_billing_values_from_dotenv_file() -> dict:
     if not path.is_file():
         return out
     try:
-        text = path.read_text(encoding="utf-8")
+        # utf-8-sig: some editors write a BOM that would otherwise break the first key.
+        text = path.read_text(encoding="utf-8-sig")
     except OSError:
         return out
     for line in text.splitlines():
         s = line.strip()
         if not s or s.startswith("#"):
             continue
+        # Shell-style `export FOO=bar` (common in hand-edited .env files).
+        if s.lower().startswith("export "):
+            s = s[7:].lstrip()
         if "=" not in s:
             continue
         key, val = s.split("=", 1)
@@ -1973,6 +1980,42 @@ def proof_page():
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
     resp.headers["Pragma"] = "no-cache"
     return resp
+
+
+@app.route("/api/billing/proof_links_status")
+def proof_billing_proof_links_status():
+    """
+    Operator/debug: why /proof may show “No links loaded”. Does not expose URLs or secrets.
+    """
+    path = _ROOT / ".env"
+    read_ok = False
+    read_err = None
+    if path.is_file():
+        try:
+            path.read_text(encoding="utf-8-sig")
+            read_ok = True
+        except OSError as e:
+            read_err = str(e)
+    file_vals = _stripe_billing_values_from_dotenv_file()
+    billing = _billing_links_from_env()
+    try:
+        run_as = getpass.getuser()
+    except Exception:
+        run_as = ""
+    r = jsonify(
+        {
+            "effective_project_root": str(_ROOT),
+            "dotenv_path": str(path.resolve()),
+            "dotenv_exists": path.is_file(),
+            "dotenv_read_ok": read_ok,
+            "dotenv_read_error": read_err,
+            "stripe_keys_parsed_from_file": sorted(file_vals.keys()),
+            "billing_link_labels_count": len(billing),
+            "process_user": run_as,
+        }
+    )
+    r.headers["Cache-Control"] = "no-store"
+    return r
 
 
 @app.route("/performance")

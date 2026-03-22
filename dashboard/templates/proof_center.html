@@ -31,17 +31,24 @@
     </ul>
   </div>
 
-  {% if billing_links %}
   <div class="card">
     <strong>Billing (Stripe)</strong>
-    <p class="muted">Set <code>STRIPE_PAYMENT_LINK_*</code> / <code>STRIPE_CUSTOMER_PORTAL_URL</code> in <code>.env</code>. See <code>docs/STRIPE_CHECKOUT_AND_PORTAL.md</code>.</p>
+    {% if billing_links and billing_links|length > 0 %}
+    <p class="muted">Payment links from <code>~/trading-bot/.env</code>. See <code>docs/STRIPE_CHECKOUT_AND_PORTAL.md</code>.</p>
     <ul>
       {% for label, href in billing_links.items() %}
       <li><a href="{{ href }}" rel="noopener noreferrer" target="_blank">{{ label }}</a></li>
       {% endfor %}
     </ul>
+    {% else %}
+    <p class="muted">No links loaded. On the <strong>Oracle VM</strong>, add to <code>/home/ubuntu/trading-bot/.env</code> (not only your Mac):</p>
+    <pre style="background:#161b22;padding:0.75rem;border-radius:6px;overflow:auto;font-size:0.8rem;">STRIPE_PAYMENT_LINK_STARTER=&lt;paste full URL from Stripe Payment Links&gt;
+STRIPE_PAYMENT_LINK_PRO=&lt;...&gt;
+STRIPE_PAYMENT_LINK_ENTERPRISE=&lt;...&gt;</pre>
+    <p class="muted">Sanity check (real links use <code>test_</code> or live ids): <code>curl -s http://127.0.0.1:8083/proof | grep -o 'href="https://buy.stripe.com/[^"]*"' | head</code> — or <a href="/api/billing/proof_links_status"><code>/api/billing/proof_links_status</code></a> (counts only, no secrets).</p>
+    <p class="muted">Then run <code>sudo systemctl restart fortress-dashboard</code> (full word: <strong>sudo</strong>) and deploy the latest <code>dashboard/command_center.py</code> from your Mac.</p>
+    {% endif %}
   </div>
-  {% endif %}
 
   <div class="card">
     <strong>Go-to-market</strong>

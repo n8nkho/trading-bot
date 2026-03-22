@@ -100,18 +100,29 @@ fi
 REMOTE_CMD+=" && DEPLOY_COMMIT=\"${LOCAL_COMMIT}\" DEPLOY_DIRTY=\"${DEPLOY_DIRTY}\" python3 record_version.py >/dev/null 2>&1 || true"
 
 if [[ -n "${SERVICE_NAME}" ]]; then
-  REMOTE_CMD+=" && (sudo systemctl restart \"${SERVICE_NAME}\" || true)"
+  # Stale nohup/manual command_center.py often still owns 8083; systemctl restart alone leaves it
+  # serving old code → new routes 404 on disk but not in curl. Free the port, then restart the unit.
+  DASH_PORT="${COMMAND_CENTER_PORT:-8083}"
+  REMOTE_CMD+=" && ( command -v fuser >/dev/null 2>&1 && sudo fuser -k ${DASH_PORT}/tcp 2>/dev/null || true )"
+  REMOTE_CMD+=" && sudo pkill -f \"${REMOTE_DIR}/dashboard/command_center.py\" 2>/dev/null || true"
+  REMOTE_CMD+=" && sleep 1"
+  # Do not swallow failures — a silent skip leaves old code running (e.g. billing links missing).
+  REMOTE_CMD+=" && sudo systemctl restart \"${SERVICE_NAME}\" || { echo '[deploy] ERROR: systemctl restart failed (check sudo / unit name).'; exit 1; }"
 fi
 
 echo "[deploy] Running remote setup commands..."
 ssh -p "${PORT}" "${USER_NAME}@${HOST}" "${REMOTE_CMD}"
 
 echo "[deploy] Done."
+echo "[deploy] Note: rsync copies this machine's repo root \`.env\` to the server (if it exists here)."
+echo "        STRIPE_PAYMENT_LINK_* for /proof must be in that file on the laptop OR added on the VM."
 echo "[deploy] Next — on the server (ssh ${USER_NAME}@${HOST}):"
 echo "  cd ${REMOTE_DIR}"
 echo "  curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:8083/proof   # expect 200"
 if [[ -n "${SERVICE_NAME}" ]]; then
   echo "  sudo systemctl status ${SERVICE_NAME}"
+  echo "  # If new routes 404 but grep finds them on disk, stale process on 8083 — run:"
+  echo "  sudo ./scripts/restart_dashboard_systemd.sh"
 else
   echo "  # add --service fortress-dashboard to this deploy script to auto-restart the UI after sync"
   echo "  sudo systemctl restart fortress-dashboard   # or: ./scripts/restart_dashboard.sh"
