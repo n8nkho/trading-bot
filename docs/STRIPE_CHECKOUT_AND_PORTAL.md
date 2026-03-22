@@ -63,7 +63,15 @@ Use your **exact** copied links (no quotes needed unless the shell requires them
 sudo systemctl restart fortress-dashboard
 ```
 
-**Check:** open **`http://YOUR_HOST:8083/proof`** (or your HTTPS URL). You should see a **Billing (Stripe)** section with three links.
+**Check:** open **`http://YOUR_PUBLIC_IP:8083/proof`** (replace with your Oracle public IP). Use **http://** if you have no TLS yet.
+
+**If “Billing (Stripe)” does not appear:**
+
+1. At least one of `STRIPE_PAYMENT_LINK_STARTER`, `STRIPE_PAYMENT_LINK_PRO`, `STRIPE_PAYMENT_LINK_ENTERPRISE`, or `STRIPE_CUSTOMER_PORTAL_URL` must be set in **`~/trading-bot/.env`** on the **same machine** that runs the dashboard.
+2. No spaces around `=` in `.env` (e.g. `STRIPE_PAYMENT_LINK_PRO=https://...`).
+3. **`sudo systemctl restart fortress-dashboard`** after editing `.env`.
+4. Hard-refresh the browser (**Cmd+Shift+R** / **Ctrl+Shift+R**) on `/proof`.
+5. Confirm systemd unit loads env: **`grep EnvironmentFile /etc/systemd/system/fortress-dashboard.service`** — should show `EnvironmentFile=-/home/ubuntu/trading-bot/.env` (or similar). If missing, reinstall from `deploy/systemd/` template or add that line and `sudo systemctl daemon-reload`.
 
 **Lane 1 (your operator Oracle):** you can leave these **unset** if you don’t want subscribe links on your personal server.
 

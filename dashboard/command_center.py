@@ -20,6 +20,15 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 os.chdir(_ROOT)
 
+# Load `.env` into os.environ for all routes (/proof billing links, etc.). systemd
+# `EnvironmentFile=` also works; dotenv fills gaps and helps non-systemd runs.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(_ROOT / ".env", override=False)
+except Exception:
+    pass
+
 from flask import Flask, render_template, jsonify, make_response, request, redirect, url_for, Response
 from flask_cors import CORS
 
