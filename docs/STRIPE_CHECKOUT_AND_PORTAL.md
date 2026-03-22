@@ -73,6 +73,8 @@ sudo systemctl restart fortress-dashboard
 4. Hard-refresh the browser (**Cmd+Shift+R** / **Ctrl+Shift+R**) on `/proof`.
 5. Confirm systemd unit loads env: **`grep EnvironmentFile /etc/systemd/system/fortress-dashboard.service`** — should show `EnvironmentFile=-/home/ubuntu/trading-bot/.env` (or similar). If missing, reinstall from `deploy/systemd/` template or add that line and `sudo systemctl daemon-reload`.
 
+6. **Billing still missing but `python3 -c "load_dotenv…"` prints the URL?** The dashboard now also reads those four `STRIPE_*` keys **directly from `~/trading-bot/.env`** so long URLs are not lost to systemd parsing. Deploy the latest `command_center.py` and restart the service.
+
 **Lane 1 (your operator Oracle):** you can leave these **unset** if you don’t want subscribe links on your personal server.
 
 ---
