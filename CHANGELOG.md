@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here. Version in `VERSION` should match the latest release tag when you cut one.
 
+## [1.0.4] — 2026-03-21
+
+### Added
+
+- **Docs:** `docs/LANE1_HARDENING_AND_ROUTINE.md` (B: reboot + deploy `--service`), `docs/STRIPE_CHECKOUT_AND_PORTAL.md` (C: Payment Links / portal).
+- **`/proof`:** optional **Billing (Stripe)** links from `STRIPE_PAYMENT_LINK_*` and `STRIPE_CUSTOMER_PORTAL_URL` in `.env`.
+
 ## [1.0.3] — 2026-03-21
 
 ### Security

@@ -61,7 +61,13 @@ Look for **`universe_license_cap`**: `universe_truncated: true` means the watchl
 
 ---
 
-## E. Daily rhythm (no Git crisis)
+## E. Hardening + routine (B & D)
+
+See **`docs/LANE1_HARDENING_AND_ROUTINE.md`** — deploy with **`--service fortress-dashboard`**, optional **`sudo reboot`**, **`git push`** rhythm.
+
+---
+
+## F. Daily rhythm (no Git crisis)
 
 1. Work on **Oracle** when possible; commit there.  
 2. **Oracle → Mac:** `./scripts/sync_pull_from_oracle.sh ubuntu@YOUR_IP` when you want Cursor up to date.  
@@ -69,6 +75,6 @@ Look for **`universe_license_cap`**: `universe_truncated: true` means the watchl
 
 ---
 
-## F. When you’re ready to sell (preview)
+## G. When you’re ready to sell (preview)
 
 On **Oracle**, run the smoke/tests you trust → bump `VERSION` / `CHANGELOG.md` → `git tag` → that tag is **Lanes 2–3**. Details: `docs/STEP_BY_STEP_LANES.md` Phase 2.

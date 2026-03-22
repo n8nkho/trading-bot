@@ -1895,10 +1895,32 @@ def api_setup_test_connection():
         return jsonify({"ok": False, "error": str(e)}), 400
 
 
+def _billing_links_from_env() -> dict:
+    """Optional Stripe Payment Link / portal URLs for /proof (see docs/STRIPE_CHECKOUT_AND_PORTAL.md)."""
+    out = {}
+    labels = {
+        "STRIPE_PAYMENT_LINK_STARTER": "Starter",
+        "STRIPE_PAYMENT_LINK_PRO": "Pro",
+        "STRIPE_PAYMENT_LINK_ENTERPRISE": "Enterprise",
+        "STRIPE_CUSTOMER_PORTAL_URL": "Customer portal",
+    }
+    for env_key, label in labels.items():
+        url = (os.environ.get(env_key) or "").strip()
+        if url:
+            out[label] = url
+    return out
+
+
 @app.route("/proof")
 def proof_page():
     """Public-facing trust / proof center (no Alpaca setup required)."""
-    resp = make_response(render_template("proof_center.html", version=_get_version()))
+    resp = make_response(
+        render_template(
+            "proof_center.html",
+            version=_get_version(),
+            billing_links=_billing_links_from_env(),
+        )
+    )
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
     resp.headers["Pragma"] = "no-cache"
     return resp

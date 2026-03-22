@@ -51,4 +51,4 @@ Use this doc so you always know **which lane** you are in.
 | What do customers download? | **Lane 2** (and 3) → **Named git tag** or release zip from that tag. |
 | What tier is full internal access? | **Lane 1** → `master`. |
 
-See also: `docs/SYNC_ORACLE_SOURCE_OF_TRUTH.md`, `docs/LANE1_OPERATOR_CHECKLIST.md`, `docs/BILLING_STRIPE.md`, `deploy_to_oracle.sh`, `config/pricing_gates.json`.
+See also: `docs/SYNC_ORACLE_SOURCE_OF_TRUTH.md`, `docs/LANE1_OPERATOR_CHECKLIST.md`, `docs/LANE1_HARDENING_AND_ROUTINE.md`, `docs/BILLING_STRIPE.md`, `docs/STRIPE_CHECKOUT_AND_PORTAL.md`, `deploy_to_oracle.sh`, `config/pricing_gates.json`.

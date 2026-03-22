@@ -7,6 +7,7 @@ usage() {
   echo ""
   echo "Examples:"
   echo "  ./deploy_to_oracle.sh --host 1.2.3.4 --user ubuntu --remote-dir /home/ubuntu/trading-bot --venv /home/ubuntu/trading-bot/venv --service fortress-dashboard"
+  echo "  # Recommended (Lane 1): always pass --service fortress-dashboard so the UI reloads after rsync."
 }
 
 HOST=""

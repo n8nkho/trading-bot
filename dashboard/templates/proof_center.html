@@ -31,6 +31,18 @@
     </ul>
   </div>
 
+  {% if billing_links %}
+  <div class="card">
+    <strong>Billing (Stripe)</strong>
+    <p class="muted">Set <code>STRIPE_PAYMENT_LINK_*</code> / <code>STRIPE_CUSTOMER_PORTAL_URL</code> in <code>.env</code>. See <code>docs/STRIPE_CHECKOUT_AND_PORTAL.md</code>.</p>
+    <ul>
+      {% for label, href in billing_links.items() %}
+      <li><a href="{{ href }}" rel="noopener noreferrer" target="_blank">{{ label }}</a></li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
   <div class="card">
     <strong>Go-to-market</strong>
     <ul>
