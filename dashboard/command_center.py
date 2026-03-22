@@ -1904,17 +1904,57 @@ def api_setup_test_connection():
         return jsonify({"ok": False, "error": str(e)}), 400
 
 
+_STRIPE_LINK_KEYS = (
+    "STRIPE_PAYMENT_LINK_STARTER",
+    "STRIPE_PAYMENT_LINK_PRO",
+    "STRIPE_PAYMENT_LINK_ENTERPRISE",
+    "STRIPE_CUSTOMER_PORTAL_URL",
+)
+
+
+def _stripe_billing_values_from_dotenv_file() -> dict:
+    """
+    Read Stripe link URLs from project `.env` on disk.
+
+    systemd `EnvironmentFile=` sometimes drops or mangles long URL lines; the shell
+    `python3 -c "load_dotenv(...)"` test can still work while the service process does not.
+    """
+    path = _ROOT / ".env"
+    out: dict = {}
+    if not path.is_file():
+        return out
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if "=" not in s:
+            continue
+        key, val = s.split("=", 1)
+        key = key.strip()
+        if key not in _STRIPE_LINK_KEYS:
+            continue
+        val = val.strip().strip('"').strip("'")
+        if val:
+            out[key] = val
+    return out
+
+
 def _billing_links_from_env() -> dict:
     """Optional Stripe Payment Link / portal URLs for /proof (see docs/STRIPE_CHECKOUT_AND_PORTAL.md)."""
-    out = {}
+    file_vals = _stripe_billing_values_from_dotenv_file()
     labels = {
         "STRIPE_PAYMENT_LINK_STARTER": "Starter",
         "STRIPE_PAYMENT_LINK_PRO": "Pro",
         "STRIPE_PAYMENT_LINK_ENTERPRISE": "Enterprise",
         "STRIPE_CUSTOMER_PORTAL_URL": "Customer portal",
     }
+    out = {}
     for env_key, label in labels.items():
-        url = (os.environ.get(env_key) or "").strip()
+        url = (os.environ.get(env_key) or file_vals.get(env_key) or "").strip()
         if url:
             out[label] = url
     return out
