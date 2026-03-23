@@ -61,3 +61,4 @@ rsync -avz \
   "${REMOTE_SSH}:${REMOTE_DIR}/" "${TARGET}/"
 
 echo "[sync] Done. Next: cd \"${TARGET}\" && git status"
+echo "[sync] Daily ops reports (if generated on Oracle): ${TARGET}/reports/ops_daily/ — see docs/DAILY_OPS_REVIEW.md"

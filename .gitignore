@@ -8,3 +8,7 @@ venv/
 .DS_Store
 # Local command history — often contains pasted API keys; never commit
 COMMANDS.txt
+
+# Daily ops exports (may contain tickers, PnL, order IDs); keep README only
+reports/ops_daily/*
+!reports/ops_daily/README.md
