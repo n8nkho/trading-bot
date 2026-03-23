@@ -54,15 +54,16 @@ _DISCLAIMER = (
 
 
 def _alpaca_open_symbols() -> list[str]:
-    """Open stock symbols from Alpaca when keys are configured (paper client)."""
+    """Open stock symbols from Alpaca when keys are configured (paper vs live from ALPACA_BASE_URL)."""
     key = (os.environ.get("ALPACA_API_KEY") or "").strip()
     sec = (os.environ.get("ALPACA_SECRET_KEY") or "").strip()
     if not key or not sec:
         return []
     try:
         from alpaca.trading.client import TradingClient
+        from utils.alpaca_env import is_alpaca_paper
 
-        client = TradingClient(key, sec, paper=True)
+        client = TradingClient(key, sec, paper=is_alpaca_paper())
         return [str(p.symbol) for p in client.get_all_positions()]
     except Exception:
         return []

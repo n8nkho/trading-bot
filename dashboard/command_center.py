@@ -41,6 +41,7 @@ from utils.alerts import send_operator_alert
 from utils.simple_daily_backtest import read_backtest_snapshot, run_daily_momentum_backtest
 from utils.run_registry import summarize_screening_runs
 from agents.drift_detector import analyze_drift
+from utils.alpaca_env import is_alpaca_paper
 
 
 def _get_version() -> str:
@@ -673,12 +674,60 @@ def get_trading_performance():
         "timestamp": datetime.now().isoformat(),
         "policy_profile": get_profile_bundle().get("active_profile"),
     }
-    # Positions
-    positions = _read_json(DATA_DIR / "positions.json", default=[])
-    if isinstance(positions, dict):
-        positions = positions.get("positions", [])
-    perf["positions"] = positions
-    perf["positions_count"] = len(positions)
+    # Positions: prefer Alpaca broker truth; fall back to positions.json; surface file/broker drift
+    file_positions = _read_json(DATA_DIR / "positions.json", default=[])
+    if isinstance(file_positions, dict):
+        file_positions = file_positions.get("positions", [])
+    if not isinstance(file_positions, list):
+        file_positions = []
+
+    broker_list: list | None = None
+    broker_err: str | None = None
+    try:
+        from utils.alpaca_broker import fetch_broker_positions
+
+        broker_list, broker_err = fetch_broker_positions()
+    except Exception as e:
+        broker_list, broker_err = None, f"{type(e).__name__}:{e}"
+
+    if broker_list is not None:
+        perf["positions_source"] = "alpaca_broker"
+        perf["positions_alpaca_error"] = None
+        perf["positions"] = broker_list
+        perf["positions_count"] = len(broker_list)
+        perf["positions_file_count"] = len(file_positions)
+        file_syms = {
+            str(p.get("ticker") or p.get("symbol") or "").strip().upper()
+            for p in file_positions
+            if isinstance(p, dict) and (p.get("ticker") or p.get("symbol"))
+        }
+        brok_syms = {
+            str(p.get("ticker") or "").strip().upper()
+            for p in broker_list
+            if p.get("ticker")
+        }
+        perf["positions_broker_file_mismatch"] = file_syms != brok_syms
+        if perf["positions_broker_file_mismatch"]:
+            perf["positions_mismatch_hint"] = (
+                f"Broker open symbols {sorted(brok_syms)} != data/positions.json {sorted(file_syms)}. "
+                "Reconcile: python3 sync_alpaca.py (from repo root on the VM)."
+            )
+        else:
+            perf["positions_mismatch_hint"] = None
+        positions = broker_list
+    else:
+        perf["positions_source"] = "positions_json"
+        perf["positions_alpaca_error"] = broker_err
+        perf["positions"] = file_positions
+        perf["positions_count"] = len(file_positions)
+        perf["positions_file_count"] = len(file_positions)
+        perf["positions_broker_file_mismatch"] = None
+        perf["positions_mismatch_hint"] = None
+        if broker_err:
+            perf["positions_mismatch_hint"] = (
+                f"Alpaca positions unavailable ({broker_err}); showing positions.json only."
+            )
+        positions = file_positions
 
     # Decisions log
     decisions = _read_jsonl(DATA_DIR / "decisions_log.jsonl", limit=100)
@@ -1894,7 +1943,7 @@ def api_setup_test_connection():
         if not key or not secret:
             return jsonify({"ok": False, "error": "No keys found. Save keys first."}), 400
         try:
-            client = TradingClient(key, secret, paper=True)
+            client = TradingClient(key, secret, paper=is_alpaca_paper())
         except ValueError as e:
             return jsonify({"ok": False, "error": f"Invalid Alpaca keys: {e}"}), 400
         acc = client.get_account()
@@ -2517,14 +2566,25 @@ def _refresh_loop():
 
 
 def get_live_positions():
-    """Live positions from positions.json enriched with current price from yfinance."""
+    """Open positions from Alpaca (preferred) or positions.json; prices enriched with yfinance when possible."""
     out = []
     try:
         import yfinance as yf
         from datetime import datetime
-        positions = _read_json(DATA_DIR / "positions.json", default=[])
-        if isinstance(positions, dict):
-            positions = positions.get("positions", [])
+
+        positions = []
+        try:
+            from utils.alpaca_broker import fetch_broker_positions
+
+            bl, _err = fetch_broker_positions()
+            if bl is not None:
+                positions = bl
+        except Exception:
+            positions = []
+        if not positions:
+            positions = _read_json(DATA_DIR / "positions.json", default=[])
+            if isinstance(positions, dict):
+                positions = positions.get("positions", [])
         tickers = list({p.get("ticker") for p in positions if p.get("ticker")})
         # Batch fetch current prices
         prices = {}
@@ -2585,7 +2645,7 @@ def get_live_positions():
 
 
 def get_recent_orders():
-    """Recent orders from Alpaca paper trading API."""
+    """Recent orders from Alpaca (paper vs live from ALPACA_BASE_URL)."""
     import os
     out = []
     try:
@@ -2606,7 +2666,7 @@ def get_recent_orders():
         if not key or not secret:
             return {"orders": [{"error": "Alpaca keys not set"}], "count": 0, "timestamp": __import__("datetime").datetime.now().isoformat()}
         try:
-            client = TradingClient(key, secret, paper=True)
+            client = TradingClient(key, secret, paper=is_alpaca_paper())
         except ValueError:
             return {"orders": [{"error": "Invalid Alpaca keys"}], "count": 0, "timestamp": __import__("datetime").datetime.now().isoformat()}
         req = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=25)

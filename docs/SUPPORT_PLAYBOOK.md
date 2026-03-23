@@ -28,6 +28,12 @@ The Command Center scans the **process user’s** `crontab -l`, **`/var/spool/cr
   - `FORTRESS_CRON_MARKERS=my_wrapper.sh,run_daily` (comma-separated substrings that appear in cron).
 - **Debug payload:** set `FORTRESS_CRON_DEBUG=1` in the environment for `fortress-dashboard`, restart, then open **`/api/health`** (alias: **`/api/system_health`**) and check **`cron_debug.aggregate_chars`**. If **`aggregate_chars` is 0**, nothing was read (permissions or no cron files).
 
+## Command Center shows 0 positions but Alpaca has open positions
+The UI **prefers live broker positions** from Alpaca (`/api/performance`, `/api/positions`). If Alpaca keys are missing or the API errors, it falls back to **`data/positions.json`** only.
+
+- **Reconcile file to broker:** from repo root run `python3 sync_alpaca.py` (uses **`ALPACA_BASE_URL`** for paper vs live).
+- **Mismatch hint:** when broker and file differ, JSON includes `positions_broker_file_mismatch` and `positions_mismatch_hint`.
+
 ## P&L mismatch
 - Confirm `data/pnl_ledger.jsonl` updates after sells; monitor reconciliation logs.
 

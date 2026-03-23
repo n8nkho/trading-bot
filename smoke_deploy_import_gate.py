@@ -61,6 +61,8 @@ def main() -> int:
         "utils.tradingview_webhook",
         "utils.execution_mode",
         "utils.pending_execution_queue",
+        "utils.alpaca_env",
+        "utils.alpaca_broker",
         # Core trading workflow modules
         "agents.screener_agent",
         "agents.entry_agent",
