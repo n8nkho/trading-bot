@@ -4,6 +4,8 @@ Fundamental value strategy using local Llama models.
 
 **Operator default (Oracle + Mac mirror):** the **personal bot and all cron jobs run on Oracle** (`~/trading-bot` on the VM). **Default sync is Oracle → Mac** (`./scripts/sync_pull_from_oracle.sh`) so your Mac stays a Cursor/editor mirror — see **`docs/SYNC_ORACLE_SOURCE_OF_TRUTH.md`**.
 
+**Risk roadmap + ship workflow (test → paper trade/cancel → commit → deploy → sync Mac):** **`docs/STRATEGY_ROADMAP_TICKETS.md`**.
+
 ## Fortress install (VM / laptop)
 
 ```bash
