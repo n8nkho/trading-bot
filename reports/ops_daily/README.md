@@ -16,6 +16,8 @@ cd /home/ubuntu/trading-bot
 
 Optional: **today’s label** (UTC) is default; override with `--utc-day 2026-03-23`.
 
+Each run also writes **`LATEST.md`** and **`LATEST.json`** (copies of that run) so you can always open the same paths for evening review with Cursor.
+
 ## Pull to Mac (then open in Cursor)
 
 ```bash

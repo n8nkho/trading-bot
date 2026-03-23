@@ -217,8 +217,13 @@ def main() -> int:
 
     jpath.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
     mpath.write_text(_markdown(report), encoding="utf-8")
+    # Stable names for “open LATEST” / AI review (docs/DAILY_OPS_REVIEW.md)
+    (out_dir / "LATEST.json").write_text(jpath.read_text(encoding="utf-8"), encoding="utf-8")
+    (out_dir / "LATEST.md").write_text(mpath.read_text(encoding="utf-8"), encoding="utf-8")
     print(f"[daily_ops_report] wrote {jpath}")
     print(f"[daily_ops_report] wrote {mpath}")
+    print(f"[daily_ops_report] wrote {out_dir / 'LATEST.json'}")
+    print(f"[daily_ops_report] wrote {out_dir / 'LATEST.md'}")
     return 0
 
 
