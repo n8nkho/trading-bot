@@ -420,6 +420,11 @@
         <div id="safetyStatus" class="loading">Loading…</div>
       </div>
 
+      <div class="panel col-12">
+        <div class="panel-title">HEADLINE EVENT AGENT <span class="text-muted" style="font-size:0.65em;font-weight:400;">shadow · policy headlines · <a href="/api/headline_event_status" style="color:inherit;">JSON</a></span></div>
+        <div id="headlineEventStatus" class="loading">Loading…</div>
+      </div>
+
       <div class="panel col-4">
         <div class="panel-title">PRISTINE VERIFICATION</div>
         <div class="pristine-actions">
@@ -514,7 +519,7 @@
 
   <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
   <script>
-    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine' };
+    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine' };
 
     let priceChart = null;
     let candleSeries = null;
@@ -981,6 +986,39 @@
       `;
     }
 
+    function renderHeadlineEventStatus(data) {
+      const el = document.getElementById('headlineEventStatus');
+      if (!el) return;
+      el.classList.remove('loading');
+      if (!data || data.error) {
+        el.innerHTML = '<span class="empty">Headline event status unavailable</span>';
+        return;
+      }
+      const esc = (s) => String(s == null ? '' : s).replace(/</g, '&lt;').replace(/&/g, '&amp;');
+      const en = data.enabled !== false;
+      const le = data.last_event || {};
+      const title = esc((le.title || '').slice(0, 120));
+      const topics = Array.isArray(le.topics) ? le.topics.map(esc).join(', ') : '—';
+      const src = esc(le.source || '—');
+      const lines = data.events_line_count != null ? data.events_line_count : '—';
+      const sh = data.shadow_latest_name ? esc(data.shadow_latest_name) : '—';
+      const shMt = data.shadow_latest_mtime ? esc(data.shadow_latest_mtime) : '—';
+      const prev = (data.shadow_preview || []).slice(-6);
+      const prevHtml = prev.length
+        ? '<div class="panel-scroll" style="margin-top:0.5rem;font-size:11px;line-height:1.35;">' + prev.map(function (r) {
+          return '<div class="feed-line info"><strong>' + esc(r.ticker) + '</strong> · ' + esc(r.horizon) + ' · ' + esc(r.suggested_action) + ' · ' + esc((r.rationale_short || '').slice(0, 80)) + '</div>';
+        }).join('') + '</div>'
+        : '<div class="text-muted" style="font-size:11px;margin-top:0.35rem;">No shadow rows yet — run <code>python3 orchestrator.py headline_event --fixture</code> or smoke_headline_event_alpaca.py</div>';
+      el.innerHTML = `
+        <div><strong>${en ? 'ENABLED' : 'DISABLED'}</strong> · mode <strong>${esc(data.mode)}</strong> · ${esc(data.note || '')}</div>
+        <div class="text-muted" style="font-size:11px;margin-top:0.35rem;">Event ledger lines: <strong>${lines}</strong> · latest shadow file: <strong>${sh}</strong> (${shMt})</div>
+        <div style="margin-top:0.5rem;padding-top:0.45rem;border-top:1px solid var(--border);"><strong>Last event</strong> (${src})</div>
+        <div style="font-size:12px;">${title || '<span class="text-muted">No events in ledger yet</span>'}</div>
+        <div class="text-muted" style="font-size:11px;">Topics: ${topics}</div>
+        ${prevHtml}
+      `;
+    }
+
     function renderActionQueue(data) {
       const el = document.getElementById('actionQueue');
       if (!el) return;
@@ -1281,13 +1319,14 @@
 
     async function loadAll() {
       try {
-        const [health, agents, performance, news, recommendations, safetyStatus, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, drift, trustReport, feed, positions, orders, tvSignals] = await Promise.all([
+        const [health, agents, performance, news, recommendations, safetyStatus, headlineEvent, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, drift, trustReport, feed, positions, orders, tvSignals] = await Promise.all([
           fetch(API.health).then(r => r.json()),
           fetch(API.agents).then(r => r.json()),
           fetch(API.performance).then(r => r.json()),
           fetch(API.news).then(r => r.json()),
           fetch(API.recommendations).then(r => r.json()),
           fetch(API.safetyStatus).then(r => r.json()),
+          fetch(API.headlineEvent).then(function (r) { return r.ok ? r.json() : { error: true }; }).catch(function () { return { error: true }; }),
           fetch(API.actionQueue).then(r => r.json()),
           fetch(API.operatorRuns).then(r => r.json()),
           fetch(API.trustLedger).then(r => r.json()),
@@ -1308,6 +1347,7 @@
         renderNews(news);
         renderRecommendations(recommendations);
         renderSafetyStatus(safetyStatus);
+        renderHeadlineEventStatus(headlineEvent);
         renderActionQueue(actionQueue);
         renderOperatorRuns(operatorRuns);
         renderTrustLedger(trustLedger);

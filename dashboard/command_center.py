@@ -1324,6 +1324,72 @@ def get_safety_status():
     }
 
 
+def get_headline_event_status() -> dict:
+    """
+    Summarize headline_event_agent outputs for Command Center (shadow ledger + latest shadow file).
+    """
+    data_dir = DATA_DIR
+    out: dict = {
+        "timestamp": datetime.now().isoformat(),
+        "enabled": os.getenv("HEADLINE_EVENT_AGENT_ENABLED", "1").strip().lower()
+        not in ("0", "false", "no"),
+        "mode": "shadow_only",
+        "events_path": str(data_dir / "headline_events.jsonl"),
+        "events_line_count": 0,
+        "last_event": None,
+        "shadow_latest_name": None,
+        "shadow_latest_mtime": None,
+        "shadow_preview": [],
+        "doc": "docs/HEADLINE_EVENT_AGENT_SKETCH.md",
+        "note": "Shadow-only signals; no auto-execution from this agent.",
+    }
+    for name in ("headline_event_agent.yaml", "headline_event_agent.example.yaml"):
+        p = _ROOT / "config" / name
+        if not p.is_file():
+            continue
+        try:
+            import yaml
+
+            cfg = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+            out["mode"] = str(cfg.get("mode") or out["mode"])
+            break
+        except ImportError:
+            break
+        except Exception:
+            continue
+
+    ev_path = data_dir / "headline_events.jsonl"
+    if ev_path.is_file():
+        try:
+            lines = [x for x in ev_path.read_text(encoding="utf-8", errors="replace").splitlines() if x.strip()]
+            out["events_line_count"] = len(lines)
+            for line in reversed(lines):
+                try:
+                    out["last_event"] = json.loads(line)
+                    break
+                except json.JSONDecodeError:
+                    continue
+        except OSError:
+            pass
+
+    shadow_files = sorted(glob.glob(str(data_dir / "headline_event_shadow_*.jsonl")), reverse=True)
+    if shadow_files:
+        sp = Path(shadow_files[0])
+        out["shadow_latest_name"] = sp.name
+        try:
+            out["shadow_latest_mtime"] = datetime.fromtimestamp(sp.stat().st_mtime).isoformat()
+            raw_lines = [x for x in sp.read_text(encoding="utf-8", errors="replace").splitlines() if x.strip()]
+            for line in raw_lines[-12:]:
+                try:
+                    out["shadow_preview"].append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        except OSError:
+            pass
+
+    return out
+
+
 def _to_action_queue_item(item: dict) -> dict:
     severity = str(item.get("severity") or "low").lower()
     priority_map = {"high": 1, "medium": 2, "low": 3}
@@ -2324,6 +2390,11 @@ def api_recommendations():
 @app.route("/api/safety_status")
 def api_safety_status():
     return jsonify(get_safety_status())
+
+
+@app.route("/api/headline_event_status")
+def api_headline_event_status():
+    return jsonify(get_headline_event_status())
 
 
 @app.route("/api/action_queue")
