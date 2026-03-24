@@ -1,0 +1,10 @@
+{
+  "events": [
+    {
+      "title": "Tariff policy statement on imported industrial metals",
+      "summary": "Headline fixture for smoke test — not real news.",
+      "topics": ["tariffs"],
+      "entities": ["XOM", "CVX", "JNJ", "ZZZZZ"]
+    }
+  ]
+}

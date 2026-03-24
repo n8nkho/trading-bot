@@ -1,0 +1,43 @@
+# Copy to headline_event_agent.yaml and tune (do not commit secrets).
+# headline_event_agent — example config (see docs/HEADLINE_EVENT_AGENT_SKETCH.md)
+
+mode: shadow_only          # shadow_only | live_nudge (live_nudge not recommended until P3 validated)
+enabled: true
+
+ingest:
+  interval_minutes_market: 15
+  max_items_per_run: 50
+
+# Add allowed RSS/API endpoints here; respect ToS.
+sources: []
+# sources:
+#   - type: rss
+#     url: https://example.com/feed.xml
+#     name: example_policy_feed
+
+labeling:
+  use_llm: false
+  prompt_version: "v0"
+  topics:
+    - tariffs
+    - fed_policy
+    - war_risk
+    - crypto_reg
+    - other
+
+universe:
+  # Prefer intersection with last screening / watchlist (implemented in agent).
+  require_prior_screen_approval: true
+
+shadow:
+  output_dir: data
+  file_prefix: headline_event_shadow_
+
+risk:
+  max_event_bucket_notional_pct: 0.25   # equity % cap if live_nudge ever enabled
+  respect_circuit_breaker: true
+  respect_trading_halt: true
+
+horizons:
+  - intraday
+  - 5d

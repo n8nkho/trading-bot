@@ -80,6 +80,7 @@ def main() -> int:
         "agents.theta_spreads",
         "agents.dividend_capture",
         "agents.pairs_trader",
+        "agents.headline_event_agent",
     ]
 
     ok = True

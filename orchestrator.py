@@ -2087,6 +2087,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py fortress                   - Run complete hedging system")
         print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
         print("  python orchestrator.py execute_pending            - Submit queued HITL trades (see FORTRESS_EXECUTION_MODE)")
+        print("  python orchestrator.py headline_event [--fixture] - Headline event agent (shadow; --fixture = sample fixture)")
         sys.exit(1)
     
     command = sys.argv[1].lower()
@@ -2576,4 +2577,16 @@ if __name__ == "__main__":
             if approved:
                 for a in approved:
                     logger.info(f"  APPROVED {a['ticker']} shares={a['shares']} @ {a['entry_price']:.2f} order_id={a['order_id']}")
+
+    elif command == "headline_event":
+        from agents.headline_event_agent import run_headline_event_cycle
+
+        root = Path(__file__).resolve().parent
+        fp = None
+        if len(sys.argv) > 2 and sys.argv[2] == "--fixture":
+            fp = root / "tests" / "fixtures" / "headline_event_sample.json"
+        out = run_headline_event_cycle(fixture_path=fp)
+        print(json.dumps(out, indent=2))
+        if not out.get("ok"):
+            sys.exit(1)
 
