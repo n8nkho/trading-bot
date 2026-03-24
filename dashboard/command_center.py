@@ -913,6 +913,15 @@ def get_trading_performance():
             "top_prefilter_reasons": top_prefilter_reasons,
             "top_candidates": top_candidates,
         }
+        try:
+            from agents.risk_guardian import get_risk_status
+
+            rlive = get_risk_status() or {}
+            sm, smr = _strict_mode_live(rlive)
+            perf["latest_screening"]["strict_mode"] = sm
+            perf["latest_screening"]["strict_mode_reason"] = smr
+        except Exception:
+            pass
 
     # Auto trades today
     today = datetime.now().strftime("%Y%m%d")
@@ -1250,6 +1259,17 @@ def _latest_release_snapshot_dict() -> dict:
         return {}
 
 
+def _strict_mode_live(risk: dict) -> tuple[bool, str]:
+    """Align with orchestrator daily screening: strict if circuit tripped or consecutive_losses >= 2."""
+    circuit = bool(risk.get("circuit_breaker_active"))
+    consec = int(risk.get("consecutive_losses") or 0)
+    if circuit:
+        return True, f"circuit_breaker_active (consecutive_losses={consec})"
+    if consec >= 2:
+        return True, f"consecutive_losses={consec} >= 2"
+    return False, "normal"
+
+
 def get_safety_status():
     risk = {}
     try:
@@ -1279,6 +1299,7 @@ def get_safety_status():
         heartbeat_last_run = datetime.fromtimestamp(hb_log.stat().st_mtime).isoformat()
 
     hs = get_halt_state()
+    strict_now, strict_reason_now = _strict_mode_live(risk)
     return {
         "timestamp": datetime.now().isoformat(),
         "policy_profile": policy.get("active_profile"),
@@ -1288,8 +1309,8 @@ def get_safety_status():
         "forced_rollback_until": rollback.get("forced_until"),
         "circuit_breaker_active": bool(risk.get("circuit_breaker_active")),
         "position_size_reduction": risk.get("position_size_reduction"),
-        "strict_mode": screening.get("strict_mode"),
-        "strict_mode_reason": screening.get("strict_mode_reason"),
+        "strict_mode": strict_now,
+        "strict_mode_reason": strict_reason_now,
         "latest_screening_time": screening.get("time"),
         "latest_screening_date": screening.get("date"),
         "last_screening_finished_at": screening.get("screening_finished_at"),
