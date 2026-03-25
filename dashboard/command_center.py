@@ -2398,11 +2398,14 @@ def api_bot_audit():
     - profit opportunity throughput (fills + win rate heuristics)
     - per-strategy breakdown from pnl_ledger + process checks
     - session window from 03:00 America/New_York; contrast vs fortress/hedge files
+    - optional delayed benchmark/VIX via yfinance (?market=0 to disable)
 
-    No broker calls; safe to run anytime from Command Center.
+    No broker orders; safe to run anytime from Command Center.
     """
     days = request.args.get("days", default=1, type=int) or 1
     lookback_days = request.args.get("lookback_days", default=30, type=int) or 30
+    market_raw = (request.args.get("market") or "1").strip().lower()
+    include_market = market_raw not in ("0", "false", "no", "off")
     try:
         from agents.bot_audit_agent import audit_bot_performance
 
@@ -2411,6 +2414,7 @@ def api_bot_audit():
             logs_dir=LOGS_DIR,
             lookback_days=lookback_days,
             audit_days=days,
+            include_market=include_market,
         )
         return jsonify(report)
     except Exception as e:

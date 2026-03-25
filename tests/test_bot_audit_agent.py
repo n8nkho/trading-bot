@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from agents.bot_audit_agent import audit_bot_performance
+from agents.bot_audit_agent import _market_vs_bot_analysis, _tape_trend_label, audit_bot_performance
 
 
 class TestBotAuditAgent(unittest.TestCase):
@@ -82,10 +82,12 @@ class TestBotAuditAgent(unittest.TestCase):
             lookback_days=7,
             audit_days=1,
             now_utc=now_utc,
+            include_market=False,
         )
         self.assertEqual(report["overall_status"], "ok")
         self.assertEqual(report["objectives"]["profit_opportunities"]["status"], "ok")
         self.assertEqual(report["objectives"]["near_zero_losses"]["status"], "ok")
+        self.assertEqual(report["objectives"]["market_backdrop"]["status"], "unavailable")
 
     def test_critical_when_all_losses(self):
         tmp = Path("._tmp_bot_audit_test_2")
@@ -122,6 +124,7 @@ class TestBotAuditAgent(unittest.TestCase):
             lookback_days=7,
             audit_days=1,
             now_utc=now_utc,
+            include_market=False,
         )
         self.assertIn(report["overall_status"], ("critical", "warn"))
         # In this heuristic, it should generally be critical.
@@ -155,6 +158,7 @@ class TestBotAuditAgent(unittest.TestCase):
             lookback_days=7,
             audit_days=1,
             now_utc=now_utc,
+            include_market=False,
         )
         self.assertEqual(report["audited"]["ledger_rows_today"], 1)
         self.assertEqual(report["audited"]["ledger_rows_session_et"], 1)
@@ -197,6 +201,7 @@ class TestBotAuditAgent(unittest.TestCase):
             lookback_days=7,
             audit_days=1,
             now_utc=now_utc,
+            include_market=False,
         )
         self.assertIn("hedging_contrast", report)
         self.assertIn("hedging_context", report)
@@ -226,8 +231,52 @@ class TestBotAuditAgent(unittest.TestCase):
             lookback_days=7,
             audit_days=1,
             now_utc=now_utc,
+            include_market=False,
         )
         self.assertIn(report["overall_status"], ("warn", "ok", "critical"))
+
+
+    def test_tape_trend_label(self):
+        self.assertEqual(_tape_trend_label(1.5, 0.5), "uptrend")
+        self.assertEqual(_tape_trend_label(-1.5, -0.5), "downtrend")
+        self.assertEqual(_tape_trend_label(0.1, 0.1), "sideways")
+        self.assertEqual(_tape_trend_label(None, 0), "unknown")
+
+    def test_market_vs_bot_downtrend_losses_align(self):
+        m = {
+            "ok": True,
+            "benchmark": "SPY",
+            "tape_trend": "downtrend",
+            "change_5d_pct": -2.0,
+            "change_1d_pct": -0.5,
+            "vix_last": 19.0,
+        }
+        r = _market_vs_bot_analysis(
+            market=m,
+            pnl_session=-10.0,
+            loss_status="warn",
+            profit_status="warn",
+            total_session_trades=2,
+        )
+        self.assertTrue(any("weak" in (f.get("text") or "") for f in r["findings"]))
+
+    def test_market_vs_bot_uptrend_losses_tension(self):
+        m = {
+            "ok": True,
+            "benchmark": "SPY",
+            "tape_trend": "uptrend",
+            "change_5d_pct": 2.0,
+            "change_1d_pct": 0.4,
+            "vix_last": 14.0,
+        }
+        r = _market_vs_bot_analysis(
+            market=m,
+            pnl_session=-5.0,
+            loss_status="warn",
+            profit_status="warn",
+            total_session_trades=3,
+        )
+        self.assertTrue(any(f.get("type") == "tension" for f in r["findings"]))
 
 
 if __name__ == "__main__":

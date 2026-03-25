@@ -1268,7 +1268,7 @@
       const recs = Array.isArray(data.recommendations) ? data.recommendations : [];
 
       const recLines = recs.length
-        ? recs.slice(0, 6).map(r => {
+        ? recs.slice(0, 8).map(r => {
             const sev = esc(r.severity || 'low');
             const title = esc(r.title || '');
             const body = esc(r.body || '').slice(0, 190);
@@ -1289,6 +1289,19 @@
         ? `<div class="text-muted" style="font-size:11px;margin-top:0.3rem;max-height:3.2em;overflow:hidden;">Hedge vs bot: ${esc(String(hx.summary).slice(0, 220))}${String(hx.summary).length > 220 ? '…' : ''}</div>`
         : '';
 
+      const mc = data.market_context || {};
+      const mv = data.market_vs_bot || {};
+      let marketLine = '';
+      if (mc.ok) {
+        const vixPart = mc.vix_last != null ? ' · VIX ' + esc(String(mc.vix_last)) : '';
+        marketLine = `<div class="text-muted" style="font-size:11px;margin-top:0.3rem;">Tape: <strong>${esc(mc.benchmark || '—')}</strong> 5d <strong>${mc.change_5d_pct != null ? esc(String(mc.change_5d_pct)) + '%' : '—'}</strong> · trend <strong>${esc(mc.tape_trend || '—')}</strong>${vixPart} <span style="opacity:0.8">(${esc(mc.source || '')})</span></div>`;
+        if (mv.summary && String(mv.summary).trim()) {
+          marketLine += `<div class="text-muted" style="font-size:10px;margin-top:0.2rem;">Tape vs bot: ${esc(String(mv.summary).slice(0, 260))}${String(mv.summary).length > 260 ? '…' : ''}</div>`;
+        }
+      } else {
+        marketLine = `<div class="text-muted" style="font-size:10px;margin-top:0.3rem;">Market tape: unavailable (${esc(mc.reason || mc.error || 'n/a')}). <span style="opacity:0.85">Use ?market=0 on API to skip fetch.</span></div>`;
+      }
+
       el.innerHTML = `
         <div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;">
           <div>Overall: <strong style="color:${color}">${esc(status).toUpperCase()}</strong></div>
@@ -1297,6 +1310,7 @@
         <div class="text-muted" style="font-size:10px;margin-top:0.25rem;">Audit window: <code>${esc(aw.start_et || '—')}</code> → <code>${esc(aw.end_et || '—')}</code> (${winLbl})</div>
         ${hedgeLine}
         ${contrastLine}
+        ${marketLine}
         <div style="margin-top:0.45rem;padding-top:0.45rem;border-top:1px solid var(--border);font-size:11px;line-height:1.35;">
           <div>Profit opportunities: <strong>${esc(profit.status || '—')}</strong></div>
           <div>Near-zero losses: <strong>${esc(loss.status || '—')}</strong></div>

@@ -7,9 +7,10 @@ Purpose:
     - maintain profit opportunities (signal-to-trade throughput + win rate)
 
 Key design goals:
-  - Read-only: no trading / no broker submission / no network.
-  - Deterministic: derives metrics only from local JSON/JSONL + log tails.
-  - Safe for Command Center "run anytime": fast, avoids heavy parsing.
+  - Read-only trading: no broker order submission.
+  - Deterministic ledger/process metrics from local JSON/JSONL + log tails.
+  - Optional market tape: delayed quotes via yfinance (benchmark + VIX) when enabled.
+  - Safe for Command Center "run anytime": bounded fetch, graceful fallback.
   - Explainable: returns `findings` + `recommendations` with reasons.
 """
 
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import glob
 import json
+import os
 import time
 from datetime import datetime, time as dt_time, timedelta, timezone
 from pathlib import Path
@@ -117,6 +119,254 @@ def _read_text_tail(path: Path, max_chars: int = 4000) -> str:
         return txt[-max_chars:]
     except OSError:
         return ""
+
+
+def _yf_series_close(hist: Any, symbol: str) -> Any:
+    """Extract a 1-D close series from yfinance history (handles MultiIndex columns)."""
+    if hist is None or hist.empty:
+        return None
+    close = hist["Close"] if "Close" in hist.columns else None
+    if close is None:
+        return None
+    if hasattr(close, "columns"):
+        if symbol in close.columns:
+            return close[symbol].dropna()
+        return close.iloc[:, 0].dropna()
+    return close.dropna()
+
+
+def _pct_change(last: float, prior: float) -> float | None:
+    if prior is None or prior == 0:
+        return None
+    return round((last / prior - 1.0) * 100.0, 3)
+
+
+def _tape_trend_label(change_5d_pct: float | None, vs_sma20_pct: float | None) -> str:
+    """
+    Coarse tape label from recent benchmark performance (heuristic, not advice).
+    """
+    if change_5d_pct is None:
+        return "unknown"
+    c5 = float(change_5d_pct)
+    vs = float(vs_sma20_pct) if vs_sma20_pct is not None else 0.0
+    if c5 >= 1.0 and vs >= -0.75:
+        return "uptrend"
+    if c5 <= -1.0 and vs <= 0.75:
+        return "downtrend"
+    if abs(c5) < 0.35 and abs(vs) < 0.35:
+        return "sideways"
+    return "mixed"
+
+
+def fetch_market_performance_context(
+    *,
+    benchmark: str | None = None,
+    include_vix: bool = True,
+) -> dict[str, Any]:
+    """
+    Pull delayed daily benchmark (default SPY) and optional ^VIX for audit context.
+    Set env BOT_AUDIT_FETCH_MARKET=0 to skip entirely. BOT_AUDIT_BENCHMARK overrides symbol.
+    """
+    off = os.getenv("BOT_AUDIT_FETCH_MARKET", "1").strip().lower()
+    if off in ("0", "false", "no", "off"):
+        return {"ok": False, "disabled": True, "reason": "BOT_AUDIT_FETCH_MARKET disabled"}
+
+    sym = (benchmark or os.getenv("BOT_AUDIT_BENCHMARK", "SPY") or "SPY").strip()
+    out: dict[str, Any] = {
+        "ok": False,
+        "benchmark": sym,
+        "as_of": None,
+        "benchmark_last": None,
+        "change_1d_pct": None,
+        "change_5d_pct": None,
+        "change_20d_pct": None,
+        "sma20": None,
+        "price_vs_sma20_pct": None,
+        "tape_trend": None,
+        "vix_last": None,
+        "vix_change_1d_pct": None,
+        "error": None,
+        "source": "yfinance_delayed",
+    }
+
+    try:
+        import yfinance as yf
+    except ImportError:
+        out["error"] = "yfinance_not_installed"
+        return out
+
+    try:
+        hist = yf.download(
+            sym,
+            period="4mo",
+            interval="1d",
+            progress=False,
+            auto_adjust=True,
+            threads=False,
+        )
+        ser = _yf_series_close(hist, sym)
+        if ser is None or ser.empty:
+            out["error"] = "benchmark_no_data"
+            return out
+
+        closes = ser.astype(float)
+        last = float(closes.iloc[-1])
+        out["benchmark_last"] = round(last, 4)
+        out["as_of"] = str(closes.index[-1])[:10]
+
+        if len(closes) >= 2:
+            out["change_1d_pct"] = _pct_change(last, float(closes.iloc[-2]))
+        if len(closes) >= 6:
+            out["change_5d_pct"] = _pct_change(last, float(closes.iloc[-6]))
+        if len(closes) >= 21:
+            out["change_20d_pct"] = _pct_change(last, float(closes.iloc[-21]))
+        if len(closes) >= 20:
+            sma20 = float(closes.tail(20).mean())
+            out["sma20"] = round(sma20, 4)
+            out["price_vs_sma20_pct"] = _pct_change(last, sma20)
+        out["tape_trend"] = _tape_trend_label(
+            out.get("change_5d_pct"),
+            out.get("price_vs_sma20_pct"),
+        )
+        out["ok"] = True
+
+        if include_vix:
+            try:
+                vh = yf.download(
+                    "^VIX",
+                    period="2wk",
+                    interval="1d",
+                    progress=False,
+                    auto_adjust=True,
+                    threads=False,
+                )
+                vser = _yf_series_close(vh, "^VIX")
+                if vser is not None and not vser.empty:
+                    v = vser.astype(float)
+                    vl = float(v.iloc[-1])
+                    out["vix_last"] = round(vl, 3)
+                    if len(v) >= 2:
+                        out["vix_change_1d_pct"] = _pct_change(vl, float(v.iloc[-2]))
+            except Exception:
+                pass
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}:{e}"
+        return out
+
+    return out
+
+
+def _market_vs_bot_analysis(
+    *,
+    market: dict[str, Any],
+    pnl_session: float,
+    loss_status: str,
+    profit_status: str,
+    total_session_trades: int,
+) -> dict[str, Any]:
+    """
+    Contrast session realized bot outcomes with observable tape (benchmark + VIX).
+    """
+    findings: list[dict[str, Any]] = []
+    if not market.get("ok"):
+        err = market.get("error") or market.get("reason") or "unavailable"
+        return {
+            "summary": f"Market tape context unavailable ({err}). Audit used ledger/hedge inputs only.",
+            "findings": [
+                {
+                    "type": "context",
+                    "text": "Enable yfinance (pip install yfinance) and BOT_AUDIT_FETCH_MARKET=1 for benchmark trend context.",
+                }
+            ],
+            "tape_trend": None,
+        }
+
+    trend = market.get("tape_trend")
+    c5 = market.get("change_5d_pct")
+    c1 = market.get("change_1d_pct")
+    vix = market.get("vix_last")
+    sym = market.get("benchmark") or "SPY"
+    c5s = f"{c5}%" if c5 is not None else "n/a"
+    c1s = f"{c1}%" if c1 is not None else "n/a"
+    summary_parts: list[str] = [
+        f"{sym} tape ~5d: {c5s} (1d {c1s}), label={trend}" + (f", VIX {vix}" if vix is not None else "")
+    ]
+
+    if trend == "downtrend" and pnl_session < 0 and loss_status != "ok":
+        findings.append(
+            {
+                "type": "align",
+                "text": "Session losses overlap a weak/downtrend benchmark window — some drawdown may be systematic beta rather than idiosyncratic execution.",
+            }
+        )
+        summary_parts.append("Losses partly consistent with soft tape.")
+    elif trend == "uptrend" and pnl_session < 0 and total_session_trades > 0:
+        findings.append(
+            {
+                "type": "tension",
+                "text": "Session realized P&L is negative while the benchmark skewed up over ~5d — review signal quality, fills, and whether names diverged from beta.",
+            }
+        )
+        summary_parts.append("Underperforming a rising tape on realized closes.")
+    elif trend == "uptrend" and pnl_session >= 0 and loss_status == "ok":
+        findings.append(
+            {
+                "type": "align",
+                "text": "Positive session realized P&L alongside a constructive benchmark trend.",
+            }
+        )
+
+    if vix is not None and float(vix) >= 25 and profit_status in ("warn", "critical"):
+        findings.append(
+            {
+                "type": "context",
+                "text": f"Elevated VIX (~{vix}) with weak opportunity objective — wider spreads/volatility may be throttling execution quality.",
+            }
+        )
+
+    if total_session_trades == 0 and trend == "uptrend":
+        findings.append(
+            {
+                "type": "opportunity",
+                "text": "Benchmark trend constructive but no session ledger fills — opportunity path may be blocked despite tape.",
+            }
+        )
+
+    return {
+        "summary": " ".join(summary_parts),
+        "findings": findings,
+        "tape_trend": trend,
+    }
+
+
+def _market_backdrop_findings(market: dict[str, Any]) -> list[dict[str, Any]]:
+    """Objective-style rows for delayed benchmark / VIX context."""
+    out: list[dict[str, Any]] = []
+    if not market.get("ok"):
+        out.append(
+            {
+                "metric": "tape_data",
+                "value": market.get("error") or market.get("reason") or "unavailable",
+                "target": "yfinance delayed daily",
+            }
+        )
+        return out
+    out.append({"metric": "benchmark_symbol", "value": market.get("benchmark"), "as_of": market.get("as_of")})
+    if market.get("change_5d_pct") is not None:
+        out.append({"metric": "benchmark_change_5d_pct", "value": market.get("change_5d_pct")})
+    if market.get("change_1d_pct") is not None:
+        out.append({"metric": "benchmark_change_1d_pct", "value": market.get("change_1d_pct")})
+    if market.get("change_20d_pct") is not None:
+        out.append({"metric": "benchmark_change_20d_pct", "value": market.get("change_20d_pct")})
+    if market.get("price_vs_sma20_pct") is not None:
+        out.append({"metric": "benchmark_vs_sma20_pct", "value": market.get("price_vs_sma20_pct")})
+    if market.get("tape_trend"):
+        out.append({"metric": "tape_trend_label", "value": market.get("tape_trend")})
+    if market.get("vix_last") is not None:
+        out.append({"metric": "vix_last", "value": market.get("vix_last")})
+    if market.get("vix_change_1d_pct") is not None:
+        out.append({"metric": "vix_change_1d_pct", "value": market.get("vix_change_1d_pct")})
+    return out
 
 
 def _load_hedging_context(
@@ -424,6 +674,7 @@ def audit_bot_performance(
     lookback_days: int = 30,
     audit_days: int = 1,
     now_utc: datetime | None = None,
+    include_market: bool | None = None,
 ) -> dict[str, Any]:
     """
     Read-only audit. Returns a JSON-serializable report.
@@ -433,6 +684,9 @@ def audit_bot_performance(
     previous calendar day at 3 AM). Calendar `lookback_days` still scopes the longer
     ledger win-rate context. Contrasts session bot outcomes with latest
     fortress_report_*.json / hedging_recommendations.json when present.
+
+    When `include_market` is True (default from env BOT_AUDIT_FETCH_MARKET), pulls
+    delayed benchmark/VIX via yfinance for tape vs bot analysis (no orders).
     """
     data_dir = data_dir or DEFAULT_DATA_DIR
     logs_dir = logs_dir or DEFAULT_LOGS_DIR
@@ -599,6 +853,28 @@ def audit_bot_performance(
     elif loss_status == "ok" and profit_status == "ok":
         overall_status = "ok"
 
+    if include_market is None:
+        include_market = os.getenv("BOT_AUDIT_FETCH_MARKET", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+
+    market_ctx: dict[str, Any]
+    if include_market:
+        market_ctx = fetch_market_performance_context()
+    else:
+        market_ctx = {"ok": False, "disabled": True, "reason": "include_market_false"}
+
+    mvb = _market_vs_bot_analysis(
+        market=market_ctx,
+        pnl_session=pnl_today,
+        loss_status=loss_status,
+        profit_status=profit_status,
+        total_session_trades=total_today,
+    )
+
     hedge_ctx = _load_hedging_context(data_dir)
     contrast = _hedging_contrast_analysis(
         pnl_session=pnl_today,
@@ -647,6 +923,22 @@ def audit_bot_performance(
             "title": "Hedge / fortress vs session bot performance",
             "body": hedge_body[:1200] if hedge_body else "Cross-check session bot P&L with fortress hedge opportunities.",
             "action": "operator: review latest data/fortress_report_*.json and data/hedging_recommendations.json; run `python3 orchestrator.py fortress` if the report is stale.",
+        }
+    )
+
+    tape_body = (mvb.get("summary") or "").strip()
+    for f in mvb.get("findings") or []:
+        if f.get("type") in ("tension", "align", "opportunity", "context"):
+            t = str(f.get("text") or "").strip()
+            if t and t not in tape_body:
+                tape_body = (tape_body + " " + t).strip() if tape_body else t
+    tape_sev = "medium" if any(f.get("type") == "tension" for f in (mvb.get("findings") or [])) else "low"
+    recommendations.append(
+        {
+            "severity": tape_sev,
+            "title": "Market tape vs session bot",
+            "body": tape_body[:1200] if tape_body else "No market context.",
+            "action": "operator: optional env BOT_AUDIT_BENCHMARK=SPY (or IWM/QQQ); disable fetches with BOT_AUDIT_FETCH_MARKET=0 or API ?market=0.",
         }
     )
 
@@ -711,9 +1003,19 @@ def audit_bot_performance(
                 "status": loss_status,
                 "findings": loss_findings,
             },
+            "market_backdrop": {
+                "status": "ok" if market_ctx.get("ok") else "unavailable",
+                "findings": _market_backdrop_findings(market_ctx),
+            },
         },
         "hedging_context": hedge_payload,
         "hedging_contrast": contrast_out,
+        "market_context": market_ctx,
+        "market_vs_bot": {
+            "summary": mvb.get("summary"),
+            "tape_trend": mvb.get("tape_trend"),
+            "findings": mvb.get("findings") or [],
+        },
         "process": {
             "today_screening_runs_count": len(process.get("session_screening_runs") or []),
             "session_screening_runs": process.get("session_screening_runs") or [],
