@@ -2617,9 +2617,11 @@ if __name__ == "__main__":
         print("FORTRESS HEDGING SYSTEM RESULTS")
         print("=" * 80)
         if result:
-            print(f"Market regime: {result.get('market_conditions', {}).get('regime', 'N/A')}")
-            print(f"Strategies evaluated: {len(result.get('recommendations', {}))}")
-            for strategy, data in result.get('recommendations', {}).items():
+            mc = result.get("market_conditions") or {}
+            print(f"Market regime: {mc.get('regime', 'N/A')}")
+            strat = result.get("strategies") or result.get("recommendations") or {}
+            print(f"Strategies evaluated: {len(strat)}")
+            for strategy, data in strat.items():
                 if data:
                     print(f"{strategy}: {data}")
         else:

@@ -166,14 +166,16 @@ def generate_fortress_report(portfolio_value):
 def fortress_daily_check():
     """Perform daily check and generate report."""
     portfolio_status = get_portfolio_status()
-    recommendations = run_all_hedge_strategies(portfolio_status['total_value'])
-    report = generate_fortress_report(portfolio_status['total_value'])
+    report_json = generate_fortress_report(portfolio_status['total_value'])
     report_filename = f"data/fortress_report_{datetime.now().strftime('%Y%m%d')}.json"
     with open(report_filename, 'w') as report_file:
-        report_file.write(report)
+        report_file.write(report_json)
     logging.info(f"Daily fortress report saved to {report_filename}")
-    print(report)
-    return recommendations
+    print(report_json)
+    try:
+        return json.loads(report_json)
+    except json.JSONDecodeError:
+        return {}
 
 def fortress_weekly_rebalance():
     """Perform weekly portfolio rebalance."""
