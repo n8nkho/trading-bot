@@ -147,16 +147,19 @@ echo "[deploy] Note: rsync copies this machine's repo root \`.env\` to the serve
 echo "        STRIPE_PAYMENT_LINK_* for /proof must be in that file on the laptop OR added on the VM."
 echo "[deploy] Next — on the server (ssh ${USER_NAME}@${HOST}):"
 echo "  cd ${REMOTE_DIR}"
-echo "  # Git on VM (if you use it; rsync does not update .git): git pull origin master"
-echo "  # Or set upstream once: git branch --set-upstream-to=origin/master master"
-echo "  curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:8083/proof   # expect 200"
+echo "  (Optional, only if this VM is a git clone — rsync deploy does not sync .git/)"
+echo "    git pull origin master"
+echo "    git branch --set-upstream-to=origin/master master"
+echo "  curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:8083/proof"
+echo "    (expect HTTP code 200)"
 if [[ -n "${SERVICE_NAME}" ]]; then
   echo "  sudo systemctl status ${SERVICE_NAME}"
-  echo "  # If new routes 404 but grep finds them on disk, stale process on 8083 — run:"
-  echo "  sudo ./scripts/restart_dashboard_systemd.sh"
+  echo "  If new routes 404 but files on disk look correct (stale process on 8083):"
+  echo "    sudo ./scripts/restart_dashboard_systemd.sh"
 else
-  echo "  # add --service fortress-dashboard to this deploy script to auto-restart the UI after sync"
-  echo "  sudo systemctl restart fortress-dashboard   # or: ./scripts/restart_dashboard.sh"
+  echo "  Pass --service fortress-dashboard on deploy to auto-restart the UI, or on the server:"
+  echo "    sudo systemctl restart fortress-dashboard"
+  echo "    ./scripts/restart_dashboard.sh"
 fi
 echo "[deploy] Next — on this machine (once, optional): ssh-copy-id -p ${PORT} ${USER_NAME}@${HOST}"
 
