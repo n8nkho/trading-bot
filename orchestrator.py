@@ -2161,6 +2161,15 @@ def print_latest_entry_skips() -> None:
         return
     print(json.dumps(eg, indent=2))
     tops = eg.get("top_skip_reasons") or []
+    legacy = tops and all(
+        isinstance(r, dict) and str(r.get("reason") or "").strip() == "No suitable option found" for r in tops
+    )
+    if legacy and len(tops) == 1:
+        print(
+            "\nNote: This reason was often written by older entry_agent code over real SKIP causes "
+            "(RSI / window / stabilization). Deploy latest `agents/entry_agent.py` and run "
+            "`python3 orchestrator.py screen` once — then print_entry_skips will show true reasons."
+        )
     if tops:
         print("\nTop skip reasons (fix one lever at a time; see .env.example ENTRY_* / agents/entry_agent.py):")
         for row in tops[:6]:
