@@ -1914,10 +1914,11 @@ def get_chart_bars_json(ticker: str, days: int) -> dict:
 
     sym = (ticker or "SPY").strip().upper() or "SPY"
     d = max(5, min(int(days), 800))
-    t = yf.Ticker(sym)
-    hist = t.history(period=f"{d}d", interval="1d", auto_adjust=True)
-    bars = []
-    if hist is not None and not hist.empty:
+
+    def _hist_to_bars(hist):
+        out = []
+        if hist is None or hist.empty:
+            return out
         for idx, row in hist.iterrows():
             try:
                 try:
@@ -1925,8 +1926,9 @@ def get_chart_bars_json(ticker: str, days: int) -> dict:
                     vol = int(vol_raw) if vol_raw == vol_raw else 0
                 except Exception:
                     vol = 0
-                bars.append({
-                    "time": idx.strftime("%Y-%m-%d"),
+                tstr = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)[:10]
+                out.append({
+                    "time": tstr,
                     "open": round(float(row["Open"]), 4),
                     "high": round(float(row["High"]), 4),
                     "low": round(float(row["Low"]), 4),
@@ -1935,6 +1937,17 @@ def get_chart_bars_json(ticker: str, days: int) -> dict:
                 })
             except Exception:
                 continue
+        return out
+
+    t = yf.Ticker(sym)
+    hist = t.history(period=f"{d}d", interval="1d", auto_adjust=True)
+    bars = _hist_to_bars(hist)
+    if not bars:
+        try:
+            alt = yf.download(sym, period=f"{d}d", interval="1d", progress=False, auto_adjust=True, threads=False)
+            bars = _hist_to_bars(alt)
+        except Exception:
+            pass
     return {"timestamp": datetime.now().isoformat(), "ticker": sym, "bars": bars}
 
 

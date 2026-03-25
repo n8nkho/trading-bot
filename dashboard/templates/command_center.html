@@ -518,32 +518,11 @@
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" crossorigin="anonymous"></script>
-  <script>
-    (function loadLWChartsFallback() {
-      if (typeof LightweightCharts !== 'undefined') return;
-      var s = document.createElement('script');
-      s.src = 'https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js';
-      s.crossOrigin = 'anonymous';
-      s.onload = function () {
-        setTimeout(function () {
-          if (typeof loadPriceChart === 'function') loadPriceChart();
-        }, 0);
-      };
-      s.onerror = function () {
-        var st = document.getElementById('chartStatus');
-        if (st) st.textContent = 'Chart library could not load from backup CDN (unpkg).';
-      };
-      document.head.appendChild(s);
-    })();
-  </script>
   <script>
     const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine' };
 
-    let priceChart = null;
-    let candleSeries = null;
-    let _chartLastAppliedWidth = 0;
-    let _chartWindowResizeBound = false;
+    let _chartRedraw = null;
+    let _chartResizeDebounce = null;
 
     function chartStatusMessage(html) {
       const st = document.getElementById('chartStatus');
@@ -563,60 +542,126 @@
       return Math.max(w, fallback);
     }
 
-    function resizePriceChart() {
-      const host = document.getElementById('chartHost');
-      if (!priceChart || !host) return;
-      const w = getChartWidth();
-      try {
-        // Only skip applyOptions when width is unchanged (avoids canvas/layout feedback loops).
-        if (w > 0 && Math.abs(w - _chartLastAppliedWidth) >= 2) {
-          _chartLastAppliedWidth = w;
-          priceChart.applyOptions({ width: w, height: 280 });
-        }
-        priceChart.timeScale().fitContent();
-      } catch (e) { console.warn('chart resize', e); }
+    function scheduleChartRedraw() {
+      clearTimeout(_chartResizeDebounce);
+      _chartResizeDebounce = setTimeout(function () {
+        if (typeof _chartRedraw === 'function') _chartRedraw();
+      }, 120);
     }
 
-    function ensurePriceChart() {
+    (function bindChartResizeOnce() {
+      if (window._fortressPriceChartResizeBound) return;
+      window._fortressPriceChartResizeBound = true;
+      window.addEventListener('resize', scheduleChartRedraw);
+      window.addEventListener('orientationchange', scheduleChartRedraw);
+    })();
+
+    /**
+     * Canvas OHLC (no external chart CDN). Works on mobile / strict networks.
+     */
+    function renderCanvasCandles(bars) {
       const host = document.getElementById('chartHost');
-      if (!host) return false;
-      if (typeof LightweightCharts === 'undefined') {
-        chartStatusMessage('Chart library failed to load (CDN blocked?). Try another network or VPN.');
-        return false;
-      }
-      chartStatusClear();
-      const w = getChartWidth();
-      if (!priceChart) {
-        priceChart = LightweightCharts.createChart(host, {
-          width: w,
-          height: 280,
-          layout: { background: { type: 'solid', color: '#0d1117' }, textColor: '#8b949e' },
-          grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
-          timeScale: { borderColor: '#21262d' },
-          rightPriceScale: { borderColor: '#21262d' },
+      if (!host || !bars || !bars.length) return;
+      host.innerHTML = '';
+      const cssH = 280;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const pad = { l: 52, r: 10, t: 10, b: 26 };
+      const c = document.createElement('canvas');
+      c.setAttribute('role', 'img');
+      c.setAttribute('aria-label', 'Daily OHLC candlestick chart');
+      c.style.display = 'block';
+      c.style.width = '100%';
+      c.style.height = cssH + 'px';
+      c.style.maxWidth = '100%';
+      host.appendChild(c);
+      const ctx = c.getContext('2d');
+
+      function draw() {
+        const rect = host.getBoundingClientRect();
+        const wCss = Math.max(Math.floor(rect.width) || getChartWidth(), 280);
+        c.width = Math.max(1, Math.floor(wCss * dpr));
+        c.height = Math.max(1, Math.floor(cssH * dpr));
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        c.style.width = wCss + 'px';
+        c.style.height = cssH + 'px';
+
+        let lo = Infinity;
+        let hi = -Infinity;
+        bars.forEach(function (b) {
+          lo = Math.min(lo, Number(b.low), Number(b.high));
+          hi = Math.max(hi, Number(b.low), Number(b.high));
         });
-        candleSeries = priceChart.addCandlestickSeries({
-          upColor: '#43b883', downColor: '#f94144', borderVisible: false,
-          wickUpColor: '#43b883', wickDownColor: '#f94144',
-        });
-        if (!_chartWindowResizeBound) {
-          _chartWindowResizeBound = true;
-          window.addEventListener('resize', function () {
-            _chartLastAppliedWidth = 0;
-            resizePriceChart();
-          });
+        const span = (hi - lo) || 1;
+        const padY = span * 0.06;
+        lo -= padY;
+        hi += padY;
+        const ySpan = hi - lo || 1;
+        const n = bars.length;
+        const plotW = wCss - pad.l - pad.r;
+        const plotH = cssH - pad.t - pad.b;
+        const slot = plotW / n;
+        const bodyW = Math.max(1, Math.min(10, slot * 0.65));
+
+        ctx.fillStyle = '#0d1117';
+        ctx.fillRect(0, 0, wCss, cssH);
+
+        function yPx(p) {
+          return pad.t + plotH * (1 - (Number(p) - lo) / ySpan);
         }
-      } else {
-        _chartLastAppliedWidth = 0;
-        resizePriceChart();
+
+        ctx.strokeStyle = '#21262d';
+        ctx.lineWidth = 1;
+        for (var g = 0; g <= 4; g++) {
+          var gy = pad.t + (plotH * g) / 4;
+          ctx.beginPath();
+          ctx.moveTo(pad.l, gy);
+          ctx.lineTo(wCss - pad.r, gy);
+          ctx.stroke();
+        }
+
+        bars.forEach(function (b, i) {
+          var cx = pad.l + i * slot + slot / 2;
+          var yHi = yPx(b.high);
+          var yLo = yPx(b.low);
+          var yO = yPx(b.open);
+          var yC = yPx(b.close);
+          var up = Number(b.close) >= Number(b.open);
+          ctx.strokeStyle = up ? '#43b883' : '#f94144';
+          ctx.fillStyle = up ? '#43b883' : '#f94144';
+          ctx.beginPath();
+          ctx.moveTo(cx, yHi);
+          ctx.lineTo(cx, yLo);
+          ctx.stroke();
+          var top = Math.min(yO, yC);
+          var bot = Math.max(yO, yC);
+          if (bot - top < 1.5) {
+            top -= 0.75;
+            bot += 0.75;
+          }
+          ctx.fillRect(cx - bodyW / 2, top, bodyW, bot - top);
+        });
+
+        ctx.fillStyle = '#8b949e';
+        ctx.font = '10px JetBrains Mono, monospace';
+        for (g = 0; g <= 4; g++) {
+          var pr = lo + (ySpan * (4 - g)) / 4;
+          var ty = pad.t + (plotH * g) / 4;
+          ctx.fillText(pr.toFixed(2), 4, ty + 4);
+        }
+        var first = bars[0];
+        var last = bars[bars.length - 1];
+        if (first && first.time && last && last.time) {
+          ctx.fillText(String(first.time) + ' → ' + String(last.time), pad.l, cssH - 6);
+        }
       }
-      return true;
+
+      _chartRedraw = draw;
+      draw();
     }
 
     async function loadPriceChart() {
       const inp = document.getElementById('chartTicker');
       const ticker = (inp && inp.value ? inp.value : 'SPY').trim().toUpperCase() || 'SPY';
-      const host = document.getElementById('chartHost');
       try {
         const r = await fetch('/api/chart_bars?ticker=' + encodeURIComponent(ticker) + '&days=180');
         const d = await r.json().catch(function () { return {}; });
@@ -633,12 +678,7 @@
           return;
         }
         chartStatusClear();
-        if (!ensurePriceChart() || !candleSeries) return;
-        candleSeries.setData(d.bars.map(function (b) {
-          return { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close };
-        }));
-        resizePriceChart();
-        priceChart.timeScale().fitContent();
+        renderCanvasCandles(d.bars);
       } catch (e) {
         console.warn('chart', e);
         chartStatusMessage('Chart request failed: ' + String(e && e.message ? e.message : e).replace(/</g, '&lt;'));
@@ -1500,7 +1540,7 @@
           panel.classList.toggle('collapsed');
           syncBulkDetailButton();
           if (panel.querySelector && panel.querySelector('#chartHost')) {
-            setTimeout(function () { resizePriceChart(); loadPriceChart(); }, 100);
+            setTimeout(function () { scheduleChartRedraw(); }, 100);
           }
         });
       });
@@ -1542,7 +1582,7 @@
           else p.classList.add('collapsed');
         });
         syncBulkDetailButton();
-        setTimeout(function () { resizePriceChart(); loadPriceChart(); }, 120);
+        setTimeout(function () { scheduleChartRedraw(); }, 120);
       });
       syncBulkDetailButton();
     })();
