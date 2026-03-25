@@ -1259,6 +1259,19 @@
         return;
       }
       const esc = (s) => String(s == null ? '' : s).replace(/</g, '&lt;').replace(/&/g, '&amp;');
+      const formatAuditDriver = (d) => {
+        if (d == null) return '';
+        if (typeof d === 'string') return d;
+        if (typeof d === 'object') {
+          const code = d.code != null ? String(d.code) : '';
+          const w = d.weight != null ? String(d.weight) : '';
+          const det = d.detail != null ? String(d.detail).slice(0, 140) : '';
+          if (code && det) return (w ? `[${w}] ` : '') + code + ': ' + det;
+          if (code) return (w ? `[${w}] ` : '') + code;
+          try { return JSON.stringify(d); } catch (e) { return String(d); }
+        }
+        return String(d);
+      };
       const status = data.overall_status || 'warn';
       const color = status === 'ok' ? 'var(--green)' : (status === 'critical' ? 'var(--red)' : 'var(--amber)');
       const profit = data.objectives && data.objectives.profit_opportunities ? data.objectives.profit_opportunities : {};
@@ -1274,7 +1287,7 @@
         ? `<div style="margin-top:0.45rem;padding:0.45rem 0.5rem;background:rgba(0,200,255,0.06);border:1px solid var(--border);border-radius:4px;font-size:11px;line-height:1.4;">
             <div><strong>Synthesis</strong> · readiness <code>${esc(syn.readiness || '—')}</code></div>
             ${syn.headline ? `<div style="margin-top:0.25rem;color:var(--cyan);">${esc(String(syn.headline).slice(0, 280))}${String(syn.headline).length > 280 ? '…' : ''}</div>` : ''}
-            ${drivers.length ? `<div class="text-muted" style="margin-top:0.2rem;font-size:10px;">Drivers: ${drivers.slice(0, 5).map(d => esc(String(d))).join(' · ')}</div>` : ''}
+            ${drivers.length ? `<div class="text-muted" style="margin-top:0.2rem;font-size:10px;line-height:1.35;">Drivers:<br>${drivers.slice(0, 5).map(d => esc(formatAuditDriver(d))).join('<br>')}</div>` : ''}
             ${actCh.length ? `<div class="text-muted" style="margin-top:0.25rem;font-size:10px;"><strong>Top changes:</strong> ${actCh.slice(0, 3).map(a => esc((a.title || '').slice(0, 72))).join(' · ')}</div>` : ''}
           </div>`
         : '';
