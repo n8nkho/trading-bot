@@ -34,6 +34,7 @@ from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mod
 # even if some hedge dependencies are missing.
 from agents.document_analyst import quick_fundamental_check
 from agents.intraday_sniper import scan_intraday_opportunities, evaluate_quick_entry
+from agents.spy_intraday_swing import run_spy_swing_cycle
 from utils.grok_sentiment import check_twitter_sentiment
 from utils.option_contract_schema import normalize_option_decision
 from utils.policy_profile import get_profile_bundle
@@ -2086,6 +2087,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py architect                  - Run meta-architect improvement cycle")
         print("  python orchestrator.py fortress                   - Run complete hedging system")
         print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
+        print("  python orchestrator.py spy_swing [--execute] [portfolio_value] - SPY swing agent (default shadow; $5k equity)")
         print("  python orchestrator.py execute_pending            - Submit queued HITL trades (see FORTRESS_EXECUTION_MODE)")
         print("  python orchestrator.py headline_event [--fixture] - Headline event agent (shadow; --fixture = sample fixture)")
         sys.exit(1)
@@ -2577,6 +2579,88 @@ if __name__ == "__main__":
             if approved:
                 for a in approved:
                     logger.info(f"  APPROVED {a['ticker']} shares={a['shares']} @ {a['entry_price']:.2f} order_id={a['order_id']}")
+
+    elif command in ("spy_swing", "spy-swing"):
+        argv_rest = sys.argv[2:]
+        do_execute = "--execute" in argv_rest
+        argv_rest = [a for a in argv_rest if a != "--execute"]
+        portfolio_value = 5000.0
+        if argv_rest:
+            try:
+                portfolio_value = float(argv_rest[0])
+            except ValueError:
+                portfolio_value = 5000.0
+
+        out = run_spy_swing_cycle(
+            shadow_only=not do_execute,
+            portfolio_equity=portfolio_value,
+            data_dir=DATA_DIR,
+        )
+        print(json.dumps(out, indent=2, default=str))
+
+        if do_execute and out.get("suggested_action") == "consider_long" and out.get("execute_ready"):
+            if out.get("shares", 0) < 1:
+                logger.info("spy_swing: execute skipped — shares < 1")
+                sys.exit(0)
+            if any(str(p.get("ticker", "")).upper() == "SPY" for p in load_positions()):
+                logger.info("spy_swing: execute skipped — SPY already in positions.json")
+                sys.exit(0)
+            risk_status = get_risk_status()
+            strict_mode = bool(risk_status.get("circuit_breaker_active")) or int(
+                risk_status.get("consecutive_losses") or 0
+            ) >= 2
+            account_info = get_account_info()
+            if not account_info:
+                logger.error("spy_swing: no Alpaca account; cannot execute")
+                sys.exit(1)
+            entry_price = float(out.get("reference_price") or 0)
+            shares = int(out["shares"])
+            position_value = shares * entry_price
+            if account_info.get("buying_power", 0) < position_value * BUYING_POWER_BUFFER:
+                logger.error("spy_swing: insufficient buying power")
+                sys.exit(1)
+            current_positions = load_positions()
+            portfolio_data = build_portfolio_data(current_positions, portfolio_value)
+            new_position = {
+                "ticker": "SPY",
+                "size": shares,
+                "value": position_value,
+                "sector": "ETF",
+            }
+            risk_check = check_risk_limits(portfolio_data, new_position, strict_mode=strict_mode)
+            if not risk_check.get("approved"):
+                logger.error("spy_swing: risk_guardian rejected: %s", risk_check.get("reason"))
+                sys.exit(1)
+            if "adjusted_size" in risk_check:
+                shares = int(risk_check["adjusted_size"])
+                position_value = shares * entry_price
+            order_result = execute_buy_order("SPY", shares, entry_price)
+            order_result = _refresh_order_result(order_result)
+            if order_result.get("success") and _order_is_filled(order_result):
+                add_position(
+                    {
+                        "ticker": "SPY",
+                        "shares": shares,
+                        "entry_price": entry_price,
+                        "entry_date": datetime.now().isoformat(),
+                        "order_id": order_result.get("order_id"),
+                        "sector": "ETF",
+                        "stop_loss_pct": -0.0035,
+                        "take_profit_pct": 0.004,
+                        "tiers_sold": {"tier1": False, "tier2": False, "tier3": False},
+                        "source": "spy_intraday_swing",
+                    }
+                )
+                logger.info(
+                    "spy_swing: executed SPY shares=%s order_id=%s",
+                    shares,
+                    order_result.get("order_id"),
+                )
+            else:
+                logger.error("spy_swing: order failed: %s", order_result.get("error"))
+                sys.exit(1)
+        elif do_execute and out.get("suggested_action") == "consider_short":
+            logger.info("spy_swing: short signal — execution not wired (shadow only); see agent sketch")
 
     elif command == "headline_event":
         from agents.headline_event_agent import run_headline_event_cycle

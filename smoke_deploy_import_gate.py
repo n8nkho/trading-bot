@@ -71,6 +71,7 @@ def main() -> int:
         "agents.performance_analyzer",
         "agents.llama_watchdog",
         "agents.intraday_sniper",
+        "agents.spy_intraday_swing",
         # Fortress / hedging chain
         "agents.fortress_orchestrator",
         "agents.commodity_trader",
