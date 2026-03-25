@@ -1268,7 +1268,7 @@
       const recs = Array.isArray(data.recommendations) ? data.recommendations : [];
 
       const recLines = recs.length
-        ? recs.slice(0, 8).map(r => {
+        ? recs.slice(0, 12).map(r => {
             const sev = esc(r.severity || 'low');
             const title = esc(r.title || '');
             const body = esc(r.body || '').slice(0, 190);
@@ -1302,6 +1302,21 @@
         marketLine = `<div class="text-muted" style="font-size:10px;margin-top:0.3rem;">Market tape: unavailable (${esc(mc.reason || mc.error || 'n/a')}). <span style="opacity:0.85">Use ?market=0 on API to skip fetch.</span></div>`;
       }
 
+      const pipe = data.opportunity_pipeline || {};
+      const pend = data.pending_execution || {};
+      const miss = data.missed_opportunities || {};
+      const alt = data.alternative_strategies || {};
+      const pipeLine = (pipe.candidates_found != null || pipe.entry_buy_count != null || pipe.executed_count != null)
+        ? `<div class="text-muted" style="font-size:10px;margin-top:0.3rem;">Screen funnel: candidates <strong>${pipe.candidates_found ?? '—'}</strong> · entry BUY <strong>${pipe.entry_buy_count ?? '—'}</strong> / SKIP <strong>${pipe.entry_skip_count ?? '—'}</strong> · executed <strong>${pipe.executed_count ?? '—'}</strong> · pending Q <strong>${pend.pending_trade_count ?? 0}</strong></div>`
+        : '';
+      const missLine = (miss.summary && String(miss.summary).trim())
+        ? `<div class="text-muted" style="font-size:10px;margin-top:0.25rem;max-height:3.4em;overflow:hidden;">Missed ops: ${esc(String(miss.summary).slice(0, 280))}${String(miss.summary).length > 280 ? '…' : ''}</div>`
+        : '';
+      const altSug = Array.isArray(alt.suggestions) ? alt.suggestions : [];
+      const altLine = altSug.length
+        ? `<div class="text-muted" style="font-size:10px;margin-top:0.25rem;"><strong>Alternatives:</strong> ${altSug.slice(0, 3).map(s => esc((s.title || '').slice(0, 72))).join(' · ')}</div>`
+        : '';
+
       el.innerHTML = `
         <div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;">
           <div>Overall: <strong style="color:${color}">${esc(status).toUpperCase()}</strong></div>
@@ -1311,6 +1326,9 @@
         ${hedgeLine}
         ${contrastLine}
         ${marketLine}
+        ${pipeLine}
+        ${missLine}
+        ${altLine}
         <div style="margin-top:0.45rem;padding-top:0.45rem;border-top:1px solid var(--border);font-size:11px;line-height:1.35;">
           <div>Profit opportunities: <strong>${esc(profit.status || '—')}</strong></div>
           <div>Near-zero losses: <strong>${esc(loss.status || '—')}</strong></div>

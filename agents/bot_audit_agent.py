@@ -5,6 +5,8 @@ Purpose:
   Provide an operator-facing daily audit of the system against objectives:
     - keep losses near zero (risk discipline / realized PnL health)
     - maintain profit opportunities (signal-to-trade throughput + win rate)
+    - surface missed opportunities (screen → entry → risk → execution funnel, HITL backlog)
+    - suggest alternative postures (deterministic heuristics vs tape, regime, worst agents)
 
 Key design goals:
   - Read-only trading: no broker order submission.
@@ -20,6 +22,7 @@ import glob
 import json
 import os
 import time
+from collections import Counter
 from datetime import datetime, time as dt_time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -369,6 +372,394 @@ def _market_backdrop_findings(market: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _load_latest_daily_signals(data_dir: Path) -> tuple[dict[str, Any] | None, str | None]:
+    pattern = str(data_dir / "daily_signals_*.json")
+    files = sorted(glob.glob(pattern), reverse=True)
+    if not files:
+        return None, None
+    path = Path(files[0])
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            return raw, str(path)
+    except (OSError, json.JSONDecodeError):
+        pass
+    return None, str(path)
+
+
+def _summarize_daily_signals(sig: dict[str, Any] | None, file_path: str | None) -> dict[str, Any]:
+    """Funnel metrics from latest orchestrator daily screening artifact."""
+    out: dict[str, Any] = {
+        "daily_signals_path": file_path,
+        "timestamp": None,
+        "candidates_found": None,
+        "candidates_tickers_sample": [],
+        "entry_evaluated": None,
+        "entry_buy_count": None,
+        "entry_skip_count": None,
+        "top_entry_skip_reasons": [],
+        "risk_approved_count": None,
+        "risk_rejected_count": None,
+        "top_risk_reject_reasons": [],
+        "approved_trades_count": None,
+        "executed_count": None,
+        "execution_failed_count": None,
+        "pending_human_review": None,
+        "execution_mode": None,
+        "top_execution_failure_reasons": [],
+        "rejected_trades_total": None,
+        "screen_error": None,
+    }
+    if not sig:
+        return out
+    out["timestamp"] = sig.get("timestamp")
+    out["screen_error"] = sig.get("error")
+    cands = sig.get("candidates")
+    if isinstance(cands, list):
+        out["candidates_found"] = len(cands)
+        out["candidates_tickers_sample"] = [
+            str(c.get("ticker")) for c in cands[:14] if isinstance(c, dict) and c.get("ticker")
+        ]
+    elif sig.get("candidates_found") is not None:
+        try:
+            out["candidates_found"] = int(sig["candidates_found"])
+        except (TypeError, ValueError):
+            pass
+
+    eg = sig.get("entry_gate_summary") if isinstance(sig.get("entry_gate_summary"), dict) else {}
+    out["entry_evaluated"] = eg.get("evaluated_candidates")
+    out["entry_buy_count"] = eg.get("buy_count")
+    out["entry_skip_count"] = eg.get("skip_count")
+    out["top_entry_skip_reasons"] = eg.get("top_skip_reasons") or []
+
+    rg = sig.get("risk_gate_summary") if isinstance(sig.get("risk_gate_summary"), dict) else {}
+    out["risk_approved_count"] = rg.get("approved_count")
+    out["risk_rejected_count"] = rg.get("rejected_count")
+    out["top_risk_reject_reasons"] = rg.get("top_rejected_reasons") or []
+
+    ap = sig.get("approved_trades")
+    if isinstance(ap, list):
+        out["approved_trades_count"] = len(ap)
+    exl = sig.get("executed_trades")
+    if isinstance(exl, list):
+        out["executed_count"] = len(exl)
+    fl = sig.get("execution_failures")
+    if isinstance(fl, list):
+        out["execution_failed_count"] = len(fl)
+
+    exg = sig.get("execution_gate_summary") if isinstance(sig.get("execution_gate_summary"), dict) else {}
+    if out["executed_count"] is None and exg.get("executed_count") is not None:
+        out["executed_count"] = exg.get("executed_count")
+    if out["execution_failed_count"] is None and exg.get("failed_count") is not None:
+        out["execution_failed_count"] = exg.get("failed_count")
+    out["pending_human_review"] = exg.get("pending_human_review")
+    out["execution_mode"] = exg.get("execution_mode")
+    out["top_execution_failure_reasons"] = exg.get("top_failure_reasons") or []
+
+    rej = sig.get("rejected_trades")
+    if isinstance(rej, list):
+        out["rejected_trades_total"] = len(rej)
+    return out
+
+
+def _summarize_pending_queue(data_dir: Path) -> dict[str, Any]:
+    path = data_dir / "pending_execution_queue.json"
+    out: dict[str, Any] = {"path": str(path), "pending_batches": 0, "pending_trade_count": 0}
+    if not path.exists():
+        return out
+    try:
+        from utils.pending_execution_queue import load_batches
+
+        batches = load_batches(data_dir)
+    except Exception:
+        batches = []
+    if not isinstance(batches, list):
+        batches = []
+    out["pending_batches"] = len(batches)
+    n = 0
+    for b in batches:
+        if isinstance(b, dict):
+            t = b.get("trades")
+            if isinstance(t, list):
+                n += len(t)
+    out["pending_trade_count"] = n
+    return out
+
+
+def _decisions_log_session_snapshot(
+    path: Path,
+    session_start_et: datetime,
+    now_et: datetime,
+    *,
+    max_tail_lines: int = 500,
+) -> dict[str, Any]:
+    snap: dict[str, Any] = {
+        "path": str(path),
+        "session_buy_signals": 0,
+        "session_skip_signals": 0,
+        "session_other_signals": 0,
+        "recent_skip_reasons_sample": [],
+        "notes": [],
+    }
+    if not path.exists():
+        snap["notes"].append("no_decisions_log")
+        return snap
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-max_tail_lines:]
+    except OSError as e:
+        snap["notes"].append(f"read_error:{e}")
+        return snap
+    skip_reasons: list[str] = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        dec = rec.get("decision")
+        if not isinstance(dec, dict):
+            continue
+        ts = _parse_timestamp_local_iso(
+            rec.get("logged_at") or dec.get("timestamp") or rec.get("timestamp")
+        )
+        if ts is None or ts < session_start_et or ts > now_et:
+            continue
+        act = str(dec.get("action") or "").upper()
+        if act == "BUY":
+            snap["session_buy_signals"] += 1
+        elif act == "SKIP":
+            snap["session_skip_signals"] += 1
+            r = dec.get("reason") or dec.get("reasoning") or ""
+            if isinstance(r, str) and r.strip():
+                skip_reasons.append(r.strip()[:140])
+        else:
+            snap["session_other_signals"] += 1
+    if skip_reasons:
+        c = Counter(skip_reasons)
+        snap["recent_skip_reasons_sample"] = [f"{t} ({n})" for t, n in c.most_common(5)]
+    return snap
+
+
+def _missed_opportunity_analysis(
+    *,
+    screen: dict[str, Any],
+    pending: dict[str, Any],
+    decisions: dict[str, Any],
+    session_ledger_trades: int,
+) -> dict[str, Any]:
+    """
+    Heuristic funnel: where candidates died vs broker (no counterfactual PnL).
+    """
+    findings: list[dict[str, Any]] = []
+    cf = screen.get("candidates_found")
+    eb = screen.get("entry_buy_count")
+    es = screen.get("entry_skip_count")
+    approved = screen.get("approved_trades_count")
+    executed = screen.get("executed_count") or 0
+    risk_rej = screen.get("risk_rejected_count") or 0
+    ex_fail = screen.get("execution_failed_count") or 0
+    pending_n = pending.get("pending_trade_count") or 0
+    phr = screen.get("pending_human_review")
+
+    if pending_n > 0:
+        findings.append(
+            {
+                "type": "hitl_backlog",
+                "text": f"{pending_n} approved trade(s) sit in pending_execution_queue.json — largest concrete 'miss' until `orchestrator.py execute_pending` (or UI approval).",
+            }
+        )
+    if phr and int(phr) > 0 and pending_n == 0:
+        findings.append(
+            {
+                "type": "hitl_screen",
+                "text": f"Latest screen shows {phr} trade(s) pending human review (execution_gate) — same backlog class as HITL.",
+            }
+        )
+
+    if cf is not None and eb is not None and cf > 0 and eb == 0 and (es or 0) > 0:
+        findings.append(
+            {
+                "type": "entry_funnel",
+                "text": f"Screen produced {cf} candidates but entry gate emitted 0 BUY and {es or 0} SKIP — opportunities missed at entry timing/filters.",
+            }
+        )
+
+    top_sk = screen.get("top_entry_skip_reasons") or []
+    if isinstance(top_sk, list) and top_sk and isinstance(top_sk[0], dict):
+        t0 = top_sk[0]
+        cnt = int(t0.get("count") or 0)
+        if cnt >= 4:
+            findings.append(
+                {
+                    "type": "entry_reason_mass",
+                    "text": f"Dominated entry skip reason ({cnt}x): {str(t0.get('reason') or '')[:160]}",
+                }
+            )
+
+    if approved is not None and approved > 0 and executed == 0 and ex_fail == 0 and pending_n == 0 and (phr or 0) == 0:
+        findings.append(
+            {
+                "type": "execution_gap",
+                "text": f"{approved} approved trade(s) in latest daily_signals but 0 executions logged in that run — check execution_mode, broker errors, or whether another process consumed orders.",
+            }
+        )
+
+    if risk_rej > 0 and (eb or 0) > 0:
+        findings.append(
+            {
+                "type": "risk_gate",
+                "text": f"Risk gate rejected {risk_rej} after entry BUY — review top_risk_reject_reasons in daily_signals and risk_guardian limits.",
+            }
+        )
+
+    if ex_fail > 0:
+        findings.append(
+            {
+                "type": "broker_failures",
+                "text": f"{ex_fail} execution failure(s) on latest screen — broker/API friction is a direct missed-fill source.",
+            }
+        )
+
+    if decisions.get("session_skip_signals", 0) >= 5 and (eb or 0) <= 1:
+        findings.append(
+            {
+                "type": "decision_log",
+                "text": f"decisions_log shows {decisions['session_skip_signals']} SKIP vs few BUYs in session — aligns with conservative entry policy or strict gates.",
+            }
+        )
+
+    if session_ledger_trades == 0 and (cf or 0) >= 3 and executed == 0 and pending_n == 0:
+        findings.append(
+            {
+                "type": "no_realized_despite_pipeline",
+                "text": "Candidates existed but no session realized ledger fills and no pending queue — entire stack may be screen-only or exits not yet logged.",
+            }
+        )
+
+    summary = (
+        "; ".join(f["text"] for f in findings)
+        if findings
+        else "No strong missed-opportunity signals from screening artifacts (or insufficient telemetry)."
+    )
+    return {
+        "summary": summary,
+        "findings": findings,
+        "inputs": {
+            "candidates_found": cf,
+            "entry_buy_count": eb,
+            "entry_skip_count": es,
+            "approved_trades_count": approved,
+            "executed_count": executed,
+            "pending_trades": pending_n,
+        },
+    }
+
+
+def _alternative_strategy_suggestions(
+    *,
+    worst: list[dict[str, Any]],
+    best: list[dict[str, Any]],
+    screen: dict[str, Any],
+    last_meta: dict[str, Any],
+    loss_status: str,
+    tape_trend: str | None,
+    hedge_regime: str | None,
+    consecutive_losses: int | None,
+) -> dict[str, Any]:
+    """
+    Deterministic playbook ideas — not investment advice; for operator review only.
+    """
+    suggestions: list[dict[str, str]] = []
+    regime_u = str(hedge_regime or "").strip().upper()
+
+    if worst and float(worst[0].get("pnl") or 0) < -15 and int(worst[0].get("trades") or 0) >= 2:
+        wn = worst[0].get("strategy") or "worst_agent"
+        suggestions.append(
+            {
+                "title": f"Deprioritize {wn}",
+                "rationale": f"Largest session drag ({worst[0].get('pnl')}) across {worst[0].get('trades')} realized closes.",
+                "action": "Run that agent shadow-only or reduce max positions / size in runtime profile until paper stabilizes.",
+            }
+        )
+
+    if best and worst and float(best[0].get("pnl") or 0) > 0 and float(worst[0].get("pnl") or 0) < 0:
+        bn = best[0].get("strategy") or "best_agent"
+        suggestions.append(
+            {
+                "title": f"Lean into {bn}",
+                "rationale": f"Positive realized contribution ({best[0].get('pnl')}) vs negative tail — rebalance attention and capital budget toward the working sleeve.",
+                "action": "Increase concurrency or priority for that strategy in orchestrator gates (within risk limits).",
+            }
+        )
+
+    if last_meta.get("strict_mode") is True:
+        suggestions.append(
+            {
+                "title": "Strict / stressed mode — shrink beta first",
+                "rationale": "Screener or risk stack is in strict_mode; chasing the same long book is an alternative mismatch.",
+                "action": "Hold capital_preservation profile, refresh fortress hedges, then re-enable incremental size.",
+            }
+        )
+
+    if tape_trend == "downtrend" and loss_status != "ok":
+        suggestions.append(
+            {
+                "title": "Tape-down alternative sleeve",
+                "rationale": "Benchmark trend weak alongside session losses — pure momentum longs are a poor fit.",
+                "action": "Emphasize mean-reversion screens, cash raise, or pairs/hedge legs from fortress_report before scaling snipers.",
+            }
+        )
+
+    if tape_trend == "uptrend" and loss_status != "ok" and (screen.get("entry_buy_count") or 0) <= 1:
+        suggestions.append(
+            {
+                "title": "Tape-up but few BUYs — loosen entry bottleneck",
+                "rationale": "Rising tape suggests opportunity set exists; entry_gate may be over-tight vs your objectives.",
+                "action": "Review entry thresholds / prefilter in params; run a controlled shadow comparison on skipped names.",
+            }
+        )
+
+    tops = screen.get("top_entry_skip_reasons") or []
+    if tops and isinstance(tops[0], dict) and int(tops[0].get("count") or 0) >= 5:
+        r = str(tops[0].get("reason") or "")[:100]
+        suggestions.append(
+            {
+                "title": "Tune the dominant entry skip driver",
+                "rationale": f"High concentration of skips for: {r}",
+                "action": "Adjust the specific rule (RSI band, spread, liquidity) or move that filter earlier to save compute.",
+            }
+        )
+
+    if regime_u == "RISK_OFF" and (screen.get("candidates_found") or 0) > 5 and (screen.get("entry_buy_count") or 0) == 0:
+        suggestions.append(
+            {
+                "title": "RISK_OFF regime — alternative alpha path",
+                "rationale": "Fortress is defensive; directional equity screen may correctly produce zero BUYs.",
+                "action": "Prioritize bond/commodity/FX sleeves from fortress strategies over sniper expansion.",
+            }
+        )
+
+    if consecutive_losses is not None and int(consecutive_losses) >= 2:
+        suggestions.append(
+            {
+                "title": "Loss streak — flip to validation mode",
+                "rationale": "risk_guardian consecutive_losses elevated; adding risk without a new edge is an alternative mismatch.",
+                "action": "Paper-only or half-size on new agents until streak resets; run walk-forward / backtest on last week's skips.",
+            }
+        )
+
+    summary = (
+        f"{len(suggestions)} alternative posture idea(s) from funnel + tape + regime heuristics."
+        if suggestions
+        else "No alternative-strategy heuristics fired (insufficient contrast in data)."
+    )
+    return {"summary": summary, "suggestions": suggestions[:8]}
+
+
 def _load_hedging_context(
     data_dir: Path,
     *,
@@ -687,6 +1078,9 @@ def audit_bot_performance(
 
     When `include_market` is True (default from env BOT_AUDIT_FETCH_MARKET), pulls
     delayed benchmark/VIX via yfinance for tape vs bot analysis (no orders).
+
+    Uses latest ``daily_signals_*.json``, ``pending_execution_queue.json``, and
+    ``decisions_log.jsonl`` (session window) for funnel / missed-opportunity heuristics.
     """
     data_dir = data_dir or DEFAULT_DATA_DIR
     logs_dir = logs_dir or DEFAULT_LOGS_DIR
@@ -830,6 +1224,15 @@ def audit_bot_performance(
         except Exception:
             last_meta = {}
 
+    latest_signals, latest_signals_path = _load_latest_daily_signals(data_dir)
+    screen_snap = _summarize_daily_signals(latest_signals, latest_signals_path)
+    pending_snap = _summarize_pending_queue(data_dir)
+    dec_snap = _decisions_log_session_snapshot(
+        data_dir / "decisions_log.jsonl",
+        session_start_et,
+        now_et,
+    )
+
     # Objective evaluation (session = since 3 AM ET).
     loss_status, loss_findings = _audit_objective_loss_health(
         pnl_today=pnl_today,
@@ -852,6 +1255,10 @@ def audit_bot_performance(
         overall_status = "critical"
     elif loss_status == "ok" and profit_status == "ok":
         overall_status = "ok"
+
+    strategies_sorted = sorted(by_strategy.values(), key=lambda x: x.get("pnl", 0.0))
+    worst = strategies_sorted[:4]
+    best = list(reversed(strategies_sorted))[:4]
 
     if include_market is None:
         include_market = os.getenv("BOT_AUDIT_FETCH_MARKET", "1").strip().lower() not in (
@@ -904,6 +1311,23 @@ def audit_bot_performance(
         "vix": contrast.get("vix"),
     }
 
+    missed = _missed_opportunity_analysis(
+        screen=screen_snap,
+        pending=pending_snap,
+        decisions=dec_snap,
+        session_ledger_trades=total_today,
+    )
+    alts = _alternative_strategy_suggestions(
+        worst=worst,
+        best=best,
+        screen=screen_snap,
+        last_meta=last_meta if isinstance(last_meta, dict) else {},
+        loss_status=loss_status,
+        tape_trend=mvb.get("tape_trend"),
+        hedge_regime=hedge_payload.get("regime"),
+        consecutive_losses=consecutive_losses,
+    )
+
     # Recommendations: deterministic heuristics.
     recommendations: list[dict[str, Any]] = []
     hedge_body = (contrast.get("summary") or "").strip()
@@ -942,6 +1366,26 @@ def audit_bot_performance(
         }
     )
 
+    miss_body = (missed.get("summary") or "").strip()
+    miss_sev = "medium" if any(f.get("type") in ("hitl_backlog", "execution_gap", "broker_failures") for f in (missed.get("findings") or [])) else "low"
+    recommendations.append(
+        {
+            "severity": miss_sev,
+            "title": "Missed opportunities (funnel / backlog)",
+            "body": miss_body[:1200] if miss_body else "No funnel backlog detected from latest artifacts.",
+            "action": "operator: open latest data/daily_signals_*.json, pending_execution_queue.json, decisions_log.jsonl; clear HITL or fix gate reasons blocking fills.",
+        }
+    )
+    for sug in (alts.get("suggestions") or [])[:4]:
+        recommendations.append(
+            {
+                "severity": "low",
+                "title": f"Alternative posture: {sug.get('title', 'idea')[:80]}",
+                "body": (sug.get("rationale") or "")[:500],
+                "action": (sug.get("action") or "")[:500],
+            }
+        )
+
     if overall_status in ("critical", "warn"):
         if total_today == 0:
             recommendations.append(
@@ -963,10 +1407,6 @@ def audit_bot_performance(
             )
 
     # Always include agent breakdown guidance.
-    strategies_sorted = sorted(by_strategy.values(), key=lambda x: x.get("pnl", 0.0))
-    worst = strategies_sorted[:4]
-    best = list(reversed(strategies_sorted))[:4]
-
     # Only recommend if we have data.
     if by_strategy:
         recommendations.append(
@@ -1015,6 +1455,18 @@ def audit_bot_performance(
             "summary": mvb.get("summary"),
             "tape_trend": mvb.get("tape_trend"),
             "findings": mvb.get("findings") or [],
+        },
+        "opportunity_pipeline": screen_snap,
+        "pending_execution": pending_snap,
+        "decisions_log_session": dec_snap,
+        "missed_opportunities": {
+            "summary": missed.get("summary"),
+            "findings": missed.get("findings") or [],
+            "inputs": missed.get("inputs") or {},
+        },
+        "alternative_strategies": {
+            "summary": alts.get("summary"),
+            "suggestions": alts.get("suggestions") or [],
         },
         "process": {
             "today_screening_runs_count": len(process.get("session_screening_runs") or []),

@@ -260,6 +260,91 @@ class TestBotAuditAgent(unittest.TestCase):
         )
         self.assertTrue(any("weak" in (f.get("text") or "") for f in r["findings"]))
 
+    def test_missed_opportunity_pending_and_entry_funnel(self):
+        tmp = Path("._tmp_bot_audit_opp")
+        if tmp.exists():
+            for p in tmp.rglob("*"):
+                try:
+                    if p.is_file():
+                        p.unlink()
+                except Exception:
+                    pass
+        tmp.mkdir(parents=True, exist_ok=True)
+        data_dir = tmp / "data"
+        logs_dir = tmp / "logs"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        (data_dir / "pending_execution_queue.json").write_text(
+            json.dumps({"batches": [{"trades": [{"ticker": "FOO"}], "run_id": "r1"}]}),
+            encoding="utf-8",
+        )
+        (data_dir / "daily_signals_20260325.json").write_text(
+            json.dumps(
+                {
+                    "timestamp": "2026-03-25T12:00:00",
+                    "candidates": [{"ticker": "A"}, {"ticker": "B"}],
+                    "entry_gate_summary": {
+                        "evaluated_candidates": 2,
+                        "buy_count": 0,
+                        "skip_count": 2,
+                        "top_skip_reasons": [{"reason": "spread_too_wide", "count": 6}],
+                    },
+                    "risk_gate_summary": {"approved_count": 0, "rejected_count": 0, "top_rejected_reasons": []},
+                    "approved_trades": [],
+                    "executed_trades": [],
+                    "execution_gate_summary": {"executed_count": 0},
+                }
+            ),
+            encoding="utf-8",
+        )
+        now_utc = datetime(2026, 3, 25, 18, 0, 0, tzinfo=timezone.utc)
+        report = audit_bot_performance(
+            data_dir=data_dir,
+            logs_dir=logs_dir,
+            lookback_days=7,
+            audit_days=1,
+            now_utc=now_utc,
+            include_market=False,
+        )
+        mf = report["missed_opportunities"]["findings"]
+        types = {f.get("type") for f in mf}
+        self.assertIn("hitl_backlog", types)
+        self.assertTrue(types & {"entry_funnel", "entry_reason_mass"})
+
+    def test_alternative_strategies_suggests_deprioritize_worst(self):
+        tmp = Path("._tmp_bot_audit_alt")
+        if tmp.exists():
+            for p in tmp.rglob("*"):
+                try:
+                    if p.is_file():
+                        p.unlink()
+                except Exception:
+                    pass
+        tmp.mkdir(parents=True, exist_ok=True)
+        data_dir = tmp / "data"
+        logs_dir = tmp / "logs"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        day_ts = "2026-03-25T18:00:00+00:00"
+        ledger = [
+            {"timestamp": day_ts, "ticker": "X", "pnl": -30.0, "strategy_id": "bad_strat"},
+            {"timestamp": day_ts, "ticker": "Y", "pnl": -5.0, "strategy_id": "bad_strat"},
+            {"timestamp": day_ts, "ticker": "Z", "pnl": 2.0, "strategy_id": "good_strat"},
+        ]
+        self._write_jsonl(data_dir / "pnl_ledger.jsonl", ledger)
+        now_utc = datetime(2026, 3, 25, 18, 0, 0, tzinfo=timezone.utc)
+        report = audit_bot_performance(
+            data_dir=data_dir,
+            logs_dir=logs_dir,
+            lookback_days=7,
+            audit_days=1,
+            now_utc=now_utc,
+            include_market=False,
+        )
+        titles = " ".join(s.get("title", "") for s in (report.get("alternative_strategies") or {}).get("suggestions") or [])
+        self.assertIn("Deprioritize", titles)
+        self.assertIn("bad_strat", titles)
+
     def test_market_vs_bot_uptrend_losses_tension(self):
         m = {
             "ok": True,
