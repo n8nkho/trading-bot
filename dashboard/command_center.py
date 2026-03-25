@@ -2390,6 +2390,31 @@ def api_agents():
 def api_performance():
     return jsonify(get_trading_performance())
 
+@app.route("/api/bot_audit")
+def api_bot_audit():
+    """
+    Operator-facing objective audit:
+    - near-zero loss health (realized P&L + loss rate + risk_guardian streak)
+    - profit opportunity throughput (fills + win rate heuristics)
+    - per-strategy breakdown from pnl_ledger + process checks
+
+    No broker calls; safe to run anytime from Command Center.
+    """
+    days = request.args.get("days", default=1, type=int) or 1
+    lookback_days = request.args.get("lookback_days", default=30, type=int) or 30
+    try:
+        from agents.bot_audit_agent import audit_bot_performance
+
+        report = audit_bot_performance(
+            data_dir=DATA_DIR,
+            logs_dir=LOGS_DIR,
+            lookback_days=lookback_days,
+            audit_days=days,
+        )
+        return jsonify(report)
+    except Exception as e:
+        return jsonify({"timestamp": datetime.now().isoformat(), "ok": False, "error": f"{type(e).__name__}:{e}"}), 500
+
 
 @app.route("/api/news")
 def api_news():

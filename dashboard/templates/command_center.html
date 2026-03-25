@@ -420,6 +420,15 @@
         <div id="safetyStatus" class="loading">Loading…</div>
       </div>
 
+      <div class="panel col-4">
+        <div class="panel-title">BOT AUDIT (OBJECTIVES)</div>
+        <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem;">
+          <button type="button" id="btnBotAudit" class="btn-cyan">Run audit</button>
+          <span id="botAuditStatus" class="text-muted" style="font-size:11px;"></span>
+        </div>
+        <div id="botAudit" class="rec-list loading">Loading…</div>
+      </div>
+
       <div class="panel col-12">
         <div class="panel-title">HEADLINE EVENT AGENT <span class="text-muted" style="font-size:0.65em;font-weight:400;">shadow · policy headlines · <a href="/api/headline_event_status" style="color:inherit;">JSON</a></span></div>
         <div id="headlineEventStatus" class="loading">Loading…</div>
@@ -519,7 +528,7 @@
   </div>
 
   <script>
-    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine' };
+    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine', botAudit: '/api/bot_audit' };
 
     let _chartRedraw = null;
     let _chartResizeDebounce = null;
@@ -1240,6 +1249,71 @@
       `).join('');
     }
 
+    function renderBotAudit(data) {
+      const el = document.getElementById('botAudit');
+      if (!el) return;
+      if (!data || data.ok === false || data.error) {
+        el.classList.remove('loading');
+        el.innerHTML = '<span class="empty">Bot audit unavailable</span>';
+        return;
+      }
+      const esc = (s) => String(s == null ? '' : s).replace(/</g, '&lt;').replace(/&/g, '&amp;');
+      const status = data.overall_status || 'warn';
+      const color = status === 'ok' ? 'var(--green)' : (status === 'critical' ? 'var(--red)' : 'var(--amber)');
+      const profit = data.objectives && data.objectives.profit_opportunities ? data.objectives.profit_opportunities : {};
+      const loss = data.objectives && data.objectives.near_zero_losses ? data.objectives.near_zero_losses : {};
+      const ledger = data.audited || {};
+      const worst = (data.agent_performance && data.agent_performance.worst_strategies) ? data.agent_performance.worst_strategies : [];
+      const recs = Array.isArray(data.recommendations) ? data.recommendations : [];
+
+      const recLines = recs.length
+        ? recs.slice(0, 6).map(r => {
+            const sev = esc(r.severity || 'low');
+            const title = esc(r.title || '');
+            const body = esc(r.body || '').slice(0, 190);
+            const action = esc(r.action || '');
+            return `<div class="text-muted" style="margin-top:0.4rem;"><strong style="color:${color}">${sev.toUpperCase()}</strong>: ${title}<br>${body}${action ? `<br><span style="color:var(--cyan)">Action:</span> ${action}` : ''}</div>`;
+          }).join('')
+        : '<div class="text-muted">No recommendations.</div>';
+
+      el.classList.remove('loading');
+      el.innerHTML = `
+        <div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;">
+          <div>Overall: <strong style="color:${color}">${esc(status).toUpperCase()}</strong></div>
+          <div class="text-muted" style="font-size:11px;">Objective day (ET): <code>${esc(data.objective_day_et || '—')}</code></div>
+        </div>
+        <div style="margin-top:0.45rem;padding-top:0.45rem;border-top:1px solid var(--border);font-size:11px;line-height:1.35;">
+          <div>Profit opportunities: <strong>${esc(profit.status || '—')}</strong></div>
+          <div>Near-zero losses: <strong>${esc(loss.status || '—')}</strong></div>
+          <div>Ledger fills today: <strong>${ledger.ledger_rows_today ?? '—'}</strong> · Lookback rows: <strong>${ledger.ledger_rows_considered_lb ?? '—'}</strong></div>
+        </div>
+        ${worst.length ? `<div class="text-muted" style="margin-top:0.5rem;font-size:11px;">Worst strategies: ${worst.map(w => esc(w.strategy)).join(', ')}</div>` : ''}
+        <div style="margin-top:0.55rem;">${recLines}</div>
+      `;
+    }
+
+    async function runBotAudit() {
+      const st = document.getElementById('botAuditStatus');
+      if (st) st.textContent = 'Running…';
+      const el = document.getElementById('botAudit');
+      if (el) el.classList.add('loading');
+      try {
+        const r = await fetch(API.botAudit);
+        const data = await r.json();
+        renderBotAudit(data);
+        if (st) st.textContent = 'Last run: ' + (data && data.timestamp ? new Date(data.timestamp).toLocaleTimeString() : '—');
+      } catch (e) {
+        if (el) {
+          el.classList.remove('loading');
+          el.innerHTML = '<span class="empty">Bot audit failed: ' + esc(String(e)) + '</span>';
+        }
+        if (st) st.textContent = 'Failed';
+      }
+    }
+
+    // Small helper used in runBotAudit error path
+    function esc(s) { return String(s == null ? '' : s).replace(/</g, '&lt;').replace(/&/g, '&amp;'); }
+
     function renderTrustReport(data) {
       const el = document.getElementById('trustReport');
       if (!el) return;
@@ -1450,13 +1524,14 @@
 
     async function loadAll() {
       try {
-        const [health, agents, performance, news, recommendations, safetyStatus, headlineEvent, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, drift, trustReport, feed, positions, orders, tvSignals] = await Promise.all([
+        const [health, agents, performance, news, recommendations, safetyStatus, botAudit, headlineEvent, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, drift, trustReport, feed, positions, orders, tvSignals] = await Promise.all([
           fetch(API.health).then(r => r.json()),
           fetch(API.agents).then(r => r.json()),
           fetch(API.performance).then(r => r.json()),
           fetch(API.news).then(r => r.json()),
           fetch(API.recommendations).then(r => r.json()),
           fetch(API.safetyStatus).then(r => r.json()),
+          fetch(API.botAudit).then(r => r.json()).catch(() => ({})),
           fetch(API.headlineEvent).then(function (r) { return r.ok ? r.json() : { error: true }; }).catch(function () { return { error: true }; }),
           fetch(API.actionQueue).then(r => r.json()),
           fetch(API.operatorRuns).then(r => r.json()),
@@ -1478,6 +1553,7 @@
         renderNews(news);
         renderRecommendations(recommendations);
         renderSafetyStatus(safetyStatus);
+        renderBotAudit(botAudit);
         renderHeadlineEventStatus(headlineEvent);
         renderActionQueue(actionQueue);
         renderOperatorRuns(operatorRuns);
@@ -1502,6 +1578,8 @@
     document.getElementById('btnRefresh').addEventListener('click', loadAll);
     const btnPristine = document.getElementById('btnPristine');
     if (btnPristine) btnPristine.addEventListener('click', runPristine);
+    const btnBotAudit = document.getElementById('btnBotAudit');
+    if (btnBotAudit) btnBotAudit.addEventListener('click', runBotAudit);
     const btnChartLoad = document.getElementById('btnChartLoad');
     if (btnChartLoad) btnChartLoad.addEventListener('click', loadPriceChart);
 
