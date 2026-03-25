@@ -2,6 +2,7 @@
 *.pyc
 __pycache__/
 *.log
+logs/
 data/
 venv/
 .aider*
