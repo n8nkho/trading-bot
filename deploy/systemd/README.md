@@ -29,6 +29,27 @@ sudo journalctl -u fortress-dashboard -f
 tail -f /home/ubuntu/trading-bot/logs/dashboard_systemd.log
 ```
 
+## Dashboard exits immediately / `journalctl` only shows `status=1/FAILURE`
+
+Often **port 8083 is already taken** (old `nohup` dashboard, duplicate Python, or a stuck process). systemd keeps **restart-looping** because Flask cannot bind.
+
+```bash
+sudo ss -lntp | grep 8083
+# or: sudo lsof -i :8083
+
+# Stop the stray listener (example: kill the PID from ss/lsof)
+sudo fuser -k 8083/tcp
+
+sudo systemctl restart fortress-dashboard
+sudo systemctl status fortress-dashboard --no-pager
+```
+
+The unit appends stdout/stderr to **`logs/dashboard_systemd.log`** — check there for `Address already in use` or tracebacks:
+
+```bash
+tail -80 /home/ubuntu/trading-bot/logs/dashboard_systemd.log
+```
+
 ## Uninstall
 
 ```bash
