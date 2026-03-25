@@ -1268,7 +1268,7 @@
       const recs = Array.isArray(data.recommendations) ? data.recommendations : [];
 
       const recLines = recs.length
-        ? recs.slice(0, 12).map(r => {
+        ? recs.slice(0, 16).map(r => {
             const sev = esc(r.severity || 'low');
             const title = esc(r.title || '');
             const body = esc(r.body || '').slice(0, 190);
@@ -1317,6 +1317,25 @@
         ? `<div class="text-muted" style="font-size:10px;margin-top:0.25rem;"><strong>Alternatives:</strong> ${altSug.slice(0, 3).map(s => esc((s.title || '').slice(0, 72))).join(' · ')}</div>`
         : '';
 
+      const rollup = data.gate_attribution_rollup || {};
+      const rtop = (rollup.top_skip_reasons_rollup && rollup.top_skip_reasons_rollup[0]) ? rollup.top_skip_reasons_rollup[0] : null;
+      const fresh = data.freshness_sla || {};
+      const snAge = (fresh.log_age_hours && fresh.log_age_hours['sniper.log'] && fresh.log_age_hours['sniper.log'].age_hours != null)
+        ? fresh.log_age_hours['sniper.log'].age_hours
+        : null;
+      const rb = data.research_backtest || {};
+      const wfs = rb.walk_forward_summary || {};
+      const bts = rb.backtest_summary || {};
+      const rollupLine = (rollup.totals && rollup.totals.files_scanned)
+        ? `<div class="text-muted" style="font-size:10px;margin-top:0.25rem;">Rollup (${rollup.totals.files_scanned} screens): skips Σ <strong>${rollup.totals.entry_skip_sum ?? '—'}</strong> · exec Σ <strong>${rollup.totals.executed_sum ?? '—'}</strong>${rtop ? ' · top skip <strong>' + esc(String(rtop.reason || '').slice(0, 56)) + '</strong> (' + esc(String(rtop.count)) + ')' : ''}</div>`
+        : '';
+      const freshLine = (snAge != null || fresh.latest_daily_signals_timestamp_age_hours != null)
+        ? `<div class="text-muted" style="font-size:10px;margin-top:0.2rem;">Freshness: sniper log <strong>${snAge != null ? snAge + 'h' : '—'}</strong> · daily_signals age <strong>${fresh.latest_daily_signals_timestamp_age_hours != null ? fresh.latest_daily_signals_timestamp_age_hours + 'h' : '—'}</strong></div>`
+        : '';
+      const researchLine = (wfs.stable != null || bts.ticker || bts.error)
+        ? `<div class="text-muted" style="font-size:10px;margin-top:0.2rem;">Research: WF stable <strong>${wfs.stable === true ? 'yes' : (wfs.stable === false ? 'no' : '—')}</strong> · backtest <strong>${esc(bts.ticker || bts.error || '—')}</strong>${bts.strategy_total_return != null ? ' ret ' + esc(String(bts.strategy_total_return)) : ''}</div>`
+        : '';
+
       el.innerHTML = `
         <div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;">
           <div>Overall: <strong style="color:${color}">${esc(status).toUpperCase()}</strong></div>
@@ -1329,6 +1348,9 @@
         ${pipeLine}
         ${missLine}
         ${altLine}
+        ${rollupLine}
+        ${freshLine}
+        ${researchLine}
         <div style="margin-top:0.45rem;padding-top:0.45rem;border-top:1px solid var(--border);font-size:11px;line-height:1.35;">
           <div>Profit opportunities: <strong>${esc(profit.status || '—')}</strong></div>
           <div>Near-zero losses: <strong>${esc(loss.status || '—')}</strong></div>

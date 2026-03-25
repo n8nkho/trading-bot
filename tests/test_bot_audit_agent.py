@@ -345,6 +345,102 @@ class TestBotAuditAgent(unittest.TestCase):
         self.assertIn("Deprioritize", titles)
         self.assertIn("bad_strat", titles)
 
+    def test_gate_rollup_freshness_research_blocks(self):
+        tmp = Path("._tmp_bot_audit_extended")
+        if tmp.exists():
+            for p in tmp.rglob("*"):
+                try:
+                    if p.is_file():
+                        p.unlink()
+                except Exception:
+                    pass
+        tmp.mkdir(parents=True, exist_ok=True)
+        data_dir = tmp / "data"
+        logs_dir = tmp / "logs"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        for name, payload in [
+            (
+                "daily_signals_20260110.json",
+                {
+                    "timestamp": "2026-01-10T10:00:00",
+                    "candidates": [{"ticker": "A"}],
+                    "entry_gate_summary": {
+                        "buy_count": 0,
+                        "skip_count": 3,
+                        "top_skip_reasons": [{"reason": "wide_spread", "count": 3}],
+                    },
+                    "risk_gate_summary": {"top_rejected_reasons": []},
+                    "approved_trades": [],
+                    "executed_trades": [],
+                    "fundamental_cost": 0.05,
+                },
+            ),
+            (
+                "daily_signals_20260111.json",
+                {
+                    "timestamp": "2026-01-11T10:00:00",
+                    "candidates": [{"ticker": "B"}, {"ticker": "C"}],
+                    "entry_gate_summary": {
+                        "buy_count": 1,
+                        "skip_count": 1,
+                        "top_skip_reasons": [{"reason": "wide_spread", "count": 1}],
+                    },
+                    "risk_gate_summary": {"top_rejected_reasons": [{"reason": "max_pos", "count": 1}]},
+                    "approved_trades": [{"ticker": "B"}],
+                    "executed_trades": [],
+                    "execution_gate_summary": {"top_failure_reasons": [{"reason": "timeout", "count": 1}]},
+                },
+            ),
+        ]:
+            (data_dir / name).write_text(json.dumps(payload), encoding="utf-8")
+        (data_dir / "exit_signals_20260111.json").write_text(
+            json.dumps(
+                {
+                    "runs": [
+                        {
+                            "action_summary": {"HOLD": 2, "SELL": 1},
+                            "executed_exits": [{"ticker": "B"}],
+                            "exit_failures": [{"ticker": "X"}],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        (data_dir / "walk_forward_report.json").write_text(
+            json.dumps({"stable": False, "reason": "unit_test_unstable"}),
+            encoding="utf-8",
+        )
+        (data_dir / "backtest_snapshot.json").write_text(
+            json.dumps({"ticker": "SPY", "strategy_total_return": 0.01, "max_drawdown": -0.05}),
+            encoding="utf-8",
+        )
+        (logs_dir / "sniper.log").write_text("ok\n", encoding="utf-8")
+        now_utc = datetime(2026, 3, 25, 18, 0, 0, tzinfo=timezone.utc)
+        report = audit_bot_performance(
+            data_dir=data_dir,
+            logs_dir=logs_dir,
+            lookback_days=7,
+            audit_days=1,
+            now_utc=now_utc,
+            include_market=False,
+        )
+        self.assertIn("gate_attribution_rollup", report)
+        self.assertEqual(report["gate_attribution_rollup"]["totals"]["files_scanned"], 2)
+        self.assertGreaterEqual(
+            report["gate_attribution_rollup"]["top_skip_reasons_rollup"][0]["count"],
+            3,
+        )
+        self.assertIn("freshness_sla", report)
+        self.assertIn("exit_monitoring", report)
+        self.assertEqual(report["exit_monitoring"]["exit_failures_sum"], 1)
+        self.assertEqual(report["research_backtest"]["walk_forward_summary"].get("stable"), False)
+        self.assertEqual(report["research_backtest"]["backtest_summary"].get("ticker"), "SPY")
+        self.assertIn("efficiency_and_policy", report)
+        titles = [r.get("title", "") for r in (report.get("recommendations") or [])]
+        self.assertTrue(any("Walk-forward" in t for t in titles))
+
     def test_market_vs_bot_uptrend_losses_tension(self):
         m = {
             "ok": True,

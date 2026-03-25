@@ -760,6 +760,326 @@ def _alternative_strategy_suggestions(
     return {"summary": summary, "suggestions": suggestions[:8]}
 
 
+def _rollup_gate_attribution(data_dir: Path, *, max_files: int = 12) -> dict[str, Any]:
+    """Aggregate skip / risk / execution-failure reasons across recent daily_signals files."""
+    pattern = str(data_dir / "daily_signals_*.json")
+    files = sorted(glob.glob(pattern), reverse=True)[:max_files]
+    skip_counter: Counter[str] = Counter()
+    risk_counter: Counter[str] = Counter()
+    fail_counter: Counter[str] = Counter()
+    totals = {
+        "files_scanned": 0,
+        "candidates_sum": 0,
+        "entry_buy_sum": 0,
+        "entry_skip_sum": 0,
+        "approved_sum": 0,
+        "executed_sum": 0,
+    }
+    for fp in files:
+        try:
+            sig = json.loads(Path(fp).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(sig, dict):
+            continue
+        totals["files_scanned"] += 1
+        cands = sig.get("candidates")
+        if isinstance(cands, list):
+            totals["candidates_sum"] += len(cands)
+        eg = sig.get("entry_gate_summary") if isinstance(sig.get("entry_gate_summary"), dict) else {}
+        totals["entry_buy_sum"] += int(eg.get("buy_count") or 0)
+        totals["entry_skip_sum"] += int(eg.get("skip_count") or 0)
+        for row in eg.get("top_skip_reasons") or []:
+            if isinstance(row, dict):
+                skip_counter[str(row.get("reason") or "")] += int(row.get("count") or 0)
+        rg = sig.get("risk_gate_summary") if isinstance(sig.get("risk_gate_summary"), dict) else {}
+        for row in rg.get("top_rejected_reasons") or []:
+            if isinstance(row, dict):
+                risk_counter[str(row.get("reason") or "")] += int(row.get("count") or 0)
+        ap = sig.get("approved_trades")
+        if isinstance(ap, list):
+            totals["approved_sum"] += len(ap)
+        exl = sig.get("executed_trades")
+        if isinstance(exl, list):
+            totals["executed_sum"] += len(exl)
+        exg = sig.get("execution_gate_summary") if isinstance(sig.get("execution_gate_summary"), dict) else {}
+        for row in exg.get("top_failure_reasons") or []:
+            if isinstance(row, dict):
+                fail_counter[str(row.get("reason") or "")] += int(row.get("count") or 0)
+    return {
+        "rollup_files_scanned": totals["files_scanned"],
+        "totals": totals,
+        "top_skip_reasons_rollup": [{"reason": r, "count": c} for r, c in skip_counter.most_common(8)],
+        "top_risk_reject_rollup": [{"reason": r, "count": c} for r, c in risk_counter.most_common(8)],
+        "top_execution_failure_rollup": [{"reason": r, "count": c} for r, c in fail_counter.most_common(6)],
+    }
+
+
+def _file_mtime_age_hours(path: Path, now_utc: datetime) -> float | None:
+    if not path.exists():
+        return None
+    try:
+        return round((now_utc.timestamp() - path.stat().st_mtime) / 3600.0, 2)
+    except OSError:
+        return None
+
+
+def _signal_timestamp_age_hours(ts_raw: Any, now_utc: datetime) -> float | None:
+    p = _parse_timestamp_local_iso(ts_raw)
+    if p is None:
+        return None
+    nu = now_utc if now_utc.tzinfo else now_utc.replace(tzinfo=timezone.utc)
+    pu = p.astimezone(timezone.utc)
+    return round((nu - pu).total_seconds() / 3600.0, 2)
+
+
+def _log_staleness(logs_dir: Path, names: tuple[str, ...], now_utc: datetime) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for name in names:
+        p = logs_dir / name
+        out[name] = {
+            "exists": p.exists(),
+            "age_hours": _file_mtime_age_hours(p, now_utc),
+        }
+    return out
+
+
+def _pending_age_detail(data_dir: Path, now_utc: datetime) -> dict[str, Any]:
+    try:
+        from utils.pending_execution_queue import load_batches
+
+        batches = load_batches(data_dir)
+    except Exception:
+        batches = []
+    oldest_utc: datetime | None = None
+    for b in batches or []:
+        if not isinstance(b, dict):
+            continue
+        dt = _parse_timestamp_local_iso(b.get("updated_at"))
+        if dt is not None:
+            du = dt.astimezone(timezone.utc)
+            if oldest_utc is None or du < oldest_utc:
+                oldest_utc = du
+    nu = now_utc if now_utc.tzinfo else now_utc.replace(tzinfo=timezone.utc)
+    age_h = None
+    if oldest_utc is not None:
+        age_h = round((nu - oldest_utc).total_seconds() / 3600.0, 2)
+    return {"oldest_pending_batch_age_hours": age_h}
+
+
+def _exit_signals_summary(data_dir: Path, *, max_runs: int = 20) -> dict[str, Any]:
+    pattern = str(data_dir / "exit_signals_*.json")
+    files = sorted(glob.glob(pattern), reverse=True)
+    if not files:
+        return {
+            "latest_path": None,
+            "action_totals": {},
+            "executed_exits_sum": 0,
+            "exit_failures_sum": 0,
+            "notes": ["no_exit_signals_json"],
+        }
+    path = Path(files[0])
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        return {"latest_path": str(path), "error": str(e)}
+    runs = raw.get("runs") if isinstance(raw.get("runs"), list) else [raw]
+    action_totals: Counter[str] = Counter()
+    ex_sum = 0
+    fl_sum = 0
+    for run in runs[-max_runs:]:
+        if not isinstance(run, dict):
+            continue
+        sm = run.get("action_summary")
+        if isinstance(sm, dict):
+            for k, v in sm.items():
+                try:
+                    action_totals[str(k)] += int(v)
+                except (TypeError, ValueError):
+                    pass
+        ee = run.get("executed_exits")
+        if isinstance(ee, list):
+            ex_sum += len(ee)
+        ef = run.get("exit_failures")
+        if isinstance(ef, list):
+            fl_sum += len(ef)
+    return {
+        "latest_path": str(path),
+        "runs_window": min(len(runs), max_runs),
+        "action_totals": dict(action_totals),
+        "executed_exits_sum": ex_sum,
+        "exit_failures_sum": fl_sum,
+    }
+
+
+def _read_json_dict(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        o = json.loads(path.read_text(encoding="utf-8"))
+        return o if isinstance(o, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _research_backtest_block(data_dir: Path) -> dict[str, Any]:
+    """Walk-forward report + illustrative backtest snapshot (paths under data_dir)."""
+    wf = _read_json_dict(data_dir / "walk_forward_report.json")
+    bt = _read_json_dict(data_dir / "backtest_snapshot.json")
+    wf_sum: dict[str, Any] = {}
+    if wf:
+        wf_sum = {
+            "stable": wf.get("stable"),
+            "reason": (str(wf.get("reason") or ""))[:240],
+            "drift_alert": wf.get("drift_alert"),
+        }
+    bt_sum: dict[str, Any] = {}
+    if bt:
+        bt_sum = {
+            "ticker": bt.get("ticker"),
+            "strategy_total_return": bt.get("strategy_total_return"),
+            "buy_hold_total_return": bt.get("buy_hold_total_return"),
+            "max_drawdown": bt.get("max_drawdown"),
+            "error": bt.get("error"),
+        }
+    return {
+        "walk_forward_path": str(data_dir / "walk_forward_report.json"),
+        "walk_forward_summary": wf_sum,
+        "backtest_snapshot_path": str(data_dir / "backtest_snapshot.json"),
+        "backtest_summary": bt_sum,
+    }
+
+
+def _efficiency_and_policy_snapshot(
+    latest_signals: dict[str, Any] | None,
+    last_meta: dict[str, Any],
+) -> dict[str, Any]:
+    eff: dict[str, Any] = {
+        "fundamental_cost_last_screen": None,
+        "screening_duration_seconds_meta": None,
+        "universe_size_meta": None,
+    }
+    if latest_signals and isinstance(latest_signals, dict):
+        fc = latest_signals.get("fundamental_cost")
+        if fc is not None:
+            eff["fundamental_cost_last_screen"] = fc
+    if isinstance(last_meta, dict):
+        eff["screening_duration_seconds_meta"] = last_meta.get("screening_duration_seconds")
+        eff["universe_size_meta"] = last_meta.get("universe_size")
+    env_prof = (os.getenv("TRADING_POLICY_PROFILE") or "").strip() or None
+    meta_prof = last_meta.get("policy_profile") if isinstance(last_meta, dict) else None
+    drift = None
+    if env_prof and meta_prof and str(env_prof).lower() != str(meta_prof).lower():
+        drift = f"env TRADING_POLICY_PROFILE={env_prof} vs last_screening_meta policy_profile={meta_prof}"
+    return {
+        "efficiency": eff,
+        "policy_profile_env": env_prof,
+        "policy_profile_last_meta": meta_prof,
+        "profile_drift_hint": drift,
+    }
+
+
+def _flow_research_recommendations(
+    *,
+    rollup: dict[str, Any],
+    freshness_logs: dict[str, Any],
+    meta_mtime_age: float | None,
+    signals_age: float | None,
+    exit_sum: dict[str, Any],
+    research: dict[str, Any],
+    pending_age: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Extra heuristics for flow, exits, and research artifacts."""
+    recs: list[dict[str, Any]] = []
+    tops = rollup.get("top_skip_reasons_rollup") or []
+    if tops and isinstance(tops[0], dict) and int(tops[0].get("count") or 0) >= 12:
+        r = str(tops[0].get("reason") or "")[:120]
+        recs.append(
+            {
+                "severity": "low",
+                "title": "Recurring entry skip pattern (multi-day rollup)",
+                "body": f"Across recent daily_signals files, skips pile up for: {r}",
+                "action": "operator: adjust entry evaluation / prefilter for that reason; compare shadow fills.",
+            }
+        )
+
+    sn = (freshness_logs or {}).get("sniper.log") or {}
+    if sn.get("exists") and (sn.get("age_hours") or 0) > 48:
+        recs.append(
+            {
+                "severity": "medium",
+                "title": "Sniper log looks stale",
+                "body": f"sniper.log mtime ~{sn.get('age_hours')}h — intraday agent may not be running on schedule.",
+                "action": "operator: check crontab/systemd for intraday_sniper and host clock.",
+            }
+        )
+
+    orch = (freshness_logs or {}).get("orchestrator.log") or {}
+    if orch.get("exists") and (orch.get("age_hours") or 0) > 72:
+        recs.append(
+            {
+                "severity": "low",
+                "title": "Orchestrator log quiet",
+                "body": f"orchestrator.log age ~{orch.get('age_hours')}h — daily screen / fortress cadence may be idle.",
+                "action": "operator: verify orchestrator cron and logs for errors.",
+            }
+        )
+
+    if meta_mtime_age is not None and meta_mtime_age > 36:
+        recs.append(
+            {
+                "severity": "low",
+                "title": "Screening meta file aging",
+                "body": f"last_screening_meta.json is ~{meta_mtime_age}h old vs now.",
+                "action": "operator: run screener / orchestrator screen so telemetry stays fresh.",
+            }
+        )
+
+    if signals_age is not None and signals_age > 48:
+        recs.append(
+            {
+                "severity": "medium",
+                "title": "Latest daily_signals timestamp is old",
+                "body": f"Newest daily_signals run timestamp is ~{signals_age}h behind audit clock.",
+                "action": "operator: run daily screening; stale signals distort funnel audit.",
+            }
+        )
+
+    if int(exit_sum.get("exit_failures_sum") or 0) > 0:
+        recs.append(
+            {
+                "severity": "medium",
+                "title": "Exit monitor reported broker failures",
+                "body": f"exit_signals artifact shows {exit_sum.get('exit_failures_sum')} failure(s) in recent window.",
+                "action": "operator: review Alpaca rejects and exit_monitor logs; fix order sizing or market hours.",
+            }
+        )
+
+    wf = (research.get("walk_forward_summary") or {}) if isinstance(research, dict) else {}
+    if wf.get("stable") is False:
+        recs.append(
+            {
+                "severity": "low",
+                "title": "Walk-forward stability flag is negative",
+                "body": (wf.get("reason") or "See data/walk_forward_report.json")[:300],
+                "action": "operator: python3 agents/walk_forward_validator.py — treat strategy promotion cautiously.",
+            }
+        )
+
+    oa = pending_age.get("oldest_pending_batch_age_hours")
+    if oa is not None and oa > 24 and int(pending_age.get("pending_trade_count") or 0) > 0:
+        recs.append(
+            {
+                "severity": "medium",
+                "title": "Aging HITL pending queue",
+                "body": f"Oldest pending batch ~{oa}h old — approved risk not reaching broker.",
+                "action": "operator: run orchestrator execute_pending or clear stale batches after review.",
+            }
+        )
+
+    return recs[:6]
+
+
 def _load_hedging_context(
     data_dir: Path,
     *,
@@ -1081,6 +1401,9 @@ def audit_bot_performance(
 
     Uses latest ``daily_signals_*.json``, ``pending_execution_queue.json``, and
     ``decisions_log.jsonl`` (session window) for funnel / missed-opportunity heuristics.
+
+    Also rolls up recent screens (gate reasons), log/Screening freshness, exit_signals,
+    ``walk_forward_report.json`` / ``backtest_snapshot.json``, and policy/cost hints.
     """
     data_dir = data_dir or DEFAULT_DATA_DIR
     logs_dir = logs_dir or DEFAULT_LOGS_DIR
@@ -1227,10 +1550,26 @@ def audit_bot_performance(
     latest_signals, latest_signals_path = _load_latest_daily_signals(data_dir)
     screen_snap = _summarize_daily_signals(latest_signals, latest_signals_path)
     pending_snap = _summarize_pending_queue(data_dir)
+    pending_snap.update(_pending_age_detail(data_dir, now_utc))
     dec_snap = _decisions_log_session_snapshot(
         data_dir / "decisions_log.jsonl",
         session_start_et,
         now_et,
+    )
+
+    gate_rollup = _rollup_gate_attribution(data_dir)
+    exit_monitor = _exit_signals_summary(data_dir)
+    research_bt = _research_backtest_block(data_dir)
+    freshness_logs = _log_staleness(
+        logs_dir,
+        ("orchestrator.log", "sniper.log", "spy_swing.log"),
+        now_utc,
+    )
+    meta_mtime_age = _file_mtime_age_hours(last_screening_meta_path, now_utc)
+    signals_ts_age = _signal_timestamp_age_hours(screen_snap.get("timestamp"), now_utc)
+    eff_pol = _efficiency_and_policy_snapshot(
+        latest_signals if isinstance(latest_signals, dict) else None,
+        last_meta if isinstance(last_meta, dict) else {},
     )
 
     # Objective evaluation (session = since 3 AM ET).
@@ -1386,6 +1725,21 @@ def audit_bot_performance(
             }
         )
 
+    flow_recs = _flow_research_recommendations(
+        rollup=gate_rollup,
+        freshness_logs=freshness_logs,
+        meta_mtime_age=meta_mtime_age,
+        signals_age=signals_ts_age,
+        exit_sum=exit_monitor,
+        research=research_bt,
+        pending_age={
+            "oldest_pending_batch_age_hours": pending_snap.get("oldest_pending_batch_age_hours"),
+            "pending_trade_count": pending_snap.get("pending_trade_count"),
+        },
+    )
+    for fr in flow_recs:
+        recommendations.append(fr)
+
     if overall_status in ("critical", "warn"):
         if total_today == 0:
             recommendations.append(
@@ -1468,6 +1822,15 @@ def audit_bot_performance(
             "summary": alts.get("summary"),
             "suggestions": alts.get("suggestions") or [],
         },
+        "gate_attribution_rollup": gate_rollup,
+        "freshness_sla": {
+            "log_age_hours": freshness_logs,
+            "last_screening_meta_mtime_age_hours": meta_mtime_age,
+            "latest_daily_signals_timestamp_age_hours": signals_ts_age,
+        },
+        "exit_monitoring": exit_monitor,
+        "research_backtest": research_bt,
+        "efficiency_and_policy": eff_pol,
         "process": {
             "today_screening_runs_count": len(process.get("session_screening_runs") or []),
             "session_screening_runs": process.get("session_screening_runs") or [],
