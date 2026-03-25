@@ -322,7 +322,7 @@ def append_shadow_record(data_dir: Path, record: dict[str, Any], day: date | Non
 def run_spy_swing_cycle(
     *,
     shadow_only: bool = True,
-    portfolio_equity: float = 5000.0,
+    portfolio_equity: float = 20_000.0,
     data_dir: Path | None = None,
     now_et: datetime | None = None,
     spy_df: pd.DataFrame | None = None,

@@ -12,7 +12,7 @@ agents:
     enabled: true
   spy_intraday_swing:
     enabled: true
-    default_equity_usd: 5000
+    default_equity_usd: 20000
   fortress:
     enabled: true
   headline_event:
@@ -21,7 +21,7 @@ agents:
     enabled: true
 
 defaults:
-  portfolio_value_usd: 5000
+  portfolio_value_usd: 20000
 
 llm:
   provider: none

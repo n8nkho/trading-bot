@@ -102,7 +102,7 @@ If you want, the next message can pin your **playbook** (e.g. “buy 0.25% pullb
 
 **Scope:** Defaults tuned for **SPY**, **RTH**, **yfinance-style bars** (no sub-minute edge), and execution through your existing **Alpaca + pre_trade_gate + risk_guardian** stack. These are **starting points** for paper/shadow — backtest and tighten to your account and data quality.
 
-**Account cap:** **US $5,000** maximum equity (your stated budget). Scale **dollar** caps linearly if equity differs; **% of equity** rules stay the same.
+**Account cap:** **US $20,000** default book (see `fortress_runtime.yaml` / `FORTRESS_PORTFOLIO_VALUE`). Scale **dollar** caps linearly if equity differs; **% of equity** rules stay the same.
 
 **Not investment advice.**
 

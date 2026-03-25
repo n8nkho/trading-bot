@@ -7,6 +7,8 @@ from datetime import datetime
 import pytz
 import numpy as np
 
+from utils.runtime_config import get_default_portfolio_usd
+
 logging.basicConfig(
     filename='logs/entry.log',
     level=logging.INFO,
@@ -14,7 +16,7 @@ logging.basicConfig(
 )
 
 # Configuration
-PORTFOLIO_VALUE = 50000  # Default portfolio value
+PORTFOLIO_VALUE = get_default_portfolio_usd()
 BASE_POSITION_PCT = 0.05  # 5% of portfolio per position
 MAX_POSITION_SIZE = 2000  # Maximum dollars per position
 RSI_THRESHOLD = 35  # Extra oversold threshold

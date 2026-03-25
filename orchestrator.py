@@ -278,7 +278,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 POSITIONS_FILE = DATA_DIR / "positions.json"
 PNL_LEDGER_FILE = DATA_DIR / "pnl_ledger.jsonl"
 FORTRESS_REPORT_MAX_AGE_HOURS = float(os.getenv("FORTRESS_REPORT_MAX_AGE_HOURS", "30"))
-PORTFOLIO_VALUE = 50000  # Default portfolio value
+PORTFOLIO_VALUE = get_default_portfolio_usd()  # Screening default; override via CLI or env
 
 # Market hours (Eastern Time)
 MARKET_OPEN = time(9, 30)   # 9:30 AM ET

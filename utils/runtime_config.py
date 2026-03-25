@@ -21,6 +21,10 @@ _ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_PATH = _ROOT / "config" / "fortress_runtime.yaml"
 
 
+# Paper-first default book size for screen/snipe/risk sizing (override via YAML or env).
+_DEFAULT_PORTFOLIO_USD = 20_000.0
+
+
 def _builtin_defaults() -> dict[str, Any]:
     return {
         "version": 1,
@@ -28,13 +32,13 @@ def _builtin_defaults() -> dict[str, Any]:
             "daily_screen": {"enabled": True},
             "position_monitor": {"enabled": True},
             "intraday_sniper": {"enabled": True},
-            "spy_intraday_swing": {"enabled": True, "default_equity_usd": 5000},
+            "spy_intraday_swing": {"enabled": True, "default_equity_usd": int(_DEFAULT_PORTFOLIO_USD)},
             "fortress": {"enabled": True},
             "headline_event": {"enabled": True},
             "meta_architect": {"enabled": True},
         },
         "defaults": {
-            "portfolio_value_usd": 5000.0,
+            "portfolio_value_usd": _DEFAULT_PORTFOLIO_USD,
         },
         "llm": {
             "provider": "none",
@@ -106,9 +110,9 @@ def get_default_portfolio_usd() -> float:
     cfg = get_runtime_config()
     d = cfg.get("defaults") or {}
     try:
-        return float(d.get("portfolio_value_usd", 5000.0))
+        return float(d.get("portfolio_value_usd", _DEFAULT_PORTFOLIO_USD))
     except (TypeError, ValueError):
-        return 5000.0
+        return _DEFAULT_PORTFOLIO_USD
 
 
 def get_spy_swing_default_equity_usd() -> float:

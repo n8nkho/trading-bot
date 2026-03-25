@@ -19,7 +19,7 @@ class TestRuntimeConfig(unittest.TestCase):
                 rc.get_runtime_config(reload=True)
                 cfg = rc.get_runtime_config()
                 self.assertTrue(cfg["agents"]["daily_screen"]["enabled"])
-                self.assertEqual(cfg["defaults"]["portfolio_value_usd"], 5000.0)
+                self.assertEqual(cfg["defaults"]["portfolio_value_usd"], 20_000.0)
             finally:
                 os.environ.pop("FORTRESS_RUNTIME_CONFIG", None)
                 rc.get_runtime_config(reload=True)
