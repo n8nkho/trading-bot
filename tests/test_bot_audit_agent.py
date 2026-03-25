@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -88,6 +89,10 @@ class TestBotAuditAgent(unittest.TestCase):
         self.assertEqual(report["objectives"]["profit_opportunities"]["status"], "ok")
         self.assertEqual(report["objectives"]["near_zero_losses"]["status"], "ok")
         self.assertEqual(report["objectives"]["market_backdrop"]["status"], "unavailable")
+        self.assertIn("audit_synthesis", report)
+        self.assertIn("headline", report["audit_synthesis"])
+        self.assertIsInstance(report.get("actionable_changes"), list)
+        self.assertIn("current_params_snapshot", report)
 
     def test_critical_when_all_losses(self):
         tmp = Path("._tmp_bot_audit_test_2")
@@ -458,6 +463,44 @@ class TestBotAuditAgent(unittest.TestCase):
             total_session_trades=3,
         )
         self.assertTrue(any(f.get("type") == "tension" for f in r["findings"]))
+
+    def test_stale_sniper_and_orchestrator_logs_single_combined_recommendation(self):
+        tmp = Path("._tmp_bot_audit_stale_logs")
+        if tmp.exists():
+            for p in tmp.rglob("*"):
+                try:
+                    if p.is_file():
+                        p.unlink()
+                except Exception:
+                    pass
+        tmp.mkdir(parents=True, exist_ok=True)
+        data_dir = tmp / "data"
+        logs_dir = tmp / "logs"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        sn = logs_dir / "sniper.log"
+        orch = logs_dir / "orchestrator.log"
+        sn.write_text("x\n", encoding="utf-8")
+        orch.write_text("y\n", encoding="utf-8")
+        now_utc = datetime(2026, 3, 25, 18, 0, 0, tzinfo=timezone.utc)
+        old_m = now_utc.timestamp() - 200 * 3600
+        os.utime(sn, (old_m, old_m))
+        os.utime(orch, (old_m, old_m))
+        report = audit_bot_performance(
+            data_dir=data_dir,
+            logs_dir=logs_dir,
+            lookback_days=7,
+            audit_days=1,
+            now_utc=now_utc,
+            include_market=False,
+        )
+        titles = [r.get("title", "") for r in (report.get("recommendations") or [])]
+        combined = [t for t in titles if "Multiple core logs stale" in t]
+        self.assertEqual(len(combined), 1)
+        self.assertNotIn("Sniper log looks stale", titles)
+        self.assertNotIn("Orchestrator log quiet", titles)
+        drv = report.get("audit_synthesis", {}).get("primary_drivers") or []
+        self.assertTrue(any("scheduler" in str(d).lower() or "staleness" in str(d).lower() for d in drv))
 
 
 if __name__ == "__main__":

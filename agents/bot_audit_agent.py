@@ -979,6 +979,311 @@ def _efficiency_and_policy_snapshot(
     }
 
 
+def _read_current_params_snapshot(data_dir: Path) -> dict[str, Any]:
+    p = data_dir / "current_params.json"
+    base = {"path": str(p), "loaded": False}
+    if not p.exists():
+        return base
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(d, dict):
+            return {**base, "error": "not_a_dict"}
+        return {
+            "path": str(p),
+            "loaded": True,
+            "rsi_threshold": d.get("rsi_threshold"),
+            "stop_loss_pct": d.get("stop_loss_pct"),
+            "take_profit_pct": d.get("take_profit_pct"),
+            "last_updated": d.get("last_updated"),
+        }
+    except (OSError, json.JSONDecodeError) as e:
+        return {**base, "error": str(e)}
+
+
+def _map_skip_reason_to_entry_change(reason_raw: str) -> str:
+    rl = (reason_raw or "").lower()
+    if "window" in rl or "entry window" in rl or ("outside" in rl and "window" in rl):
+        return (
+            "Entry time window likely blocking BUYs: adjust ENTRY_WINDOW_START/END in agents/entry_agent.py "
+            "or run screening inside the allowed ET window (defaults ~2:30–3:45 PM ET)."
+        )
+    if "rsi" in rl or "oversold" in rl:
+        return (
+            "RSI / oversold gate: review data/current_params.json rsi_threshold (and screener tier RSI). "
+            "Raise slightly only after paper validation — looser RSI admits weaker setups."
+        )
+    if "spread" in rl or "liquidity" in rl or "volume" in rl:
+        return (
+            "Liquidity/spread skips: tighten screener min volume in agents/screener_agent.py tiers, "
+            "or add max spread check; in high VIX, consider smaller symbols universe."
+        )
+    if "vix" in rl or "volatility" in rl or "vol" in rl:
+        return (
+            "Volatility-conditioned skip: tie BUY confidence to VIX or require fresh fortress_report "
+            "before entries in strict_mode (orchestrator hedge gate)."
+        )
+    if "confidence" in rl or "fundamental" in rl:
+        return (
+            "Confidence/fundamental gate: lower FUNDAMENTAL_CONFIDENCE_THRESHOLD only if cost acceptable, "
+            "or bypass fundamentals for shadow paper tests per ticker class."
+        )
+    return (
+        f"Open latest daily_signals JSON → entry_gate top_skip_reasons for full text: {reason_raw[:140]!r}. "
+        "Trace matching branch in agents/entry_agent.py evaluate_entry()."
+    )
+
+
+def _synthesize_audit_diagnosis(
+    *,
+    overall_status: str,
+    profit_status: str,
+    loss_status: str,
+    total_session_fills: int,
+    lookback_fills: int,
+    screen_snap: dict[str, Any],
+    freshness_logs: dict[str, Any],
+    meta_age: float | None,
+    signals_age: float | None,
+    missed_findings: list[dict[str, Any]],
+    hedge_regime: str | None,
+    tape_trend: str | None,
+    vix_last: float | None,
+) -> dict[str, Any]:
+    """
+    Single narrative that orders root causes for operators (heuristic, not causal proof).
+    """
+    drivers: list[dict[str, Any]] = []
+    orch = (freshness_logs or {}).get("orchestrator.log") or {}
+    sn = (freshness_logs or {}).get("sniper.log") or {}
+    oa = orch.get("age_hours")
+    sa = sn.get("age_hours")
+    orch_stale = bool(orch.get("exists") and oa is not None and float(oa) > 72)
+    sniper_stale = bool(sn.get("exists") and sa is not None and float(sa) > 48)
+    automation_stale = orch_stale or sniper_stale
+
+    if total_session_fills == 0 and lookback_fills >= 8:
+        drivers.append(
+            {
+                "code": "session_throughput_gap_with_history",
+                "weight": "high",
+                "detail": "Session has zero realized fills but ledger lookback shows prior activity — likely scheduler gap today or exits not hitting ledger yet.",
+            }
+        )
+
+    if automation_stale and total_session_fills == 0:
+        drivers.append(
+            {
+                "code": "scheduler_or_log_staleness",
+                "weight": "high",
+                "detail": "Core logs are very old while objectives expect activity — jobs may not run, wrong cwd, or logs redirected elsewhere.",
+            }
+        )
+
+    cf = int(screen_snap.get("candidates_found") or 0)
+    eb = int(screen_snap.get("entry_buy_count") or 0)
+    es = int(screen_snap.get("entry_skip_count") or 0)
+    if cf > 0 and eb == 0 and es > 0:
+        drivers.append(
+            {
+                "code": "entry_gate_all_skip",
+                "weight": "high" if not automation_stale else "medium",
+                "detail": f"Latest screen: {cf} candidate(s), 0 BUY, {es} SKIP — logic/timing/VIX likely blocking every name.",
+            }
+        )
+
+    r = str(hedge_regime or "").upper()
+    if "RISK_OFF" in r and eb == 0 and cf > 0:
+        drivers.append(
+            {
+                "code": "regime_defensive_alignment",
+                "weight": "medium",
+                "detail": "Fortress RISK_OFF with zero BUYs can be intentional — separate from broken automation before loosening filters.",
+            }
+        )
+
+    if vix_last is not None and float(vix_last) >= 22 and profit_status == "critical":
+        drivers.append(
+            {
+                "code": "elevated_vol_throttle",
+                "weight": "medium",
+                "detail": f"VIX ~{vix_last} with weak throughput objective — spreads and discretionary skips often rise together.",
+            }
+        )
+
+    if signals_age is not None and float(signals_age) > 36 and meta_age is not None and float(meta_age) > 36:
+        drivers.append(
+            {
+                "code": "telemetry_stale",
+                "weight": "medium",
+                "detail": "Both screening meta and daily_signals timestamp look old — audits may describe an outdated funnel.",
+            }
+        )
+
+    for f in missed_findings:
+        if f.get("type") == "hitl_backlog":
+            drivers.append(
+                {
+                    "code": "hitl_backlog",
+                    "weight": "high",
+                    "detail": str(f.get("text") or "Pending execution queue has approved trades."),
+                }
+            )
+            break
+
+    headline = (drivers[0]["detail"][:200] + ("…" if len(drivers[0]["detail"]) > 200 else "")) if drivers else "No single dominant driver; review objectives independently."
+
+    parts: list[str] = []
+    if automation_stale:
+        parts.append(
+            "Treat log staleness as an operations incident first: confirm systemd/cron, repo path, and log file targets."
+        )
+    if cf > 0 and eb == 0 and es > 0:
+        parts.append("Inspect top_entry_skip_reasons in the newest daily_signals file before changing risk limits.")
+    if "RISK_OFF" in r and eb == 0:
+        parts.append("In RISK_OFF, zero equity BUYs may match policy; validate against fortress targets before chasing throughput.")
+    if loss_status == "ok" and profit_status == "critical":
+        parts.append("Loss objective is OK while profit throughput is critical — focus on entries/execution, not stop tightening.")
+
+    readiness = "critical" if overall_status == "critical" else ("degraded" if profit_status == "critical" or loss_status != "ok" else "nominal")
+
+    return {
+        "headline": headline,
+        "primary_drivers": drivers,
+        "narrative": " ".join(parts) if parts else "Review primary_drivers for ranked context.",
+        "readiness": readiness,
+        "tape_trend": tape_trend,
+    }
+
+
+def _actionable_bot_changes(
+    *,
+    diagnosis: dict[str, Any],
+    screen_snap: dict[str, Any],
+    params_snap: dict[str, Any],
+    gate_rollup: dict[str, Any],
+    execution_mode: str | None,
+    eff_pol: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """
+    Concrete, file/env-level suggestions (operator must validate; not auto-applied).
+    """
+    items: list[dict[str, Any]] = []
+    codes = {d.get("code") for d in (diagnosis.get("primary_drivers") or [])}
+
+    if "scheduler_or_log_staleness" in codes or "session_throughput_gap_with_history" in codes:
+        items.append(
+            {
+                "priority": 1,
+                "severity": "high",
+                "category": "automation",
+                "title": "Fix scheduler + working directory for core jobs",
+                "what_to_change": (
+                    "Run `orchestrator.py screen` weekdays after open; run intraday sniper/spy jobs from the same repo root "
+                    "that owns this data/ and logs/ tree."
+                ),
+                "where": "crontab or systemd unit · WorkingDirectory=/path/to/trading-bot · logs/orchestrator.log, logs/sniper.log",
+                "verify": "After one cycle, log mtimes < 24h and new lines appear; `data/daily_signals_*.json` timestamp fresh.",
+                "caution": "Screens started from a different clone will not update this dashboard's data/.",
+            }
+        )
+
+    top_sk = screen_snap.get("top_entry_skip_reasons") or []
+    if top_sk and isinstance(top_sk[0], dict):
+        r0 = str(top_sk[0].get("reason") or "")
+        items.append(
+            {
+                "priority": 2,
+                "severity": "medium",
+                "category": "entry_logic",
+                "title": "Adjust entry stack for dominant skip reason",
+                "what_to_change": _map_skip_reason_to_entry_change(r0),
+                "where": "agents/entry_agent.py · data/current_params.json · agents/screener_agent.py (tiers)",
+                "verify": "Paper run: same candidate set yields BUY_count > 0 or documented intentional SKIP.",
+                "caution": "Change one lever at a time; log before/after in decisions_log.",
+            }
+        )
+
+    rollup_top = (gate_rollup.get("top_skip_reasons_rollup") or [])
+    if rollup_top and isinstance(rollup_top[0], dict) and int(rollup_top[0].get("count") or 0) >= 8:
+        rr = str(rollup_top[0].get("reason") or "")
+        if not (top_sk and isinstance(top_sk[0], dict) and rr == str(top_sk[0].get("reason") or "")):
+            items.append(
+                {
+                    "priority": 3,
+                    "severity": "low",
+                    "category": "entry_logic",
+                    "title": "Persistent multi-day skip theme",
+                    "what_to_change": _map_skip_reason_to_entry_change(rr),
+                    "where": "Same as entry_logic; use rollup across daily_signals_* for confirmation.",
+                    "verify": "After change, rollup count for that reason drops over next 3 screens.",
+                    "caution": "",
+                }
+            )
+
+    if params_snap.get("loaded"):
+        items.append(
+            {
+                "priority": 4,
+                "severity": "low",
+                "category": "parameters",
+                "title": "Record active auto-tuned parameters",
+                "what_to_change": (
+                    f"Current rsi_threshold={params_snap.get('rsi_threshold')}, "
+                    f"stop_loss_pct={params_snap.get('stop_loss_pct')}, "
+                    f"take_profit_pct={params_snap.get('take_profit_pct')} "
+                    f"(last_updated={params_snap.get('last_updated')}). Compare to skip reasons above."
+                ),
+                "where": str(params_snap.get("path") or "data/current_params.json"),
+                "verify": "agents/performance_analyzer tuning logs / parameter_history if enabled.",
+                "caution": "Do not loosen stops under active loss streak without risk review.",
+            }
+        )
+
+    if str(execution_mode or "").lower().replace("-", "_") in ("human_in_loop", "humaninloop"):
+        items.append(
+            {
+                "priority": 2,
+                "severity": "medium",
+                "category": "execution",
+                "title": "Human-in-the-loop: drain pending queue",
+                "what_to_change": "Approved trades are not sent until operator runs execute_pending or UI flow.",
+                "where": "python3 orchestrator.py execute_pending · data/pending_execution_queue.json",
+                "verify": "pending_trade_count → 0 and broker shows new orders (paper).",
+                "caution": "",
+            }
+        )
+
+    if eff_pol.get("profile_drift_hint"):
+        items.append(
+            {
+                "priority": 5,
+                "severity": "low",
+                "category": "policy",
+                "title": "Align env profile with screening meta",
+                "what_to_change": eff_pol["profile_drift_hint"],
+                "where": "systemd Environment= · .env · export TRADING_POLICY_PROFILE=...",
+                "verify": "last_screening_meta.json policy_profile matches runtime intent.",
+                "caution": "",
+            }
+        )
+
+    items.append(
+        {
+            "priority": 6,
+            "severity": "low",
+            "category": "research",
+            "title": "Refresh illustrative research artifacts",
+            "what_to_change": "Regenerate walk-forward + daily backtest snapshot so audit research block matches current code.",
+            "where": "python3 agents/walk_forward_validator.py · GET /api/backtest?refresh=1 (dashboard) or run_daily_momentum_backtest",
+            "verify": "data/walk_forward_report.json and data/backtest_snapshot.json mtimes fresh.",
+            "caution": "Backtest is exploratory, not live performance.",
+        }
+    )
+
+    items.sort(key=lambda x: int(x.get("priority") or 99))
+    return items[:12]
+
+
 def _flow_research_recommendations(
     *,
     rollup: dict[str, Any],
@@ -1004,26 +1309,40 @@ def _flow_research_recommendations(
         )
 
     sn = (freshness_logs or {}).get("sniper.log") or {}
-    if sn.get("exists") and (sn.get("age_hours") or 0) > 48:
-        recs.append(
-            {
-                "severity": "medium",
-                "title": "Sniper log looks stale",
-                "body": f"sniper.log mtime ~{sn.get('age_hours')}h — intraday agent may not be running on schedule.",
-                "action": "operator: check crontab/systemd for intraday_sniper and host clock.",
-            }
-        )
-
     orch = (freshness_logs or {}).get("orchestrator.log") or {}
-    if orch.get("exists") and (orch.get("age_hours") or 0) > 72:
+    sn_stale = bool(sn.get("exists") and (sn.get("age_hours") or 0) > 48)
+    orch_stale = bool(orch.get("exists") and (orch.get("age_hours") or 0) > 72)
+    if sn_stale and orch_stale:
         recs.append(
             {
-                "severity": "low",
-                "title": "Orchestrator log quiet",
-                "body": f"orchestrator.log age ~{orch.get('age_hours')}h — daily screen / fortress cadence may be idle.",
-                "action": "operator: verify orchestrator cron and logs for errors.",
+                "severity": "high",
+                "title": "Multiple core logs stale (automation incident)",
+                "body": (
+                    f"sniper.log ~{sn.get('age_hours')}h and orchestrator.log ~{orch.get('age_hours')}h — "
+                    "treat as one ops problem (cron, cwd, or log path)."
+                ),
+                "action": "operator: fix systemd/cron WorkingDirectory to repo root; confirm jobs write to this logs/ tree.",
             }
         )
+    else:
+        if sn_stale:
+            recs.append(
+                {
+                    "severity": "medium",
+                    "title": "Sniper log looks stale",
+                    "body": f"sniper.log mtime ~{sn.get('age_hours')}h — intraday agent may not be running on schedule.",
+                    "action": "operator: check crontab/systemd for intraday_sniper and host clock.",
+                }
+            )
+        if orch_stale:
+            recs.append(
+                {
+                    "severity": "low",
+                    "title": "Orchestrator log quiet",
+                    "body": f"orchestrator.log age ~{orch.get('age_hours')}h — daily screen / fortress cadence may be idle.",
+                    "action": "operator: verify orchestrator cron and logs for errors.",
+                }
+            )
 
     if meta_mtime_age is not None and meta_mtime_age > 36:
         recs.append(
@@ -1571,6 +1890,7 @@ def audit_bot_performance(
         latest_signals if isinstance(latest_signals, dict) else None,
         last_meta if isinstance(last_meta, dict) else {},
     )
+    params_snap = _read_current_params_snapshot(data_dir)
 
     # Objective evaluation (session = since 3 AM ET).
     loss_status, loss_findings = _audit_objective_loss_health(
@@ -1650,6 +1970,13 @@ def audit_bot_performance(
         "vix": contrast.get("vix"),
     }
 
+    vix_for_syn: float | None = None
+    try:
+        if market_ctx.get("vix_last") is not None:
+            vix_for_syn = float(market_ctx["vix_last"])
+    except (TypeError, ValueError):
+        vix_for_syn = None
+
     missed = _missed_opportunity_analysis(
         screen=screen_snap,
         pending=pending_snap,
@@ -1667,8 +1994,52 @@ def audit_bot_performance(
         consecutive_losses=consecutive_losses,
     )
 
+    diagnosis = _synthesize_audit_diagnosis(
+        overall_status=overall_status,
+        profit_status=profit_status,
+        loss_status=loss_status,
+        total_session_fills=total_today,
+        lookback_fills=total_lb,
+        screen_snap=screen_snap,
+        freshness_logs=freshness_logs,
+        meta_age=meta_mtime_age,
+        signals_age=signals_ts_age,
+        missed_findings=missed.get("findings") or [],
+        hedge_regime=hedge_payload.get("regime"),
+        tape_trend=mvb.get("tape_trend"),
+        vix_last=vix_for_syn,
+    )
+    actionable = _actionable_bot_changes(
+        diagnosis=diagnosis,
+        screen_snap=screen_snap,
+        params_snap=params_snap,
+        gate_rollup=gate_rollup,
+        execution_mode=screen_snap.get("execution_mode"),
+        eff_pol=eff_pol,
+    )
+
     # Recommendations: deterministic heuristics.
     recommendations: list[dict[str, Any]] = []
+    hl = (diagnosis.get("headline") or "Review primary_drivers")[:120]
+    diag_sev = "high" if diagnosis.get("readiness") == "critical" else "medium"
+    recommendations.append(
+        {
+            "severity": diag_sev,
+            "title": f"Unified diagnosis — {hl}",
+            "body": (diagnosis.get("narrative") or "")[:1100],
+            "action": "operator: use audit_synthesis.primary_drivers (ranked) and actionable_changes[] for concrete file/env edits; validate on paper before live.",
+        }
+    )
+    for ac in actionable[:6]:
+        recommendations.append(
+            {
+                "severity": str(ac.get("severity") or "low"),
+                "title": f"Bot change · {ac.get('category', 'system')}: {(ac.get('title') or '')[:76]}",
+                "body": ((ac.get("what_to_change") or "") + (f" Caution: {ac['caution']}" if ac.get("caution") else ""))[:900],
+                "action": f"{ac.get('where', '')} | Verify: {ac.get('verify', '')}"[:650],
+            }
+        )
+
     hedge_body = (contrast.get("summary") or "").strip()
     for f in contrast.get("findings") or []:
         if f.get("type") in ("tension", "stale", "align", "opportunity"):
@@ -1831,6 +2202,9 @@ def audit_bot_performance(
         "exit_monitoring": exit_monitor,
         "research_backtest": research_bt,
         "efficiency_and_policy": eff_pol,
+        "current_params_snapshot": params_snap,
+        "audit_synthesis": diagnosis,
+        "actionable_changes": actionable,
         "process": {
             "today_screening_runs_count": len(process.get("session_screening_runs") or []),
             "session_screening_runs": process.get("session_screening_runs") or [],

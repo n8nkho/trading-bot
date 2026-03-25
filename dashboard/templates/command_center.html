@@ -1267,11 +1267,24 @@
       const worst = (data.agent_performance && data.agent_performance.worst_strategies) ? data.agent_performance.worst_strategies : [];
       const recs = Array.isArray(data.recommendations) ? data.recommendations : [];
 
+      const syn = data.audit_synthesis || {};
+      const drivers = Array.isArray(syn.primary_drivers) ? syn.primary_drivers : [];
+      const actCh = Array.isArray(data.actionable_changes) ? data.actionable_changes : [];
+      const synBlock = (syn.headline || syn.narrative || drivers.length)
+        ? `<div style="margin-top:0.45rem;padding:0.45rem 0.5rem;background:rgba(0,200,255,0.06);border:1px solid var(--border);border-radius:4px;font-size:11px;line-height:1.4;">
+            <div><strong>Synthesis</strong> · readiness <code>${esc(syn.readiness || '—')}</code></div>
+            ${syn.headline ? `<div style="margin-top:0.25rem;color:var(--cyan);">${esc(String(syn.headline).slice(0, 280))}${String(syn.headline).length > 280 ? '…' : ''}</div>` : ''}
+            ${drivers.length ? `<div class="text-muted" style="margin-top:0.2rem;font-size:10px;">Drivers: ${drivers.slice(0, 5).map(d => esc(String(d))).join(' · ')}</div>` : ''}
+            ${actCh.length ? `<div class="text-muted" style="margin-top:0.25rem;font-size:10px;"><strong>Top changes:</strong> ${actCh.slice(0, 3).map(a => esc((a.title || '').slice(0, 72))).join(' · ')}</div>` : ''}
+          </div>`
+        : '';
+
       const recLines = recs.length
-        ? recs.slice(0, 16).map(r => {
+        ? recs.slice(0, 18).map(r => {
             const sev = esc(r.severity || 'low');
             const title = esc(r.title || '');
-            const body = esc(r.body || '').slice(0, 190);
+            const longBody = /Unified diagnosis|Bot change/i.test(String(r.title || ''));
+            const body = esc(r.body || '').slice(0, longBody ? 520 : 190);
             const action = esc(r.action || '');
             return `<div class="text-muted" style="margin-top:0.4rem;"><strong style="color:${color}">${sev.toUpperCase()}</strong>: ${title}<br>${body}${action ? `<br><span style="color:var(--cyan)">Action:</span> ${action}` : ''}</div>`;
           }).join('')
@@ -1342,6 +1355,7 @@
           <div class="text-muted" style="font-size:11px;">Ref. day (ET): <code>${esc(data.objective_day_et || '—')}</code></div>
         </div>
         <div class="text-muted" style="font-size:10px;margin-top:0.25rem;">Audit window: <code>${esc(aw.start_et || '—')}</code> → <code>${esc(aw.end_et || '—')}</code> (${winLbl})</div>
+        ${synBlock}
         ${hedgeLine}
         ${contrastLine}
         ${marketLine}
