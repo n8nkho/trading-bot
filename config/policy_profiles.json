@@ -1,5 +1,15 @@
 {
   "active_profile": "balanced",
+  "book_reference": {
+    "portfolio_value_usd": 20000,
+    "notes": "Authoritative limits are the risk.*_pct fields below. Dollar amounts are illustrative at this reference book (matches defaults.portfolio_value_usd in fortress_runtime.yaml).",
+    "illustrative_balanced_usd": {
+      "max_single_position": 600,
+      "max_combined_notional_exposure": 1400,
+      "daily_loss_stop": 400,
+      "weekly_loss_stop": 1000
+    }
+  },
   "guardrails": {
     "shadow_mode_enabled": false,
     "shadow_candidate_profile": "opportunistic",

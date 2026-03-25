@@ -42,5 +42,6 @@ Prefer **staged autonomy** over a single “do everything” agent:
 ## Related files
 
 - `utils/runtime_config.py` — built-in default portfolio, YAML merge, env overrides.
-- `config/policy_profiles.json` — risk / screening knobs per profile.
+- `config/policy_profiles.json` — risk / screening knobs per profile; top-level `book_reference` documents implied **$20k** dollar bands for the active **balanced** percentages (percents remain authoritative).
+- `agents/entry_agent.py` — caps proposed stock notional by active profile `max_position_size_pct` so sizing stays consistent with `risk_guardian`.
 - `utils/pre_trade_gate.py` — last-line submission caps and halt.

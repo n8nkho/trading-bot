@@ -8,6 +8,7 @@ import pytz
 import numpy as np
 
 from utils.runtime_config import get_default_portfolio_usd
+from utils.policy_profile import get_profile_bundle
 
 logging.basicConfig(
     filename='logs/entry.log',
@@ -23,6 +24,15 @@ RSI_THRESHOLD = 35  # Extra oversold threshold
 STABILIZATION_FACTOR = 1.02  # Price must be 2% above low
 ENTRY_WINDOW_START = (14, 30)  # 2:30 PM ET
 ENTRY_WINDOW_END = (15, 45)  # 3:45 PM ET
+
+
+def _max_new_position_usd_from_policy(portfolio_value: float) -> float:
+    """Cap entry notional so risk_guardian (max_position_size_pct) will not reject routine sizes."""
+    try:
+        pct = float((get_profile_bundle().get("risk") or {}).get("max_position_size_pct", 3.0))
+    except (TypeError, ValueError):
+        pct = 3.0
+    return max(0.0, float(portfolio_value) * (pct / 100.0))
 
 
 def _entry_window_end_with_extension() -> tuple[int, int]:
@@ -388,10 +398,11 @@ def evaluate_single_entry(candidate, portfolio_value, *, rsi_threshold: float | 
     current_time_et = get_current_time_et()
     logging.info(f"{ticker}: ✓ Time window check passed ({current_time_et.strftime('%H:%M')} ET)")
     
-    # Calculate position size using fractional Kelly
+    # Size within policy max_position_size_pct, absolute MAX_POSITION_SIZE, and confidence tilt
+    policy_cap = _max_new_position_usd_from_policy(portfolio_value)
     base_position = portfolio_value * BASE_POSITION_PCT
     adjusted_position = base_position * confidence
-    position_size = min(adjusted_position, MAX_POSITION_SIZE)
+    position_size = min(adjusted_position, MAX_POSITION_SIZE, policy_cap)
     shares = int(position_size / current_price)
     
     # Ensure at least 1 share
