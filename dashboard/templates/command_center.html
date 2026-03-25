@@ -542,7 +542,8 @@
 
     let priceChart = null;
     let candleSeries = null;
-    let chartResizeObserver = null;
+    let _chartLastAppliedWidth = 0;
+    let _chartWindowResizeBound = false;
 
     function chartStatusMessage(html) {
       const st = document.getElementById('chartStatus');
@@ -567,7 +568,11 @@
       if (!priceChart || !host) return;
       const w = getChartWidth();
       try {
-        priceChart.applyOptions({ width: w, height: 280 });
+        // Only skip applyOptions when width is unchanged (avoids canvas/layout feedback loops).
+        if (w > 0 && Math.abs(w - _chartLastAppliedWidth) >= 2) {
+          _chartLastAppliedWidth = w;
+          priceChart.applyOptions({ width: w, height: 280 });
+        }
         priceChart.timeScale().fitContent();
       } catch (e) { console.warn('chart resize', e); }
     }
@@ -594,12 +599,15 @@
           upColor: '#43b883', downColor: '#f94144', borderVisible: false,
           wickUpColor: '#43b883', wickDownColor: '#f94144',
         });
-        if (typeof ResizeObserver !== 'undefined') {
-          chartResizeObserver = new ResizeObserver(function () { resizePriceChart(); });
-          chartResizeObserver.observe(host);
+        if (!_chartWindowResizeBound) {
+          _chartWindowResizeBound = true;
+          window.addEventListener('resize', function () {
+            _chartLastAppliedWidth = 0;
+            resizePriceChart();
+          });
         }
-        window.addEventListener('resize', function () { resizePriceChart(); });
       } else {
+        _chartLastAppliedWidth = 0;
         resizePriceChart();
       }
       return true;
