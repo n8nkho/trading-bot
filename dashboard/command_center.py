@@ -1539,6 +1539,24 @@ def get_runbooks():
                 "impact": "After reviewing pending_execution_queue.json, run once to submit all queued batches (pre-trade gate still applies).",
                 "command": "python3 orchestrator.py execute_pending",
             },
+            {
+                "id": "ops_recovery_pipeline",
+                "title": "Ops recovery (fortress → screen → execute_pending)",
+                "impact": "Refreshes regime files, reruns daily screen, flushes HITL queue. Use after stale logs or missed cadence. Flags: --no-fortress --no-screen --no-pending",
+                "command": "python3 orchestrator.py ops_recovery",
+            },
+            {
+                "id": "regime_check_cli",
+                "title": "Print regime / hedge file snapshot",
+                "impact": "Read-only: latest fortress_report + hedging_recommendations.json presence.",
+                "command": "python3 orchestrator.py regime_check",
+            },
+            {
+                "id": "print_entry_skips_cli",
+                "title": "Print latest entry_gate skip reasons",
+                "impact": "Shows newest daily_signals entry_gate_summary for tuning ENTRY_WINDOW_* / RSI via current_params.json.",
+                "command": "python3 orchestrator.py print_entry_skips",
+            },
         ],
     }
 

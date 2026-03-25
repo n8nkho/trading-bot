@@ -41,6 +41,16 @@ sudo systemctl daemon-reload
 
 Trading jobs (screen, monitor, snipe, fortress) are normally **cron** on this project. This unit only manages the **Command Center** web UI. Keep your existing `crontab` entries.
 
+### Cron: always `cd` to repo + use venv
+
+Wrong working directory is the most common cause of **stale `logs/orchestrator.log`** while jobs “run”. Use the wrapper from the repo root:
+
+```bash
+/home/ubuntu/trading-bot/scripts/cron_run.sh screen
+```
+
+Example lines: `deploy/cron/trading-bot.crontab.example`. After downtime, run once: `python3 orchestrator.py ops_recovery` (or the same via `scripts/cron_run.sh ops_recovery`).
+
 ### Why `SupplementaryGroups=crontab` and no `NoNewPrivileges`
 
 User crontabs live under `/var/spool/cron/crontabs/` (not world-accessible). We add **`SupplementaryGroups=crontab`** so Python can read the spool file by path. **`/usr/bin/crontab -l`** is **setgid `crontab`**; **`NoNewPrivileges=true`** blocks that setgid, so **`crontab -l` stays empty** under systemd and System health shows **Cron red** even with a valid user crontab. This unit **omits** `NoNewPrivileges` so **`crontab -l` works**.

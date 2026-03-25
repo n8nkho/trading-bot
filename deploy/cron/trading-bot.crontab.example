@@ -1,0 +1,23 @@
+# Example crontab (America/New_York jobs — set TZ in crontab or use explicit offsets).
+# 1) Set REPO to your clone (must match systemd/dashboard WorkingDirectory if used).
+# 2) crontab -e and paste adapted lines, or: crontab deploy/cron/trading-bot.crontab.example
+#
+# SHELL=/bin/bash
+# PATH=/usr/local/bin:/usr/bin:/bin
+# REPO=/home/ubuntu/trading-bot
+#
+# Recovery after downtime (manual or extra cron slot):
+#   $REPO/scripts/cron_run.sh ops_recovery >> $REPO/logs/orchestrator.log 2>&1
+#
+# --- Typical trading-bot schedule (edit times as needed) ---
+# Daily screen (~3 PM ET weekday): minute hour dom mon dow
+# 0 15 * * 1-5 $REPO/scripts/cron_run.sh screen >> $REPO/logs/orchestrator.log 2>&1
+#
+# Position monitor every 5 min, market hours (ET): align host TZ=America/New_York or use UTC offsets.
+# */5 9-16 * * 1-5 $REPO/scripts/cron_run.sh monitor >> $REPO/logs/orchestrator.log 2>&1
+#
+# Intraday sniper (log to logs/sniper.log)
+# 1-59/5 9-16 * * 1-5 $REPO/scripts/cron_run.sh snipe >> $REPO/logs/sniper.log 2>&1
+#
+# Fortress / hedge refresh (daily)
+# 0 0 * * * $REPO/scripts/cron_run.sh fortress >> $REPO/logs/orchestrator.log 2>&1

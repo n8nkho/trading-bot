@@ -19,9 +19,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configuration
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
+# Configuration (repo-root data/ so cwd-independent reads match orchestrator)
+_DATA_REPO_ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = _DATA_REPO_ROOT / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DECISIONS_LOG = DATA_DIR / "decisions_log.jsonl"
 PARAMETER_HISTORY = DATA_DIR / "parameter_history.json"

@@ -3,16 +3,22 @@ Trading System Orchestrator
 Coordinates the complete workflow: screening, entry evaluation, risk management, and position monitoring
 """
 
+import os
+from pathlib import Path
+
+# Agents configure logging with relative `logs/...` paths; align cwd before those imports.
+_ORCHESTRATOR_ROOT = Path(__file__).resolve().parent
+os.chdir(_ORCHESTRATOR_ROOT)
+(_ORCHESTRATOR_ROOT / "logs").mkdir(parents=True, exist_ok=True)
+
 import asyncio
 import json
 import logging
-import os
 import glob
 import time
 import time as pytime
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from dateutil import parser
-from pathlib import Path
 from collections import Counter
 import pytz
 from dotenv import load_dotenv
@@ -247,12 +253,12 @@ def _compute_hedge_gate_metrics_from_report(report: dict) -> dict:
         "strategy_gate_details": strategy_gate_details,
     }
 
-# Load environment variables
-load_dotenv()
+# Repo-root paths: logs/data/.env (cwd already set to repo root above).
+load_dotenv(_ORCHESTRATOR_ROOT / ".env")
 
 # Setup logging
-log_dir = Path("logs")
-log_dir.mkdir(exist_ok=True)
+log_dir = _ORCHESTRATOR_ROOT / "logs"
+log_dir.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -266,8 +272,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
+DATA_DIR = _ORCHESTRATOR_ROOT / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 POSITIONS_FILE = DATA_DIR / "positions.json"
 PNL_LEDGER_FILE = DATA_DIR / "pnl_ledger.jsonl"
@@ -2075,6 +2081,122 @@ def flush_pending_execution_queue() -> dict:
     return {"ok": True, "batches": len(batches), "executed": succeeded, "failed": failed}
 
 
+def _orchestrator_repo_root() -> Path:
+    return _ORCHESTRATOR_ROOT
+
+
+def ensure_repo_root_cwd() -> Path:
+    """
+    Align process cwd with repo (paths for data/logs are absolute; cwd still matters for subprocesses).
+    """
+    root = _ORCHESTRATOR_ROOT
+    os.chdir(root)
+    (root / "logs").mkdir(parents=True, exist_ok=True)
+    (root / "data").mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def print_regime_health_banner() -> None:
+    """Stdout snapshot: latest fortress report + hedging_recommendations.json (read-only)."""
+    root = _orchestrator_repo_root()
+    data = root / "data"
+    print("\n" + "=" * 72)
+    print("REGIME / HEDGE SNAPSHOT (read-only)")
+    print("=" * 72)
+    report, meta = _load_latest_fortress_report(max_age_hours=None)
+    if report:
+        mc = report.get("market_conditions") or {}
+        print(
+            f"  fortress_report: regime={mc.get('regime')}  vix={mc.get('vix')}  "
+            f"age_h={meta.get('age_hours')}  path={meta.get('path')}"
+        )
+    else:
+        print("  fortress_report: (none — run: python3 orchestrator.py fortress)")
+    hp = data / "hedging_recommendations.json"
+    if hp.exists():
+        try:
+            h = json.loads(hp.read_text(encoding="utf-8"))
+            note = h.get("note") or h.get("summary") or "loaded"
+            if not isinstance(note, str):
+                note = json.dumps(note)[:120]
+            print(f"  hedging_recommendations.json: ok — {str(note)[:120]}")
+        except Exception as e:
+            print(f"  hedging_recommendations.json: read error ({type(e).__name__})")
+    else:
+        print("  hedging_recommendations.json: (missing — refresh fortress / hedge cycle)")
+    print("=" * 72 + "\n")
+
+
+def print_latest_entry_skips() -> None:
+    """Print entry_gate_summary from newest data/daily_signals_*.json."""
+    root = _orchestrator_repo_root()
+    pattern = str(root / "data" / "daily_signals_*.json")
+    files = sorted(glob.glob(pattern), reverse=True)
+    if not files:
+        print("No data/daily_signals_*.json files found.")
+        return
+    path = Path(files[0])
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"Failed to read {path}: {e}")
+        return
+    eg = doc.get("entry_gate_summary") or {}
+    print(f"\nLatest: {path.name}")
+    print(json.dumps(eg, indent=2))
+    tops = eg.get("top_skip_reasons") or []
+    if tops:
+        print("\nTop skip reasons (fix one lever at a time; see .env.example ENTRY_* / agents/entry_agent.py):")
+        for row in tops[:6]:
+            if isinstance(row, dict):
+                print(f"  - {row.get('count')}×  {row.get('reason')}")
+
+
+def run_ops_recovery(raw_argv: list[str]) -> int:
+    """
+    Operator one-shot: cd repo root → optional fortress → screen → execute_pending.
+    Flags: --no-fortress  --no-screen  --no-pending
+    Optional trailing arg: portfolio_value for screen.
+    """
+    ensure_repo_root_cwd()
+    try:
+        (_orchestrator_repo_root() / "logs" / ".ops_recovery_last_run").write_text(
+            datetime.now(timezone.utc).isoformat() + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+    args = [a for a in raw_argv if a]
+    no_fortress = "--no-fortress" in args
+    no_screen = "--no-screen" in args
+    no_pending = "--no-pending" in args
+    rest = [a for a in args if not str(a).startswith("--")]
+    portfolio_value = float(rest[0]) if rest else get_default_portfolio_usd()
+
+    print_regime_health_banner()
+
+    if not no_fortress:
+        if not is_agent_enabled("fortress"):
+            print("[ops_recovery] fortress disabled in fortress_runtime.yaml — skip.")
+        else:
+            print("[ops_recovery] Running fortress…")
+            run_fortress()
+    if not no_screen:
+        if not is_agent_enabled("daily_screen"):
+            print("[ops_recovery] daily_screen disabled — skip.")
+        else:
+            print(f"[ops_recovery] Running screen (portfolio ${portfolio_value:,.2f})…")
+            run_daily_screening(portfolio_value)
+    if not no_pending:
+        print("[ops_recovery] Flushing pending queue (no-op if empty)…")
+        out = flush_pending_execution_queue()
+        print(json.dumps(out, indent=2))
+
+    print("\n[ops_recovery] Done. Tail logs/orchestrator.log and logs/sniper.log for freshness.\n")
+    return 0
+
+
 if __name__ == "__main__":
     import sys
     
@@ -2095,9 +2217,28 @@ if __name__ == "__main__":
         print("  python orchestrator.py spy_swing [--execute] [portfolio_value] - SPY swing agent (default shadow; $5k equity)")
         print("  python orchestrator.py execute_pending            - Submit queued HITL trades (see FORTRESS_EXECUTION_MODE)")
         print("  python orchestrator.py headline_event [--fixture] - Headline event agent (shadow; --fixture = sample fixture)")
+        print("  python orchestrator.py ops_recovery [--no-fortress] [--no-screen] [--no-pending] [portfolio_value]")
+        print("  python orchestrator.py regime_check               - Print fortress + hedging file snapshot")
+        print("  python orchestrator.py print_entry_skips          - Print latest daily_signals entry_gate_summary")
         sys.exit(1)
     
     command = sys.argv[1].lower()
+    
+    if command in ("ops_recovery", "ops-recovery"):
+        sys.exit(run_ops_recovery(sys.argv[2:]))
+    
+    if command in ("regime_check", "regime-check"):
+        ensure_repo_root_cwd()
+        print_regime_health_banner()
+        sys.exit(0)
+    
+    if command in ("print_entry_skips", "print-entry-skips"):
+        ensure_repo_root_cwd()
+        print_latest_entry_skips()
+        sys.exit(0)
+
+    # Cron/systemd often starts with wrong cwd; keep data/ + logs/ under repo root.
+    ensure_repo_root_cwd()
     
     if command == "screen":
         if not is_agent_enabled("daily_screen"):

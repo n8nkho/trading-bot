@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import logging
+import os
 import yfinance as yf
 from datetime import datetime
 import pytz
@@ -18,6 +21,22 @@ RSI_THRESHOLD = 35  # Extra oversold threshold
 STABILIZATION_FACTOR = 1.02  # Price must be 2% above low
 ENTRY_WINDOW_START = (14, 30)  # 2:30 PM ET
 ENTRY_WINDOW_END = (15, 45)  # 3:45 PM ET
+
+
+def _entry_window_end_with_extension() -> tuple[int, int]:
+    """Extend end of entry window by ENTRY_WINDOW_EXTEND_END_MINUTES (env, default 0)."""
+    end_h, end_m = ENTRY_WINDOW_END
+    try:
+        extra = int(os.getenv("ENTRY_WINDOW_EXTEND_END_MINUTES", "0") or "0")
+    except ValueError:
+        extra = 0
+    if extra <= 0:
+        return end_h, end_m
+    total = end_h * 60 + end_m + extra
+    nh, nm = divmod(total, 60)
+    if nh >= 24:
+        return 23, 59
+    return nh, nm
 
 def get_options_chain(ticker, dte_target=35):
     """
@@ -222,6 +241,14 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
     """
     logging.info(f"Starting entry evaluation for {len(candidates)} candidates")
     logging.info(f"Portfolio value: ${portfolio_value:,.2f}")
+
+    try:
+        from agents.performance_analyzer import load_current_params
+
+        _params = load_current_params()
+        rsi_effective = float(_params.get("rsi_threshold", RSI_THRESHOLD))
+    except Exception:
+        rsi_effective = float(RSI_THRESHOLD)
     
     decisions = []
     
@@ -256,12 +283,12 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                     }
                     logging.info(f"{ticker}: OPTION decision - {decision}")
                 else:
-                    decision = evaluate_single_entry(candidate, portfolio_value)
+                    decision = evaluate_single_entry(candidate, portfolio_value, rsi_threshold=rsi_effective)
                     decision['trade_type'] = 'STOCK'
                     decision['reason'] = 'Stock trade offers better ROI'
                     logging.info(f"{ticker}: STOCK decision - {decision}")
             else:
-                decision = evaluate_single_entry(candidate, portfolio_value)
+                decision = evaluate_single_entry(candidate, portfolio_value, rsi_threshold=rsi_effective)
                 decision['trade_type'] = 'STOCK'
                 decision['reason'] = 'No suitable option found'
                 logging.info(f"{ticker}: STOCK decision - {decision}")
@@ -295,19 +322,21 @@ def create_skip_decision(ticker, reason):
         'timestamp': datetime.now().isoformat()
     }
 
-def evaluate_single_entry(candidate, portfolio_value):
+def evaluate_single_entry(candidate, portfolio_value, *, rsi_threshold: float | None = None):
     """
     Evaluate a single candidate for entry.
     
     Args:
         candidate: Candidate dict from screener with ticker, rsi, analysis, etc.
         portfolio_value: Current portfolio value
+        rsi_threshold: Oversold ceiling (default: module RSI_THRESHOLD or align with data/current_params.json via evaluate_entry)
         
     Returns:
         Decision dict with action, reason, position_size, shares
     """
     ticker = candidate['ticker']
     screener_rsi = candidate.get('rsi', 100)
+    rsi_cap = float(rsi_threshold) if rsi_threshold is not None else float(RSI_THRESHOLD)
     confidence = candidate.get('analysis', {}).get('confidence', 0.5)
     
     # Fetch current intraday data
@@ -327,12 +356,12 @@ def evaluate_single_entry(candidate, portfolio_value):
     logging.info(f"{ticker}: Current price: ${current_price:.2f}, Day low: ${day_low:.2f}, Day high: ${day_high:.2f}")
     
     # Check 1: RSI must be extra oversold
-    if screener_rsi >= RSI_THRESHOLD:
-        reason = f"RSI not oversold enough ({screener_rsi:.1f} >= {RSI_THRESHOLD})"
+    if screener_rsi >= rsi_cap:
+        reason = f"RSI not oversold enough ({screener_rsi:.1f} >= {rsi_cap})"
         logging.info(f"{ticker}: {reason}")
         return create_skip_decision(ticker, reason)
     
-    logging.info(f"{ticker}: ✓ RSI check passed ({screener_rsi:.1f} < {RSI_THRESHOLD})")
+    logging.info(f"{ticker}: ✓ RSI check passed ({screener_rsi:.1f} < {rsi_cap})")
     
     # Check 2: Price stabilization (current price > low * 1.02)
     stabilization_price = day_low * STABILIZATION_FACTOR
@@ -343,10 +372,11 @@ def evaluate_single_entry(candidate, portfolio_value):
     
     logging.info(f"{ticker}: ✓ Price stabilization check passed (${current_price:.2f} > ${stabilization_price:.2f})")
     
-    # Check 3: Time of day (2:30-3:45 PM ET)
+    # Check 3: Time of day (2:30-3:45 PM ET, optional extension via ENTRY_WINDOW_EXTEND_END_MINUTES)
     if not is_entry_window():
         current_time_et = get_current_time_et()
-        reason = f"Outside entry window (current: {current_time_et.strftime('%H:%M')} ET, window: 14:30-15:45 ET)"
+        eh, em = _entry_window_end_with_extension()
+        reason = f"Outside entry window (current: {current_time_et.strftime('%H:%M')} ET, window: 14:30-{eh:02d}:{em:02d} ET)"
         logging.info(f"{ticker}: {reason}")
         return create_skip_decision(ticker, reason)
     
@@ -373,7 +403,7 @@ def evaluate_single_entry(candidate, portfolio_value):
     return {
         'ticker': ticker,
         'action': 'BUY',
-        'reason': f'All entry criteria met: RSI={screener_rsi:.1f}, Price stabilized at ${current_price:.2f}, Time={current_time_et.strftime("%H:%M")} ET',
+        'reason': f'All entry criteria met: RSI={screener_rsi:.1f} (<{rsi_cap}), Price stabilized at ${current_price:.2f}, Time={current_time_et.strftime("%H:%M")} ET',
         'position_size': actual_position_size,
         'shares': shares,
         'entry_price': current_price,
@@ -388,11 +418,11 @@ def evaluate_single_entry(candidate, portfolio_value):
     }
 
 def is_entry_window():
-    """Check if current time is within entry window (2:30-3:45 PM ET)"""
+    """Check if current time is within entry window (2:30 PM ET through end, optionally extended)."""
     try:
         current_time = get_current_time_et()
         start_hour, start_min = ENTRY_WINDOW_START
-        end_hour, end_min = ENTRY_WINDOW_END
+        end_hour, end_min = _entry_window_end_with_extension()
         
         current_minutes = current_time.hour * 60 + current_time.minute
         start_minutes = start_hour * 60 + start_min
