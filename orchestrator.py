@@ -2280,6 +2280,20 @@ if __name__ == "__main__":
         print(f"Candidates found: {result['candidates_found']}")
         print(f"Approved trades: {len(result['approved_trades'])}")
         print(f"Rejected trades: {len(result['rejected_trades'])}")
+
+        n_app = len(result.get("approved_trades") or [])
+        n_rej = len(result.get("rejected_trades") or [])
+        cf = int(result.get("candidates_found") or 0)
+        if cf > 0 and n_app == 0 and n_rej == 0:
+            eg0 = result.get("entry_gate_summary") or {}
+            print(
+                f"\nEntry gate: BUY {eg0.get('buy_count', 0)} / SKIP {eg0.get('skip_count', 0)} "
+                "(no BUYs reached risk approval — normal when all names fail entry timing/RSI/etc.)."
+            )
+            for row in (eg0.get("top_skip_reasons") or [])[:5]:
+                if isinstance(row, dict):
+                    print(f"  Skip: {row.get('count')}×  {row.get('reason')}")
+            print("  Detail: python3 orchestrator.py print_entry_skips")
         
         eg = result.get("execution_gate_summary") or {}
         if eg.get("pending_human_review"):
