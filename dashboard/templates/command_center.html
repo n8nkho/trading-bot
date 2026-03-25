@@ -471,13 +471,14 @@
         <div id="trustReport" class="loading" style="font-size:12px;line-height:1.45;">Loading…</div>
       </div>
 
-      <div class="panel col-12">
+      <div class="panel col-12" id="panelPriceChart">
         <div class="panel-title">PRICE CHART (DAILY)</div>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-bottom:0.5rem;">
           <label class="text-muted" style="font-size:11px;">Ticker</label>
           <input id="chartTicker" type="text" value="SPY" maxlength="8" autocomplete="off" style="width:80px;padding:0.3rem 0.45rem;background:var(--bg-card);border:1px solid var(--border);color:var(--text);font-family:inherit;border-radius:4px;">
           <button type="button" id="btnChartLoad" style="font-family:inherit;background:var(--bg-card);border:1px solid var(--border);color:var(--cyan);padding:0.35rem 0.75rem;cursor:pointer;border-radius:4px;">Load chart</button>
         </div>
+        <div id="chartStatus" class="text-muted" style="font-size:11px;margin-bottom:0.35rem;min-height:0;"></div>
         <div id="chartHost" style="width:100%;min-height:280px;"></div>
       </div>
 
@@ -517,18 +518,72 @@
     </div>
   </div>
 
-  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" crossorigin="anonymous"></script>
+  <script>
+    (function loadLWChartsFallback() {
+      if (typeof LightweightCharts !== 'undefined') return;
+      var s = document.createElement('script');
+      s.src = 'https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js';
+      s.crossOrigin = 'anonymous';
+      s.onload = function () {
+        setTimeout(function () {
+          if (typeof loadPriceChart === 'function') loadPriceChart();
+        }, 0);
+      };
+      s.onerror = function () {
+        var st = document.getElementById('chartStatus');
+        if (st) st.textContent = 'Chart library could not load from backup CDN (unpkg).';
+      };
+      document.head.appendChild(s);
+    })();
+  </script>
   <script>
     const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine' };
 
     let priceChart = null;
     let candleSeries = null;
+    let chartResizeObserver = null;
+
+    function chartStatusMessage(html) {
+      const st = document.getElementById('chartStatus');
+      if (st) st.innerHTML = html;
+    }
+
+    function chartStatusClear() {
+      const st = document.getElementById('chartStatus');
+      if (st) st.innerHTML = '';
+    }
+
+    function getChartWidth() {
+      const host = document.getElementById('chartHost');
+      if (!host) return 320;
+      const w = host.clientWidth || host.getBoundingClientRect().width || 0;
+      const fallback = Math.min(Math.max((document.documentElement && document.documentElement.clientWidth) || 800, 280) - 32, 1200);
+      return Math.max(w, fallback);
+    }
+
+    function resizePriceChart() {
+      const host = document.getElementById('chartHost');
+      if (!priceChart || !host) return;
+      const w = getChartWidth();
+      try {
+        priceChart.applyOptions({ width: w, height: 280 });
+        priceChart.timeScale().fitContent();
+      } catch (e) { console.warn('chart resize', e); }
+    }
+
     function ensurePriceChart() {
       const host = document.getElementById('chartHost');
-      if (!host || typeof LightweightCharts === 'undefined') return false;
+      if (!host) return false;
+      if (typeof LightweightCharts === 'undefined') {
+        chartStatusMessage('Chart library failed to load (CDN blocked?). Try another network or VPN.');
+        return false;
+      }
+      chartStatusClear();
+      const w = getChartWidth();
       if (!priceChart) {
         priceChart = LightweightCharts.createChart(host, {
-          width: host.clientWidth,
+          width: w,
           height: 280,
           layout: { background: { type: 'solid', color: '#0d1117' }, textColor: '#8b949e' },
           grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
@@ -539,19 +594,47 @@
           upColor: '#43b883', downColor: '#f94144', borderVisible: false,
           wickUpColor: '#43b883', wickDownColor: '#f94144',
         });
+        if (typeof ResizeObserver !== 'undefined') {
+          chartResizeObserver = new ResizeObserver(function () { resizePriceChart(); });
+          chartResizeObserver.observe(host);
+        }
+        window.addEventListener('resize', function () { resizePriceChart(); });
+      } else {
+        resizePriceChart();
       }
       return true;
     }
+
     async function loadPriceChart() {
       const inp = document.getElementById('chartTicker');
       const ticker = (inp && inp.value ? inp.value : 'SPY').trim().toUpperCase() || 'SPY';
+      const host = document.getElementById('chartHost');
       try {
         const r = await fetch('/api/chart_bars?ticker=' + encodeURIComponent(ticker) + '&days=180');
-        const d = await r.json();
-        if (!ensurePriceChart() || !candleSeries || !d.bars) return;
-        candleSeries.setData(d.bars.map(b => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
+        const d = await r.json().catch(function () { return {}; });
+        if (!r.ok) {
+          chartStatusMessage('Could not load prices (HTTP ' + r.status + '). ' + (d.error ? String(d.error).replace(/</g, '&lt;') : 'Check server logs and yfinance.'));
+          return;
+        }
+        if (d.error && (!d.bars || !d.bars.length)) {
+          chartStatusMessage('Price data error: ' + String(d.error).replace(/</g, '&lt;'));
+          return;
+        }
+        if (!d.bars || !d.bars.length) {
+          chartStatusMessage('No OHLC bars for <strong>' + ticker.replace(/</g, '') + '</strong> (empty history). yfinance/Yahoo may be rate-limiting or blocked from the server.');
+          return;
+        }
+        chartStatusClear();
+        if (!ensurePriceChart() || !candleSeries) return;
+        candleSeries.setData(d.bars.map(function (b) {
+          return { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close };
+        }));
+        resizePriceChart();
         priceChart.timeScale().fitContent();
-      } catch (e) { console.warn('chart', e); }
+      } catch (e) {
+        console.warn('chart', e);
+        chartStatusMessage('Chart request failed: ' + String(e && e.message ? e.message : e).replace(/</g, '&lt;'));
+      }
     }
 
     async function postOperatorHalt(active) {
@@ -1361,7 +1444,7 @@
         renderPositions(positions);
         renderOrders(orders);
         setUpdated();
-        loadPriceChart();
+        setTimeout(loadPriceChart, 120);
       } catch (e) {
         console.error(e);
         document.querySelectorAll('.loading').forEach(el => { if (el.classList.contains('loading')) el.innerHTML = '<span class="empty">Error loading</span>'; });
@@ -1408,13 +1491,17 @@
           if (e.target && e.target.closest && (e.target.closest('button') || e.target.closest('a'))) return;
           panel.classList.toggle('collapsed');
           syncBulkDetailButton();
+          if (panel.querySelector && panel.querySelector('#chartHost')) {
+            setTimeout(function () { resizePriceChart(); loadPriceChart(); }, 100);
+          }
         });
       });
       const isMobile = window.innerWidth < 640;
       if (isMobile) {
+        const chartPanel = document.getElementById('chartHost') && document.getElementById('chartHost').closest('.panel');
         panels.forEach((panel, idx) => {
-          // Keep first 3 panels open on small screens
-          if (idx >= 3) panel.classList.add('collapsed');
+          // Keep first 3 panels open; never auto-collapse the price chart (hidden host => 0-width chart bug)
+          if (idx >= 3 && panel !== chartPanel) panel.classList.add('collapsed');
         });
       }
     })();
@@ -1447,6 +1534,7 @@
           else p.classList.add('collapsed');
         });
         syncBulkDetailButton();
+        setTimeout(function () { resizePriceChart(); loadPriceChart(); }, 120);
       });
       syncBulkDetailButton();
     })();
