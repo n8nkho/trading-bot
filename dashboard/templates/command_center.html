@@ -1278,15 +1278,29 @@
         : '<div class="text-muted">No recommendations.</div>';
 
       el.classList.remove('loading');
+      const aw = data.audit_window || {};
+      const hc = data.hedging_context || {};
+      const hx = data.hedging_contrast || {};
+      const winLbl = aw.label ? esc(aw.label) : 'since 3 AM ET';
+      const hedgeLine = (hc.regime != null || hc.vix != null)
+        ? `<div class="text-muted" style="font-size:11px;margin-top:0.35rem;">Fortress regime: <strong>${esc(hc.regime ?? '—')}</strong> · VIX: <strong>${esc(hc.vix ?? '—')}</strong>${hc.fortress_report_fresh === false ? ' <span style="color:var(--amber)">(stale report)</span>' : ''}</div>`
+        : '';
+      const contrastLine = (hx.summary && String(hx.summary).trim())
+        ? `<div class="text-muted" style="font-size:11px;margin-top:0.3rem;max-height:3.2em;overflow:hidden;">Hedge vs bot: ${esc(String(hx.summary).slice(0, 220))}${String(hx.summary).length > 220 ? '…' : ''}</div>`
+        : '';
+
       el.innerHTML = `
         <div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;">
           <div>Overall: <strong style="color:${color}">${esc(status).toUpperCase()}</strong></div>
-          <div class="text-muted" style="font-size:11px;">Objective day (ET): <code>${esc(data.objective_day_et || '—')}</code></div>
+          <div class="text-muted" style="font-size:11px;">Ref. day (ET): <code>${esc(data.objective_day_et || '—')}</code></div>
         </div>
+        <div class="text-muted" style="font-size:10px;margin-top:0.25rem;">Audit window: <code>${esc(aw.start_et || '—')}</code> → <code>${esc(aw.end_et || '—')}</code> (${winLbl})</div>
+        ${hedgeLine}
+        ${contrastLine}
         <div style="margin-top:0.45rem;padding-top:0.45rem;border-top:1px solid var(--border);font-size:11px;line-height:1.35;">
           <div>Profit opportunities: <strong>${esc(profit.status || '—')}</strong></div>
           <div>Near-zero losses: <strong>${esc(loss.status || '—')}</strong></div>
-          <div>Ledger fills today: <strong>${ledger.ledger_rows_today ?? '—'}</strong> · Lookback rows: <strong>${ledger.ledger_rows_considered_lb ?? '—'}</strong></div>
+          <div>Ledger fills (${winLbl}): <strong>${ledger.ledger_rows_today ?? '—'}</strong> · Lookback rows: <strong>${ledger.ledger_rows_considered_lb ?? '—'}</strong></div>
         </div>
         ${worst.length ? `<div class="text-muted" style="margin-top:0.5rem;font-size:11px;">Worst strategies: ${worst.map(w => esc(w.strategy)).join(', ')}</div>` : ''}
         <div style="margin-top:0.55rem;">${recLines}</div>

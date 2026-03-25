@@ -2397,6 +2397,7 @@ def api_bot_audit():
     - near-zero loss health (realized P&L + loss rate + risk_guardian streak)
     - profit opportunity throughput (fills + win rate heuristics)
     - per-strategy breakdown from pnl_ledger + process checks
+    - session window from 03:00 America/New_York; contrast vs fortress/hedge files
 
     No broker calls; safe to run anytime from Command Center.
     """

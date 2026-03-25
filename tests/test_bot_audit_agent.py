@@ -127,6 +127,84 @@ class TestBotAuditAgent(unittest.TestCase):
         # In this heuristic, it should generally be critical.
         self.assertEqual(report["objectives"]["near_zero_losses"]["status"], "critical")
 
+    def test_session_excludes_ledger_rows_before_3am_et(self):
+        """Session anchor 3 AM ET: same-calendar-day fills before 3 AM local are out of scope."""
+        tmp = Path("._tmp_bot_audit_session")
+        if tmp.exists():
+            for p in tmp.rglob("*"):
+                try:
+                    if p.is_file():
+                        p.unlink()
+                except Exception:
+                    pass
+        tmp.mkdir(parents=True, exist_ok=True)
+        data_dir = tmp / "data"
+        logs_dir = tmp / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        now_utc = datetime(2026, 3, 25, 18, 0, 0, tzinfo=timezone.utc)
+        ledger = [
+            {"timestamp": "2026-03-25T05:30:00+00:00", "ticker": "PRE", "pnl": -50.0, "strategy_id": "early"},
+            {"timestamp": "2026-03-25T18:00:00+00:00", "ticker": "OK", "pnl": 5.0, "strategy_id": "late"},
+        ]
+        self._write_jsonl(data_dir / "pnl_ledger.jsonl", ledger)
+
+        report = audit_bot_performance(
+            data_dir=data_dir,
+            logs_dir=logs_dir,
+            lookback_days=7,
+            audit_days=1,
+            now_utc=now_utc,
+        )
+        self.assertEqual(report["audited"]["ledger_rows_today"], 1)
+        self.assertEqual(report["audited"]["ledger_rows_session_et"], 1)
+        loss = report["objectives"]["near_zero_losses"]["findings"]
+        pnl_row = next(x for x in loss if x.get("metric") == "realized_pnl_session_et")
+        self.assertEqual(pnl_row["value"], 5.0)
+        self.assertIn("audit_window", report)
+        self.assertIn("start_et", report["audit_window"])
+
+    def test_hedging_contrast_loads_fortress_report(self):
+        tmp = Path("._tmp_bot_audit_hedge")
+        if tmp.exists():
+            for p in tmp.rglob("*"):
+                try:
+                    if p.is_file():
+                        p.unlink()
+                except Exception:
+                    pass
+        tmp.mkdir(parents=True, exist_ok=True)
+        data_dir = tmp / "data"
+        logs_dir = tmp / "logs"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        now_utc = datetime(2026, 3, 25, 18, 0, 0, tzinfo=timezone.utc)
+        (data_dir / "fortress_report_20260325.json").write_text(
+            json.dumps(
+                {
+                    "market_conditions": {"regime": "RISK_OFF", "vix": 22.5},
+                    "strategies": {"bonds": {"target": 0.25, "reason": "test"}},
+                    "note": "unit",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        report = audit_bot_performance(
+            data_dir=data_dir,
+            logs_dir=logs_dir,
+            lookback_days=7,
+            audit_days=1,
+            now_utc=now_utc,
+        )
+        self.assertIn("hedging_contrast", report)
+        self.assertIn("hedging_context", report)
+        self.assertEqual(report["hedging_context"].get("regime"), "RISK_OFF")
+        self.assertTrue(len(report["hedging_context"].get("strategy_headlines") or []) >= 1)
+        titles = [r.get("title", "") for r in (report.get("recommendations") or [])]
+        self.assertTrue(any("Hedge" in t or "hedge" in t for t in titles))
+
     def test_warn_when_missing_ledger(self):
         tmp = Path("._tmp_bot_audit_test_3")
         if tmp.exists():

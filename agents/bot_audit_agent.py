@@ -15,10 +15,10 @@ Key design goals:
 
 from __future__ import annotations
 
+import glob
 import json
-import os
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+import time
+from datetime import datetime, time as dt_time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -26,6 +26,33 @@ import pytz
 
 
 ET = pytz.timezone("America/New_York")
+
+# Bot audit “today” = realized activity since 03:00 America/New_York (session anchor).
+AUDIT_SESSION_ANCHOR_HOUR_ET = 3
+AUDIT_SESSION_ANCHOR_MINUTE_ET = 0
+
+
+def _safe_localize_et(d: Any, hour: int, minute: int = 0) -> datetime:
+    """3 AM ET on date d; handles DST gaps by shifting to 04:00 local if needed."""
+    naive = datetime.combine(d, dt_time(hour, minute, 0))
+    try:
+        return ET.localize(naive, is_dst=None)
+    except (pytz.AmbiguousTimeError, pytz.NonExistentTimeError):
+        naive2 = datetime.combine(d, dt_time(4, 0, 0))
+        return ET.localize(naive2, is_dst=None)
+
+
+def _et_audit_window_start(now_et: datetime) -> datetime:
+    """
+    Start of audit window: 3:00 AM Eastern Time.
+    Before 3 AM local, the active window began on the previous calendar day at 3 AM.
+    """
+    d = now_et.date()
+    today_anchor = _safe_localize_et(d, AUDIT_SESSION_ANCHOR_HOUR_ET, AUDIT_SESSION_ANCHOR_MINUTE_ET)
+    if now_et < today_anchor:
+        prev = d - timedelta(days=1)
+        return _safe_localize_et(prev, AUDIT_SESSION_ANCHOR_HOUR_ET, AUDIT_SESSION_ANCHOR_MINUTE_ET)
+    return today_anchor
 
 
 DEFAULT_DATA_DIR = Path("data")
@@ -92,6 +119,177 @@ def _read_text_tail(path: Path, max_chars: int = 4000) -> str:
         return ""
 
 
+def _load_hedging_context(
+    data_dir: Path,
+    *,
+    max_age_hours: float = 36.0,
+) -> dict[str, Any]:
+    """
+    Latest fortress_report_*.json plus optional hedging_recommendations.json (read-only).
+    """
+    ctx: dict[str, Any] = {
+        "fortress_report_path": None,
+        "fortress_report_age_hours": None,
+        "fortress_report_fresh": False,
+        "market_conditions": {},
+        "strategy_headlines": [],
+        "hedging_recommendations_loaded": False,
+        "notes": [],
+    }
+    pattern = str(data_dir / "fortress_report_*.json")
+    files = sorted(glob.glob(pattern), reverse=True)
+    if not files:
+        ctx["notes"].append("no_fortress_report_json")
+        return ctx
+    path = Path(files[0])
+    ctx["fortress_report_path"] = str(path)
+    try:
+        age_h = (time.time() - path.stat().st_mtime) / 3600.0
+        ctx["fortress_report_age_hours"] = round(age_h, 2)
+        ctx["fortress_report_fresh"] = age_h <= max_age_hours
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            mc = raw.get("market_conditions") or {}
+            ctx["market_conditions"] = mc if isinstance(mc, dict) else {}
+            strat = raw.get("strategies") or {}
+            ctx["strategy_headlines"] = _fortress_strategy_headlines(strat if isinstance(strat, dict) else {})
+            ctx["fortress_note"] = raw.get("note")
+    except Exception as e:
+        ctx["notes"].append(f"fortress_read_error:{type(e).__name__}:{e}")
+
+    hr_path = data_dir / "hedging_recommendations.json"
+    if hr_path.exists():
+        try:
+            rec = json.loads(hr_path.read_text(encoding="utf-8"))
+            ctx["hedging_recommendations"] = rec if isinstance(rec, dict) else {"raw": rec}
+            ctx["hedging_recommendations_loaded"] = True
+        except Exception as e:
+            ctx["notes"].append(f"hedging_recommendations_error:{type(e).__name__}:{e}")
+
+    return ctx
+
+
+def _fortress_strategy_headlines(strategies: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for name, s in strategies.items():
+        if not isinstance(s, dict):
+            continue
+        if name == "bonds":
+            tgt = s.get("target")
+            if tgt is not None:
+                out.append({"strategy": name, "summary": f"target={tgt}", "reason": (s.get("reason") or "")[:160]})
+            else:
+                out.append({"strategy": name, "summary": "no_target", "reason": (s.get("reason") or "")[:160]})
+            continue
+        action = s.get("action")
+        if action is not None:
+            out.append(
+                {
+                    "strategy": name,
+                    "summary": str(action),
+                    "reason": (s.get("reason") or s.get("opportunity") or "")[:160],
+                }
+            )
+        else:
+            out.append({"strategy": name, "summary": "see_report", "reason": ""})
+    return out[:14]
+
+
+def _hedging_contrast_analysis(
+    *,
+    pnl_session: float,
+    loss_status: str,
+    profit_status: str,
+    hedge_ctx: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Compare session bot performance with latest hedge / fortress opportunities.
+    """
+    regime = hedge_ctx.get("market_conditions", {}).get("regime") if isinstance(hedge_ctx.get("market_conditions"), dict) else None
+    vix = hedge_ctx.get("market_conditions", {}).get("vix") if isinstance(hedge_ctx.get("market_conditions"), dict) else None
+    fresh = bool(hedge_ctx.get("fortress_report_fresh"))
+    headlines = hedge_ctx.get("strategy_headlines") or []
+
+    findings: list[dict[str, Any]] = []
+    aligned: bool | None = None
+
+    if not hedge_ctx.get("fortress_report_path"):
+        findings.append(
+            {
+                "type": "context",
+                "text": "No fortress_report_*.json found — cannot contrast bot P&L with hedge opportunities.",
+            }
+        )
+        summary = "Missing fortress hedge report."
+        return {"summary": summary, "findings": findings, "aligned": None, "regime": regime, "vix": vix}
+
+    if not fresh:
+        findings.append(
+            {
+                "type": "stale",
+                "text": f"Fortress report is stale (~{hedge_ctx.get('fortress_report_age_hours')}h old). Refresh (orchestrator fortress / hedge cycle) before trusting hedge contrast.",
+            }
+        )
+
+    r = str(regime or "").strip().upper()
+    summary_parts: list[str] = []
+
+    if loss_status in ("warn", "critical") and pnl_session < 0:
+        aligned = False
+        if "RISK_OFF" in r:
+            findings.append(
+                {
+                    "type": "align",
+                    "text": "Session realized P&L is negative while fortress regime is RISK_OFF — defensive tilt is expected; check whether directional bots are oversized vs bond/commodity/FX hedge targets.",
+                }
+            )
+            summary_parts.append("Losses in RISK_OFF: reconcile equity bots with defensive hedge targets.")
+        elif r in ("RISK_ON", "NEUTRAL", ""):
+            findings.append(
+                {
+                    "type": "tension",
+                    "text": f"Session losses with regime {regime or 'unknown'}: consider running a fresh fortress cycle and tightening gates if hedge stack still shows risk-on lean.",
+                }
+            )
+            summary_parts.append("Losses vs regime: validate hedge run and entry sizing.")
+    elif pnl_session >= 0 and loss_status == "ok":
+        aligned = True
+        findings.append(
+            {
+                "type": "align",
+                "text": "Session realized P&L supports the near-zero-loss objective; still compare open hedge legs if regime flipped since last fortress run.",
+            }
+        )
+        summary_parts.append("P&L healthy vs session window; confirm hedges match current regime.")
+
+    if profit_status in ("warn", "critical") and pnl_session <= 0 and r == "RISK_ON":
+        findings.append(
+            {
+                "type": "opportunity",
+                "text": "Low session throughput or weak outcomes while regime is RISK_ON — review screening vs execution; hedges may be idle while equity opportunity set should be wider.",
+            }
+        )
+        summary_parts.append("Throughput vs RISK_ON: check screen → execute path.")
+
+    if hedge_ctx.get("hedging_recommendations_loaded"):
+        findings.append(
+            {
+                "type": "context",
+                "text": "hedging_recommendations.json present — cross-check those notes with worst strategies below.",
+            }
+        )
+
+    summary = " ".join(summary_parts) if summary_parts else "Cross-check session bot performance with fortress hedge opportunities."
+    return {
+        "summary": summary,
+        "findings": findings,
+        "aligned": aligned,
+        "regime": regime,
+        "vix": vix,
+        "headlines": headlines,
+    }
+
+
 def _extract_strategy_key(rec: dict[str, Any]) -> str:
     """
     Attempt to label a ledger row by its originating strategy/source.
@@ -112,6 +310,7 @@ def _audit_objective_loss_health(
     losses_today: int,
     total_today: int,
     consecutive_losses: int | None,
+    session_label: str = "session (since 3 AM ET)",
 ) -> tuple[str, list[dict[str, Any]]]:
     """
     Returns (status, findings[]).
@@ -122,13 +321,21 @@ def _audit_objective_loss_health(
     if loss_rate is not None:
         findings.append(
             {
-                "metric": "loss_rate_today_pct",
+                "metric": "loss_rate_session_pct",
                 "value": round(loss_rate, 2),
                 "target": "<= 40% (heuristic)",
+                "window": session_label,
             }
         )
 
-    findings.append({"metric": "realized_pnl_today", "value": round(pnl_today, 2), "target": ">= -X (heuristic)"})
+    findings.append(
+        {
+            "metric": "realized_pnl_session_et",
+            "value": round(pnl_today, 2),
+            "target": ">= -X (heuristic)",
+            "window": session_label,
+        }
+    )
 
     if consecutive_losses is not None:
         findings.append(
@@ -146,7 +353,7 @@ def _audit_objective_loss_health(
     status = "warn"
     if total_today == 0:
         status = "ok"
-        findings.append({"metric": "trade_count_today", "value": 0, "target": "ok"})
+        findings.append({"metric": "trade_count_session", "value": 0, "target": "ok", "window": session_label})
     else:
         if pnl_today >= 0 and (losses_today <= wins_today):
             status = "ok"
@@ -165,14 +372,24 @@ def _audit_objective_profit_opportunities(
     wins_today: int,
     total_lb: int,
     wins_lb: int,
+    session_label: str = "session (since 3 AM ET)",
 ) -> tuple[str, list[dict[str, Any]]]:
     findings: list[dict[str, Any]] = []
     win_rate_today = (wins_today / total_today * 100.0) if total_today else None
     win_rate_lb = (wins_lb / total_lb * 100.0) if total_lb else None
 
-    findings.append({"metric": "executed_trades_today", "value": total_today, "target": ">= 1"})
+    findings.append(
+        {"metric": "executed_trades_session", "value": total_today, "target": ">= 1", "window": session_label}
+    )
     if win_rate_today is not None:
-        findings.append({"metric": "win_rate_today_pct", "value": round(win_rate_today, 2), "target": ">= 45%"})
+        findings.append(
+            {
+                "metric": "win_rate_session_pct",
+                "value": round(win_rate_today, 2),
+                "target": ">= 45%",
+                "window": session_label,
+            }
+        )
     if win_rate_lb is not None:
         findings.append(
             {
@@ -193,7 +410,9 @@ def _audit_objective_profit_opportunities(
             status = "warn"
         else:
             status = "critical"
-            findings.append({"metric": "throughput", "value": "0 fills today", "target": ">= 1"})
+            findings.append(
+                {"metric": "throughput", "value": "0 fills in session window", "target": ">= 1", "window": session_label}
+            )
 
     return status, findings
 
@@ -208,15 +427,23 @@ def audit_bot_performance(
 ) -> dict[str, Any]:
     """
     Read-only audit. Returns a JSON-serializable report.
+
+    Session metrics (fills, P&L, win rate for objectives) use a window starting at
+    03:00 America/New_York through "now" (before 3 AM local, the window begins the
+    previous calendar day at 3 AM). Calendar `lookback_days` still scopes the longer
+    ledger win-rate context. Contrasts session bot outcomes with latest
+    fortress_report_*.json / hedging_recommendations.json when present.
     """
     data_dir = data_dir or DEFAULT_DATA_DIR
     logs_dir = logs_dir or DEFAULT_LOGS_DIR
     now_utc = now_utc or datetime.now(timezone.utc)
     now_et = now_utc.astimezone(ET)
 
-    # Use "ET date" for objective evaluation to match operator expectations.
+    # Calendar day of "now" in ET (reference). Session stats use 3 AM ET anchor, not midnight.
     day0 = now_et.date()
     day_start_lb = (now_utc - timedelta(days=lookback_days)).date()
+    session_start_et = _et_audit_window_start(now_et)
+    session_label = "since 3:00 AM America/New_York"
 
     ledger_path = data_dir / "pnl_ledger.jsonl"
     risk_state_path = data_dir / "risk_guardian_state.json"
@@ -255,9 +482,12 @@ def audit_bot_performance(
         ts = _parse_timestamp_local_iso(rec.get("timestamp"))
         if ts is None:
             continue
+        if ts > now_et:
+            continue
         rec_day = ts.date()
+        in_session = ts >= session_start_et
 
-        if rec_day == day0:
+        if in_session:
             total_today += 1
             pnl_today += pnl
             if pnl > 0:
@@ -273,19 +503,19 @@ def audit_bot_performance(
             elif pnl < 0:
                 losses_lb += 1
 
-        # Strategy breakdown.
-        sk = _extract_strategy_key(rec)
-        st = by_strategy.setdefault(sk, {"strategy": sk, "trades": 0, "wins": 0, "losses": 0, "pnl": 0.0})
-        st["trades"] += 1
-        st["pnl"] += pnl
-        if pnl > 0:
-            st["wins"] += 1
-        elif pnl < 0:
-            st["losses"] += 1
+        if in_session:
+            sk = _extract_strategy_key(rec)
+            st = by_strategy.setdefault(sk, {"strategy": sk, "trades": 0, "wins": 0, "losses": 0, "pnl": 0.0})
+            st["trades"] += 1
+            st["pnl"] += pnl
+            if pnl > 0:
+                st["wins"] += 1
+            elif pnl < 0:
+                st["losses"] += 1
 
-        recent_rows.append(rec)
-        if len(recent_rows) > 50:
-            recent_rows.pop(0)
+            recent_rows.append(rec)
+            if len(recent_rows) > 50:
+                recent_rows.pop(0)
 
     # Process stats (registry run success).
     process = {"today_screening_runs": [], "recent_screening_runs": [], "notes": []}
@@ -329,7 +559,13 @@ def audit_bot_performance(
                     all_runs.append({**row, "et_date": None})
             all_runs_sorted = sorted(all_runs, key=lambda x: x.get("timestamp") or "", reverse=True)
             process["recent_screening_runs"] = all_runs_sorted[:8]
-            process["today_screening_runs"] = [r for r in all_runs_sorted if r.get("et_date") == day0.isoformat()][:6]
+            session_runs = []
+            for r in all_runs_sorted:
+                rts = _parse_timestamp_local_iso(r.get("timestamp"))
+                if rts and rts >= session_start_et:
+                    session_runs.append(r)
+            process["session_screening_runs"] = session_runs[:6]
+            process["today_screening_runs"] = process["session_screening_runs"]
         except Exception as e:
             process["notes"].append(f"operational_runs parse error: {type(e).__name__}:{e}")
 
@@ -340,19 +576,21 @@ def audit_bot_performance(
         except Exception:
             last_meta = {}
 
-    # Objective evaluation
+    # Objective evaluation (session = since 3 AM ET).
     loss_status, loss_findings = _audit_objective_loss_health(
         pnl_today=pnl_today,
         wins_today=wins_today,
         losses_today=losses_today,
         total_today=total_today,
         consecutive_losses=consecutive_losses,
+        session_label=session_label,
     )
     profit_status, profit_findings = _audit_objective_profit_opportunities(
         total_today=total_today,
         wins_today=wins_today,
         total_lb=total_lb,
         wins_lb=wins_lb,
+        session_label=session_label,
     )
 
     overall_status = "warn"
@@ -361,15 +599,64 @@ def audit_bot_performance(
     elif loss_status == "ok" and profit_status == "ok":
         overall_status = "ok"
 
+    hedge_ctx = _load_hedging_context(data_dir)
+    contrast = _hedging_contrast_analysis(
+        pnl_session=pnl_today,
+        loss_status=loss_status,
+        profit_status=profit_status,
+        hedge_ctx=hedge_ctx,
+    )
+
+    hedge_payload: dict[str, Any] = {
+        "fortress_report_path": hedge_ctx.get("fortress_report_path"),
+        "fortress_report_age_hours": hedge_ctx.get("fortress_report_age_hours"),
+        "fortress_report_fresh": hedge_ctx.get("fortress_report_fresh"),
+        "regime": (hedge_ctx.get("market_conditions") or {}).get("regime"),
+        "vix": (hedge_ctx.get("market_conditions") or {}).get("vix"),
+        "strategy_headlines": hedge_ctx.get("strategy_headlines") or [],
+        "hedging_recommendations_loaded": bool(hedge_ctx.get("hedging_recommendations_loaded")),
+        "notes": hedge_ctx.get("notes") or [],
+    }
+    if hedge_ctx.get("fortress_note"):
+        hedge_payload["fortress_note"] = hedge_ctx.get("fortress_note")
+
+    contrast_out = {
+        "summary": contrast.get("summary"),
+        "findings": contrast.get("findings") or [],
+        "aligned": contrast.get("aligned"),
+        "regime": contrast.get("regime"),
+        "vix": contrast.get("vix"),
+    }
+
     # Recommendations: deterministic heuristics.
     recommendations: list[dict[str, Any]] = []
+    hedge_body = (contrast.get("summary") or "").strip()
+    for f in contrast.get("findings") or []:
+        if f.get("type") in ("tension", "stale", "align", "opportunity"):
+            t = str(f.get("text") or "").strip()
+            if t and t not in hedge_body:
+                hedge_body = (hedge_body + " " + t).strip() if hedge_body else t
+    sev = "medium"
+    if contrast.get("aligned") is not False and not any(
+        f.get("type") in ("tension", "stale") for f in (contrast.get("findings") or [])
+    ):
+        sev = "low"
+    recommendations.append(
+        {
+            "severity": sev,
+            "title": "Hedge / fortress vs session bot performance",
+            "body": hedge_body[:1200] if hedge_body else "Cross-check session bot P&L with fortress hedge opportunities.",
+            "action": "operator: review latest data/fortress_report_*.json and data/hedging_recommendations.json; run `python3 orchestrator.py fortress` if the report is stale.",
+        }
+    )
+
     if overall_status in ("critical", "warn"):
         if total_today == 0:
             recommendations.append(
                 {
                     "severity": "high" if overall_status == "critical" else "medium",
-                    "title": "No fills today — check opportunity→execution path",
-                    "body": "Ledger shows 0 realized P&L rows for today. Verify cron scheduling (screen/snipe/spy_swing), execution_mode, and that orders were not deferred or blocked by pre_trade_gate.",
+                    "title": "No fills in session window — check opportunity→execution path",
+                    "body": f"Ledger shows 0 realized P&L rows {session_label}. Verify cron scheduling (screen/snipe/spy_swing), execution_mode, and that orders were not deferred or blocked by pre_trade_gate.",
                     "action": "operator: run `python3 orchestrator.py screen` (then execute_pending if HITL) and/or check `crontab -l` + `logs/sniper.log` freshness.",
                 }
             )
@@ -378,7 +665,7 @@ def audit_bot_performance(
                 {
                     "severity": "high" if loss_status == "critical" else "medium",
                     "title": "Loss discipline degraded — tighten gates",
-                    "body": "Objective near-zero-loss looks unhealthy for today. Consider switching profile to capital_preservation, enforcing shadow-only for high-vol agents, and reviewing risk_guardian circuit breaker state.",
+                    "body": f"Near-zero-loss objective looks unhealthy for the session {session_label}. Consider switching profile to capital_preservation, enforcing shadow-only for high-vol agents, and reviewing risk_guardian circuit breaker state.",
                     "action": "operator: set `TRADING_POLICY_PROFILE=capital_preservation` or activate operator halt if needed; review `data/risk_guardian_state.json`.",
                 }
             )
@@ -402,11 +689,18 @@ def audit_bot_performance(
     return {
         "timestamp": now_et.isoformat(),
         "objective_day_et": day0.isoformat(),
+        "audit_window": {
+            "anchor": "3am_america_new_york",
+            "start_et": session_start_et.isoformat(),
+            "end_et": now_et.isoformat(),
+            "label": session_label,
+        },
         "lookback_days": lookback_days,
         "audited": {
             "ledger_path": str(ledger_path),
             "ledger_rows_considered_lb": total_lb,
             "ledger_rows_today": total_today,
+            "ledger_rows_session_et": total_today,
         },
         "objectives": {
             "profit_opportunities": {
@@ -418,8 +712,11 @@ def audit_bot_performance(
                 "findings": loss_findings,
             },
         },
+        "hedging_context": hedge_payload,
+        "hedging_contrast": contrast_out,
         "process": {
-            "today_screening_runs_count": len(process.get("today_screening_runs") or []),
+            "today_screening_runs_count": len(process.get("session_screening_runs") or []),
+            "session_screening_runs": process.get("session_screening_runs") or [],
             "recent_screening_runs": process.get("recent_screening_runs") or [],
             "last_screening_meta_loaded": bool(last_meta),
             "last_screening_meta_strict_mode": last_meta.get("strict_mode") if isinstance(last_meta, dict) else None,
