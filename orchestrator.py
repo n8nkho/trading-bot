@@ -2128,21 +2128,37 @@ def print_regime_health_banner() -> None:
 
 
 def print_latest_entry_skips() -> None:
-    """Print entry_gate_summary from newest data/daily_signals_*.json."""
+    """Print entry_gate_summary from newest data/daily_signals_*.json (by mtime)."""
     root = _orchestrator_repo_root()
     pattern = str(root / "data" / "daily_signals_*.json")
-    files = sorted(glob.glob(pattern), reverse=True)
-    if not files:
+    paths = [Path(p) for p in glob.glob(pattern)]
+    if not paths:
         print("No data/daily_signals_*.json files found.")
         return
-    path = Path(files[0])
+    path = max(paths, key=lambda p: p.stat().st_mtime)
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
     except Exception as e:
         print(f"Failed to read {path}: {e}")
         return
-    eg = doc.get("entry_gate_summary") or {}
-    print(f"\nLatest: {path.name}")
+    eg = doc.get("entry_gate_summary")
+    print(f"\nLatest (by mtime): {path.name}")
+    if not isinstance(eg, dict) or not eg:
+        keys = sorted(doc.keys()) if isinstance(doc, dict) else []
+        err = doc.get("error") if isinstance(doc, dict) else None
+        cf = doc.get("candidates_found") if isinstance(doc, dict) else None
+        print(
+            "entry_gate_summary: (missing or empty — screen may have failed before entry evaluation, "
+            "or this file is a stub.)"
+        )
+        if err:
+            print(f"  error: {err}")
+        if cf is not None:
+            print(f"  candidates_found: {cf}")
+        if keys:
+            print(f"  top-level keys: {', '.join(keys)}")
+        print(f"  Inspect full file: {path}")
+        return
     print(json.dumps(eg, indent=2))
     tops = eg.get("top_skip_reasons") or []
     if tops:
