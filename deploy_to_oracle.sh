@@ -5,6 +5,8 @@ usage() {
   echo "Usage:"
   echo "  ./deploy_to_oracle.sh --host HOST --user USER --remote-dir DIR [--port PORT] [--venv VENV_DIR] [--service SERVICE_NAME] [--skip-import-gate] [--install-deps]"
   echo ""
+  echo "Replace HOST / USER / DIR with your real server (not the words YOUR_HOST or /path/to/...)."
+  echo ""
   echo "Examples:"
   echo "  ./deploy_to_oracle.sh --host 1.2.3.4 --user ubuntu --remote-dir /home/ubuntu/trading-bot --venv /home/ubuntu/trading-bot/venv --service fortress-dashboard"
   echo "  # Recommended (Lane 1): always pass --service fortress-dashboard so the UI reloads after rsync."
@@ -40,6 +42,30 @@ fi
 
 if [[ -z "${HOST}" || -z "${USER_NAME}" || -z "${REMOTE_DIR}" ]]; then
   usage
+  exit 1
+fi
+
+# Catch copy-paste of documentation placeholders (common mistake).
+_lc_host="$(printf '%s' "${HOST}" | tr '[:upper:]' '[:lower:]')"
+_lc_user="$(printf '%s' "${USER_NAME}" | tr '[:upper:]' '[:lower:]')"
+if [[ "${_lc_host}" == "your_host" || "${_lc_host}" == "example.com" ]]; then
+  echo "[deploy] ERROR: --host looks like a placeholder (${HOST})."
+  echo "         Use your VM's public IP or DNS name (e.g. 203.0.113.50 or myserver.example.com)."
+  exit 1
+fi
+if [[ "${_lc_user}" == "your_user" ]]; then
+  echo "[deploy] ERROR: --user looks like a placeholder (${USER_NAME})."
+  echo "         Use the SSH login on the server (often: ubuntu, opc, or ec2-user)."
+  exit 1
+fi
+if [[ "${REMOTE_DIR}" == *"/path/to/"* ]]; then
+  echo "[deploy] ERROR: --remote-dir still contains /path/to/ (documentation placeholder)."
+  echo "         Use the real path on the server, e.g. /home/ubuntu/trading-bot"
+  exit 1
+fi
+if [[ -n "${VENV_DIR}" && "${VENV_DIR}" == *"/path/to/"* ]]; then
+  echo "[deploy] ERROR: --venv still contains /path/to/ (documentation placeholder)."
+  echo "         Use the real venv path, e.g. /home/ubuntu/trading-bot/venv"
   exit 1
 fi
 
@@ -103,12 +129,15 @@ if [[ -n "${SERVICE_NAME}" ]]; then
   # Stale nohup/manual command_center.py often still owns 8083; systemctl restart alone leaves it
   # serving old code → new routes 404 on disk but not in curl. Free the port, then restart the unit.
   DASH_PORT="${COMMAND_CENTER_PORT:-8083}"
-  REMOTE_CMD+=" && ( command -v fuser >/dev/null 2>&1 && sudo fuser -k ${DASH_PORT}/tcp 2>/dev/null || true )"
+  # fuser -k prints killed PIDs to stdout — suppress both fds (otherwise zsh shows "PID%" with no newline).
+  REMOTE_CMD+=" && ( command -v fuser >/dev/null 2>&1 && sudo fuser -k ${DASH_PORT}/tcp >/dev/null 2>&1 || true )"
   REMOTE_CMD+=" && sudo pkill -f \"${REMOTE_DIR}/dashboard/command_center.py\" 2>/dev/null || true"
   REMOTE_CMD+=" && sleep 1"
   # Do not swallow failures — a silent skip leaves old code running (e.g. billing links missing).
   REMOTE_CMD+=" && sudo systemctl restart \"${SERVICE_NAME}\" || { echo '[deploy] ERROR: systemctl restart failed (check sudo / unit name).'; exit 1; }"
 fi
+
+REMOTE_CMD+=" && echo \"[deploy] remote steps finished.\""
 
 echo "[deploy] Running remote setup commands..."
 ssh -p "${PORT}" "${USER_NAME}@${HOST}" "${REMOTE_CMD}"
@@ -118,6 +147,8 @@ echo "[deploy] Note: rsync copies this machine's repo root \`.env\` to the serve
 echo "        STRIPE_PAYMENT_LINK_* for /proof must be in that file on the laptop OR added on the VM."
 echo "[deploy] Next — on the server (ssh ${USER_NAME}@${HOST}):"
 echo "  cd ${REMOTE_DIR}"
+echo "  # Git on VM (if you use it; rsync does not update .git): git pull origin master"
+echo "  # Or set upstream once: git branch --set-upstream-to=origin/master master"
 echo "  curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:8083/proof   # expect 200"
 if [[ -n "${SERVICE_NAME}" ]]; then
   echo "  sudo systemctl status ${SERVICE_NAME}"
