@@ -9,30 +9,36 @@ from typing import Any
 from utils.alpaca_env import is_alpaca_paper
 
 
+def _alpaca_float(val: Any) -> float | None:
+    """Parse Alpaca string/number fields; empty / None -> None (not 0)."""
+    if val is None:
+        return None
+    if isinstance(val, str) and not val.strip():
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
 def normalize_alpaca_position(pos: Any) -> dict[str, Any]:
     """Map alpaca-py Position model to Command Center shape."""
     sym = str(getattr(pos, "symbol", "") or "")
-    try:
-        qty = float(getattr(pos, "qty", 0) or 0)
-    except (TypeError, ValueError):
-        qty = 0.0
-    try:
-        entry = float(getattr(pos, "avg_entry_price", 0) or 0)
-    except (TypeError, ValueError):
-        entry = 0.0
-    try:
-        cur = float(getattr(pos, "current_price", 0) or 0)
-    except (TypeError, ValueError):
-        cur = 0.0
-    try:
-        u_pnl = float(getattr(pos, "unrealized_pl", 0) or 0)
-    except (TypeError, ValueError):
+    qty = _alpaca_float(getattr(pos, "qty", None)) or 0.0
+    entry = _alpaca_float(getattr(pos, "avg_entry_price", None)) or 0.0
+    cur = _alpaca_float(getattr(pos, "current_price", None))
+    u_pnl = _alpaca_float(getattr(pos, "unrealized_pl", None))
+    if u_pnl is None:
         u_pnl = 0.0
-    try:
-        basis = float(getattr(pos, "cost_basis", 0) or 0)
-    except (TypeError, ValueError):
-        basis = 0.0
-    pct = (u_pnl / basis * 100.0) if basis else None
+    basis = _alpaca_float(getattr(pos, "cost_basis", None)) or 0.0
+    # Alpaca API: unrealized_plpc is a ratio (0.20 = 20%); prefer over recomputing from basis.
+    plpc_ratio = _alpaca_float(getattr(pos, "unrealized_plpc", None))
+    if plpc_ratio is not None:
+        pct = plpc_ratio * 100.0
+    elif basis:
+        pct = u_pnl / basis * 100.0
+    else:
+        pct = None
     return {
         "ticker": sym,
         "qty": qty,

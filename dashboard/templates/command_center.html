@@ -504,6 +504,7 @@
 
       <div class="panel col-12">
         <div class="panel-title">📊 OPEN POSITIONS <span id="posCount" style="font-size:0.7em;font-weight:400;color:var(--text-muted)"></span></div>
+        <div id="posSourceNote" class="text-muted" style="display:none;font-size:0.65rem;margin:-0.2rem 0 0.4rem 0;letter-spacing:0.03em;line-height:1.35;"></div>
         <div class="panel-scroll">
           <table class="pos-table">
             <thead><tr><th>Ticker</th><th>Shares</th><th>Entry</th><th>Current</th><th>P&L $</th><th>P&L %</th><th>Strategy</th><th>Held</th></tr></thead>
@@ -1372,6 +1373,23 @@
     function renderPositions(data) {
       const tbody = document.getElementById('posBody');
       const countEl = document.getElementById('posCount');
+      const noteEl = document.getElementById('posSourceNote');
+      if (noteEl) {
+        if (data && data.positions_source === 'alpaca_broker') {
+          noteEl.textContent = 'Mark and unrealized P&L reflect your Alpaca account (broker feed).';
+          noteEl.style.display = '';
+        } else if (data && data.positions_source === 'positions_json') {
+          let msg = 'Sourced from data/positions.json; prices and P&L may use yfinance.';
+          if (data.positions_alpaca_error) {
+            msg += ' Alpaca unavailable (' + String(data.positions_alpaca_error).replace(/</g, '\u003c') + ').';
+          }
+          noteEl.textContent = msg;
+          noteEl.style.display = '';
+        } else {
+          noteEl.textContent = '';
+          noteEl.style.display = 'none';
+        }
+      }
       if (!data || !data.positions) { tbody.innerHTML = '<tr><td colspan="8" class="empty">No data</td></tr>'; return; }
       const rows = data.positions;
       countEl.textContent = '(' + rows.length + ' open)';

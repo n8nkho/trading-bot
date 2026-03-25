@@ -2698,23 +2698,29 @@ def _refresh_loop():
 def get_live_positions():
     """Open positions from Alpaca (preferred) or positions.json; prices enriched with yfinance when possible."""
     out = []
+    ts = __import__("datetime").datetime.now().isoformat()
     try:
         import yfinance as yf
         from datetime import datetime
 
-        positions = []
+        bl: list | None = None
+        broker_err: str | None = None
+        positions: list = []
+        positions_source: str | None = None
         try:
             from utils.alpaca_broker import fetch_broker_positions
 
-            bl, _err = fetch_broker_positions()
+            bl, broker_err = fetch_broker_positions()
             if bl is not None:
                 positions = bl
-        except Exception:
-            positions = []
-        if not positions:
+                positions_source = "alpaca_broker"
+        except Exception as e:
+            broker_err = f"{type(e).__name__}:{e}"
+        if bl is None:
             positions = _read_json(DATA_DIR / "positions.json", default=[])
             if isinstance(positions, dict):
                 positions = positions.get("positions", [])
+            positions_source = "positions_json"
         tickers = list({p.get("ticker") for p in positions if p.get("ticker")})
         # Batch fetch current prices
         prices = {}
@@ -2745,11 +2751,38 @@ def get_live_positions():
         now = datetime.now()
         for p in positions:
             ticker = p.get("ticker", "")
-            entry = p.get("entry_price") or p.get("entry") or 0
-            shares = p.get("qty") or p.get("shares") or 0
-            current = p.get("current_price") or prices.get(ticker)
-            pnl_pct = round((current - entry) / entry * 100, 2) if current and entry else None
-            pnl_usd = round((current - entry) * shares, 2) if current and entry else None
+            entry = float(p.get("entry_price") or p.get("entry") or 0)
+            shares = float(p.get("qty") or p.get("shares") or 0)
+            is_broker = p.get("source") == "alpaca_broker"
+            if is_broker:
+                # Match Alpaca dashboard: use broker unrealized_pl / unrealized_plpc / mark.
+                cur_raw = p.get("current_price")
+                if cur_raw is not None:
+                    current = float(cur_raw)
+                else:
+                    current = prices.get(ticker)
+                broker_pnl = p.get("pnl")
+                if broker_pnl is not None:
+                    pnl_usd = round(float(broker_pnl), 2)
+                elif current is not None and entry:
+                    pnl_usd = round((current - entry) * shares, 2)
+                else:
+                    pnl_usd = None
+                bpct = p.get("pnl_pct")
+                if bpct is not None:
+                    pnl_pct = round(float(bpct), 2)
+                elif current is not None and entry:
+                    pnl_pct = round((current - entry) / entry * 100, 2)
+                else:
+                    pnl_pct = None
+            else:
+                current = p.get("current_price")
+                if current is None:
+                    current = prices.get(ticker)
+                else:
+                    current = float(current)
+                pnl_pct = round((current - entry) / entry * 100, 2) if current is not None and entry else None
+                pnl_usd = round((current - entry) * shares, 2) if current is not None and entry else None
             entry_date = p.get("entry_date") or p.get("entry_time") or ""
             try:
                 held_hours = round((now - datetime.fromisoformat(str(entry_date).replace("Z", ""))).total_seconds() / 3600, 1) if entry_date else None
@@ -2759,7 +2792,7 @@ def get_live_positions():
                 "ticker": ticker,
                 "shares": shares,
                 "entry_price": round(float(entry), 2) if entry else None,
-                "current_price": round(current, 2) if current else None,
+                "current_price": round(current, 2) if current is not None else None,
                 "pnl_pct": pnl_pct,
                 "pnl_usd": pnl_usd,
                 "strategy": p.get("strategy") or p.get("strategy_id") or "—",
@@ -2770,8 +2803,20 @@ def get_live_positions():
             })
         out.sort(key=lambda x: (x.get("pnl_pct") or 0))
     except Exception as e:
-        out = [{"error": str(e)}]
-    return {"positions": out, "count": len(out), "timestamp": __import__("datetime").datetime.now().isoformat()}
+        return {
+            "positions": [{"error": str(e)}],
+            "count": 1,
+            "timestamp": ts,
+            "positions_source": None,
+            "positions_alpaca_error": None,
+        }
+    return {
+        "positions": out,
+        "count": len(out),
+        "timestamp": ts,
+        "positions_source": positions_source,
+        "positions_alpaca_error": broker_err if positions_source == "positions_json" else None,
+    }
 
 
 def get_recent_orders():
