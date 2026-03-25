@@ -10,6 +10,9 @@ usage() {
   echo "Examples:"
   echo "  ./deploy_to_oracle.sh --host 1.2.3.4 --user ubuntu --remote-dir /home/ubuntu/trading-bot --venv /home/ubuntu/trading-bot/venv --service fortress-dashboard"
   echo "  # Recommended (Lane 1): always pass --service fortress-dashboard so the UI reloads after rsync."
+  echo ""
+  echo "Note: rsync excludes .git/. Do not run git checkout origin/master on the same tree unless you"
+  echo "      resolve conflicts (mixed rsync + git leaves modified + untracked files). Prefer deploy from Mac."
 }
 
 HOST=""

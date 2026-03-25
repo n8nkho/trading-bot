@@ -285,12 +285,15 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                 else:
                     decision = evaluate_single_entry(candidate, portfolio_value, rsi_threshold=rsi_effective)
                     decision['trade_type'] = 'STOCK'
-                    decision['reason'] = 'Stock trade offers better ROI'
+                    # Do not overwrite SKIP reasons (RSI, window, stabilization, etc.).
+                    if decision.get("action") == "BUY":
+                        decision["reason"] = "Stock trade offers better ROI"
                     logging.info(f"{ticker}: STOCK decision - {decision}")
             else:
                 decision = evaluate_single_entry(candidate, portfolio_value, rsi_threshold=rsi_effective)
                 decision['trade_type'] = 'STOCK'
-                decision['reason'] = 'No suitable option found'
+                if decision.get("action") == "BUY":
+                    decision["reason"] = "No suitable option found (stock path)"
                 logging.info(f"{ticker}: STOCK decision - {decision}")
             
             decisions.append(decision)
