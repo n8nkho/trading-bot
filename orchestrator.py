@@ -45,6 +45,11 @@ from utils.run_registry import (
     log_screening_started,
 )
 from utils.pre_trade_gate import evaluate_pre_trade_submission, format_gate_block_message
+from utils.runtime_config import (
+    get_default_portfolio_usd,
+    get_spy_swing_default_equity_usd,
+    is_agent_enabled,
+)
 from utils.cost_calculator import (
     get_daily_costs,
     get_monthly_projection,
@@ -2095,7 +2100,10 @@ if __name__ == "__main__":
     command = sys.argv[1].lower()
     
     if command == "screen":
-        portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else PORTFOLIO_VALUE
+        if not is_agent_enabled("daily_screen"):
+            print("Fortress runtime: daily_screen disabled (config/fortress_runtime.yaml).")
+            sys.exit(0)
+        portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else get_default_portfolio_usd()
         print(f"\nRunning daily screening workflow (Portfolio: ${portfolio_value:,.2f})...")
         print("Using async parallel execution for 5x faster analysis...")
         result = run_daily_screening(portfolio_value)
@@ -2140,6 +2148,9 @@ if __name__ == "__main__":
         print(f"  Circuit breaker active: {risk['circuit_breaker_active']}")
         
     elif command == "monitor":
+        if not is_agent_enabled("position_monitor"):
+            print("Fortress runtime: position_monitor disabled (config/fortress_runtime.yaml).")
+            sys.exit(0)
         print("\nMonitoring open positions...")
         print("Using async parallel execution for faster order processing...")
         result = monitor_positions()
@@ -2188,8 +2199,6 @@ if __name__ == "__main__":
             else:
                 print(f"Reason: Outside market hours")
     
-    elif command == "fortress":
-        run_fortress()
     elif command == "costs":
         # ANSI color codes for colorful output
         GREEN = '\033[92m'
@@ -2385,6 +2394,9 @@ if __name__ == "__main__":
             print(f"Average loss: {report['avg_loss_pct']:.2f}%")
     
     elif command == "architect":
+        if not is_agent_enabled("meta_architect"):
+            print("Fortress runtime: meta_architect disabled (config/fortress_runtime.yaml).")
+            sys.exit(0)
         from agents.meta_architect import autonomous_improvement_cycle
         print("\nRunning Meta-Architect improvement cycle...")
         result = autonomous_improvement_cycle()
@@ -2415,6 +2427,9 @@ if __name__ == "__main__":
     
 
     elif command == "fortress":
+        if not is_agent_enabled("fortress"):
+            print("Fortress runtime: fortress disabled (config/fortress_runtime.yaml).")
+            sys.exit(0)
         print("\nRunning complete fortress hedging system...")
         result = run_fortress()
         
@@ -2436,7 +2451,10 @@ if __name__ == "__main__":
         print(json.dumps(out, indent=2))
 
     elif command == "snipe":
-        portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else 10000
+        if not is_agent_enabled("intraday_sniper"):
+            print("Fortress runtime: intraday_sniper disabled (config/fortress_runtime.yaml).")
+            sys.exit(0)
+        portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else get_default_portfolio_usd()
         logger.info(f"Running intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
         opportunities = scan_intraday_opportunities(portfolio_value)
         
@@ -2581,15 +2599,18 @@ if __name__ == "__main__":
                     logger.info(f"  APPROVED {a['ticker']} shares={a['shares']} @ {a['entry_price']:.2f} order_id={a['order_id']}")
 
     elif command in ("spy_swing", "spy-swing"):
+        if not is_agent_enabled("spy_intraday_swing"):
+            print("Fortress runtime: spy_intraday_swing disabled (config/fortress_runtime.yaml).")
+            sys.exit(0)
         argv_rest = sys.argv[2:]
         do_execute = "--execute" in argv_rest
         argv_rest = [a for a in argv_rest if a != "--execute"]
-        portfolio_value = 5000.0
+        portfolio_value = get_spy_swing_default_equity_usd()
         if argv_rest:
             try:
                 portfolio_value = float(argv_rest[0])
             except ValueError:
-                portfolio_value = 5000.0
+                portfolio_value = get_spy_swing_default_equity_usd()
 
         out = run_spy_swing_cycle(
             shadow_only=not do_execute,
@@ -2663,6 +2684,9 @@ if __name__ == "__main__":
             logger.info("spy_swing: short signal — execution not wired (shadow only); see agent sketch")
 
     elif command == "headline_event":
+        if not is_agent_enabled("headline_event"):
+            print("Fortress runtime: headline_event disabled (config/fortress_runtime.yaml).")
+            sys.exit(0)
         from agents.headline_event_agent import run_headline_event_cycle
 
         root = Path(__file__).resolve().parent

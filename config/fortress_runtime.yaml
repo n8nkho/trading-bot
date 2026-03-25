@@ -1,0 +1,29 @@
+# Tracked defaults — override on server or set FORTRESS_RUNTIME_CONFIG.
+# See fortress_runtime.example.yaml for comments.
+
+version: 1
+
+agents:
+  daily_screen:
+    enabled: true
+  position_monitor:
+    enabled: true
+  intraday_sniper:
+    enabled: true
+  spy_intraday_swing:
+    enabled: true
+    default_equity_usd: 5000
+  fortress:
+    enabled: true
+  headline_event:
+    enabled: true
+  meta_architect:
+    enabled: true
+
+defaults:
+  portfolio_value_usd: 5000
+
+llm:
+  provider: none
+  ollama_base_url: http://127.0.0.1:11434
+  default_model: llama3.2:3b

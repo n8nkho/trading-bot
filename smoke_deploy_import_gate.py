@@ -60,6 +60,7 @@ def main() -> int:
         "utils.operator_morning_brief",
         "utils.tradingview_webhook",
         "utils.execution_mode",
+        "utils.runtime_config",
         "utils.pending_execution_queue",
         "utils.alpaca_env",
         "utils.alpaca_broker",

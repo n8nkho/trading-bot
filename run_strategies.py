@@ -24,8 +24,10 @@ Legacy cron labels (Oracle / older installs) map to:
 
 You may also pass through: ``screen``, ``monitor``, ``fortress``, ``snipe`` directly.
 
-Portfolio sizing for ``screen`` / ``snipe`` uses ``FORTRESS_PORTFOLIO_VALUE`` or
-``PORTFOLIO_VALUE`` env, else ``50000``.
+Portfolio sizing for ``screen`` / ``snipe`` / ``spy_swing`` uses
+``FORTRESS_PORTFOLIO_VALUE`` or ``PORTFOLIO_VALUE`` env, else
+``config/fortress_runtime.yaml`` ``defaults.portfolio_value_usd`` (see
+``utils/runtime_config.py``).
 """
 
 from __future__ import annotations
@@ -38,11 +40,9 @@ from pathlib import Path
 
 
 def _portfolio_arg() -> str:
-    for key in ("FORTRESS_PORTFOLIO_VALUE", "PORTFOLIO_VALUE"):
-        v = os.environ.get(key)
-        if v and str(v).strip():
-            return str(v).strip()
-    return "50000"
+    from utils.runtime_config import get_default_portfolio_usd
+
+    return str(get_default_portfolio_usd())
 
 
 def _normalize(name: str) -> str:
@@ -56,9 +56,20 @@ def _resolve_command(strategy: str) -> tuple[str, list[str]]:
     Return (orchestrator_subcommand, extra_argv).
     """
     n = _normalize(strategy)
-    if n in {"screen", "monitor", "fortress", "snipe", "architect", "review", "execute_pending"}:
+    if n in {
+        "screen",
+        "monitor",
+        "fortress",
+        "snipe",
+        "spy_swing",
+        "architect",
+        "review",
+        "execute_pending",
+    }:
         if n in {"screen", "snipe"}:
             return n, [_portfolio_arg()]
+        if n == "spy_swing":
+            return "spy_swing", []
         return n, []
 
     legacy_screen = {
@@ -82,7 +93,7 @@ def main(argv: list[str]) -> int:
     if len(argv) < 2 or not argv[1].strip():
         print("Usage: python3 run_strategies.py <strategy> [--execute]")
         print("Legacy labels: trump, momentum, inefficiency, sector, smartmoney, mergerarb")
-        print("Direct: screen, monitor, fortress, snipe, architect, review, execute_pending")
+        print("Direct: screen, monitor, fortress, snipe, spy_swing, architect, review, execute_pending")
         return 0
 
     strategy = argv[1].strip()
