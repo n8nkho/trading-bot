@@ -106,6 +106,23 @@ def _load_latest_fortress_report(max_age_hours=None):
         return None, meta
 
 
+def _read_latest_json(data_dir: Path, filename_glob: str) -> dict:
+    """
+    Read latest JSON file matching {filename_glob} under data_dir.
+    Returns an empty dict when no match or on JSON errors.
+    """
+    try:
+        pattern = data_dir / filename_glob
+        paths = sorted(glob.glob(str(pattern)), reverse=True)
+        if not paths:
+            return {}
+        latest_path = Path(paths[0])
+        doc = json.loads(latest_path.read_text(encoding="utf-8"))
+        return doc if isinstance(doc, dict) else {}
+    except Exception:
+        return {}
+
+
 def _refresh_order_result(order_result: dict, max_wait_seconds: int = 3, poll_interval_seconds: float = 1.0) -> dict:
     """
     Best-effort refresh from Alpaca when submit returns ACCEPTED/PENDING_NEW.
