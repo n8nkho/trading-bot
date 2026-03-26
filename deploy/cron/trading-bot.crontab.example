@@ -2,6 +2,9 @@
 # 1) Set REPO to your clone (must match systemd/dashboard WorkingDirectory if used).
 # 2) crontab -e and paste adapted lines, or: crontab deploy/cron/trading-bot.crontab.example
 #
+# Bot audit treats the *freshest* mtime among logs/orchestrator.log, screener.log, monitor.log,
+# fortress.log as "core jobs" heartbeat — split append targets (e.g. screener.log + monitor.log) are OK.
+#
 # SHELL=/bin/bash
 # PATH=/usr/local/bin:/usr/bin:/bin
 # REPO=/home/ubuntu/trading-bot

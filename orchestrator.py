@@ -2239,7 +2239,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py architect                  - Run meta-architect improvement cycle")
         print("  python orchestrator.py fortress                   - Run complete hedging system")
         print("  python orchestrator.py snipe [portfolio_value]    - Run intraday sniper for quick trades")
-        print("  python orchestrator.py spy_swing [--execute] [portfolio_value] - SPY swing agent (default shadow; $5k equity)")
+        print("  python orchestrator.py spy_swing [--execute] [portfolio_value] - SPY swing agent (default shadow; equity from runtime config)")
         print("  python orchestrator.py execute_pending            - Submit queued HITL trades (see FORTRESS_EXECUTION_MODE)")
         print("  python orchestrator.py headline_event [--fixture] - Headline event agent (shadow; --fixture = sample fixture)")
         print("  python orchestrator.py ops_recovery [--no-fortress] [--no-screen] [--no-pending] [portfolio_value]")

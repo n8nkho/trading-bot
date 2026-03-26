@@ -502,6 +502,42 @@ class TestBotAuditAgent(unittest.TestCase):
         drv = report.get("audit_synthesis", {}).get("primary_drivers") or []
         self.assertTrue(any("scheduler" in str(d).lower() or "staleness" in str(d).lower() for d in drv))
 
+    def test_core_jobs_fresh_when_split_logs_monitor_recent(self):
+        """Cron may write screen→screener.log and monitor→monitor.log; stale empty orchestrator.log must not imply dead core."""
+        tmp = Path("._tmp_bot_audit_split_logs")
+        if tmp.exists():
+            for p in tmp.rglob("*"):
+                try:
+                    if p.is_file():
+                        p.unlink()
+                except Exception:
+                    pass
+        tmp.mkdir(parents=True, exist_ok=True)
+        data_dir = tmp / "data"
+        logs_dir = tmp / "logs"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        (logs_dir / "sniper.log").write_text("old\n", encoding="utf-8")
+        (logs_dir / "orchestrator.log").write_text("old\n", encoding="utf-8")
+        (logs_dir / "monitor.log").write_text("fresh\n", encoding="utf-8")
+        now_utc = datetime(2026, 3, 25, 18, 0, 0, tzinfo=timezone.utc)
+        old_m = now_utc.timestamp() - 200 * 3600
+        os.utime(logs_dir / "sniper.log", (old_m, old_m))
+        os.utime(logs_dir / "orchestrator.log", (old_m, old_m))
+        report = audit_bot_performance(
+            data_dir=data_dir,
+            logs_dir=logs_dir,
+            lookback_days=7,
+            audit_days=1,
+            now_utc=now_utc,
+            include_market=False,
+        )
+        core = (report.get("freshness_sla") or {}).get("core_jobs_log") or {}
+        self.assertFalse(core.get("stale_gt_72h"), core)
+        titles = [r.get("title", "") for r in (report.get("recommendations") or [])]
+        self.assertNotIn("Multiple core logs stale (automation incident)", titles)
+        self.assertIn("Sniper log looks stale", titles)
+
 
 if __name__ == "__main__":
     unittest.main()

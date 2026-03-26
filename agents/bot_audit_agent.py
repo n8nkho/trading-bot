@@ -844,6 +844,36 @@ def _log_staleness(logs_dir: Path, names: tuple[str, ...], now_utc: datetime) ->
     return out
 
 
+# Cron often splits screen/monitor/fortress across screener.log, monitor.log, fortress.log
+# instead of a single orchestrator.log — audit uses the freshest mtime among these as "core jobs" heartbeat.
+_CORE_JOB_LOG_NAMES = (
+    "orchestrator.log",
+    "screener.log",
+    "monitor.log",
+    "fortress.log",
+)
+
+
+def _core_jobs_log_freshness(freshness_logs: dict[str, Any]) -> dict[str, Any]:
+    ages: list[tuple[str, float]] = []
+    for name in _CORE_JOB_LOG_NAMES:
+        b = (freshness_logs or {}).get(name) or {}
+        if not b.get("exists") or b.get("age_hours") is None:
+            continue
+        try:
+            ages.append((name, float(b["age_hours"])))
+        except (TypeError, ValueError):
+            continue
+    if not ages:
+        return {"best_name": None, "best_age_hours": None, "stale_gt_72h": True}
+    best_name, best_age = min(ages, key=lambda x: x[1])
+    return {
+        "best_name": best_name,
+        "best_age_hours": round(best_age, 2),
+        "stale_gt_72h": bool(best_age > 72.0),
+    }
+
+
 def _pending_age_detail(data_dir: Path, now_utc: datetime) -> dict[str, Any]:
     try:
         from utils.pending_execution_queue import load_batches
@@ -1053,13 +1083,12 @@ def _synthesize_audit_diagnosis(
     Single narrative that orders root causes for operators (heuristic, not causal proof).
     """
     drivers: list[dict[str, Any]] = []
-    orch = (freshness_logs or {}).get("orchestrator.log") or {}
+    core = _core_jobs_log_freshness(freshness_logs or {})
     sn = (freshness_logs or {}).get("sniper.log") or {}
-    oa = orch.get("age_hours")
     sa = sn.get("age_hours")
-    orch_stale = bool(orch.get("exists") and oa is not None and float(oa) > 72)
+    core_stale = bool(core.get("stale_gt_72h"))
     sniper_stale = bool(sn.get("exists") and sa is not None and float(sa) > 48)
-    automation_stale = orch_stale or sniper_stale
+    automation_stale = core_stale or sniper_stale
 
     if total_session_fills == 0 and lookback_fills >= 8:
         drivers.append(
@@ -1071,11 +1100,26 @@ def _synthesize_audit_diagnosis(
         )
 
     if automation_stale and total_session_fills == 0:
+        if core_stale and sniper_stale:
+            sched_detail = (
+                "Core job logs (best of orchestrator/screener/monitor/fortress) and sniper.log look stale — "
+                "cron may be down, TZ wrong, or jobs crashing before write."
+            )
+        elif core_stale:
+            sched_detail = (
+                "Core job logs (best of orchestrator/screener/monitor/fortress) look very old — "
+                "screen/monitor/fortress schedule may be idle; confirm WorkingDirectory and log paths."
+            )
+        else:
+            sched_detail = (
+                "sniper.log is stale but other core logs look fresher — intraday sniper schedule may be broken "
+                "(cron line, market-hours window, or snipe process errors); screen/monitor may still be OK."
+            )
         drivers.append(
             {
                 "code": "scheduler_or_log_staleness",
                 "weight": "high",
-                "detail": "Core logs are very old while objectives expect activity — jobs may not run, wrong cwd, or logs redirected elsewhere.",
+                "detail": sched_detail,
             }
         )
 
@@ -1181,7 +1225,7 @@ def _actionable_bot_changes(
                     "Run `orchestrator.py screen` weekdays after open; run intraday sniper/spy jobs from the same repo root "
                     "that owns this data/ and logs/ tree."
                 ),
-                "where": "crontab or systemd unit · WorkingDirectory=/path/to/trading-bot · logs/orchestrator.log, logs/sniper.log",
+                "where": "crontab or systemd unit · WorkingDirectory=/path/to/trading-bot · logs/sniper.log plus any of logs/screener.log, logs/monitor.log, logs/fortress.log, logs/orchestrator.log",
                 "verify": "After one cycle, log mtimes < 24h and new lines appear; `data/daily_signals_*.json` timestamp fresh.",
                 "caution": "Screens started from a different clone will not update this dashboard's data/.",
             }
@@ -1309,17 +1353,19 @@ def _flow_research_recommendations(
         )
 
     sn = (freshness_logs or {}).get("sniper.log") or {}
-    orch = (freshness_logs or {}).get("orchestrator.log") or {}
+    core = _core_jobs_log_freshness(freshness_logs or {})
     sn_stale = bool(sn.get("exists") and (sn.get("age_hours") or 0) > 48)
-    orch_stale = bool(orch.get("exists") and (orch.get("age_hours") or 0) > 72)
-    if sn_stale and orch_stale:
+    core_stale = bool(core.get("stale_gt_72h"))
+    if sn_stale and core_stale:
+        bn = core.get("best_name") or "core job logs"
+        ba = core.get("best_age_hours")
         recs.append(
             {
                 "severity": "high",
                 "title": "Multiple core logs stale (automation incident)",
                 "body": (
-                    f"sniper.log ~{sn.get('age_hours')}h and orchestrator.log ~{orch.get('age_hours')}h — "
-                    "treat as one ops problem (cron, cwd, or log path)."
+                    f"sniper.log ~{sn.get('age_hours')}h; freshest core job log is {bn} ~{ba}h "
+                    "(orchestrator/screener/monitor/fortress) — treat as one ops problem (cron, cwd, or TZ)."
                 ),
                 "action": "operator: fix systemd/cron WorkingDirectory to repo root; confirm jobs write to this logs/ tree.",
             }
@@ -1334,13 +1380,18 @@ def _flow_research_recommendations(
                     "action": "operator: check crontab/systemd for intraday_sniper and host clock.",
                 }
             )
-        if orch_stale:
+        if core_stale:
+            bn = core.get("best_name") or "none"
+            ba = core.get("best_age_hours")
             recs.append(
                 {
                     "severity": "low",
-                    "title": "Orchestrator log quiet",
-                    "body": f"orchestrator.log age ~{orch.get('age_hours')}h — daily screen / fortress cadence may be idle.",
-                    "action": "operator: verify orchestrator cron and logs for errors.",
+                    "title": "Core job logs quiet",
+                    "body": (
+                        f"Best of orchestrator/screener/monitor/fortress logs: {bn} ~{ba}h — "
+                        "daily screen / monitor / fortress cadence may be idle."
+                    ),
+                    "action": "operator: verify cron lines for screen, monitor, fortress; check logs/screener.log and logs/monitor.log.",
                 }
             )
 
@@ -1881,7 +1932,14 @@ def audit_bot_performance(
     research_bt = _research_backtest_block(data_dir)
     freshness_logs = _log_staleness(
         logs_dir,
-        ("orchestrator.log", "sniper.log", "spy_swing.log"),
+        (
+            "orchestrator.log",
+            "screener.log",
+            "monitor.log",
+            "fortress.log",
+            "sniper.log",
+            "spy_swing.log",
+        ),
         now_utc,
     )
     meta_mtime_age = _file_mtime_age_hours(last_screening_meta_path, now_utc)
@@ -2196,6 +2254,7 @@ def audit_bot_performance(
         "gate_attribution_rollup": gate_rollup,
         "freshness_sla": {
             "log_age_hours": freshness_logs,
+            "core_jobs_log": _core_jobs_log_freshness(freshness_logs),
             "last_screening_meta_mtime_age_hours": meta_mtime_age,
             "latest_daily_signals_timestamp_age_hours": signals_ts_age,
         },
@@ -2225,6 +2284,9 @@ def audit_bot_performance(
         "recommendations": recommendations,
         "log_tails": {
             "orchestrator.log_tail": _read_text_tail(logs_dir / "orchestrator.log", 1600),
+            "screener.log_tail": _read_text_tail(logs_dir / "screener.log", 1200),
+            "monitor.log_tail": _read_text_tail(logs_dir / "monitor.log", 1200),
+            "fortress.log_tail": _read_text_tail(logs_dir / "fortress.log", 1200),
             "sniper.log_tail": _read_text_tail(logs_dir / "sniper.log", 1200),
             "spy_swing.log_tail": _read_text_tail(logs_dir / "spy_swing.log", 1200),
         },
