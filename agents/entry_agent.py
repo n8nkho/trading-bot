@@ -10,6 +10,7 @@ from typing import Any
 
 from utils.runtime_config import get_default_portfolio_usd
 from utils.policy_profile import get_profile_bundle
+from utils.market_calendar import is_us_equity_rth_open
 
 logging.basicConfig(
     filename='logs/entry.log',
@@ -337,6 +338,7 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
     # previously the option path could bypass it and attempt option market orders
     # even when the operator runs after-hours.
     in_entry_window = bool(is_entry_window())
+    rth_open = bool(is_us_equity_rth_open())
     
     for candidate in candidates:
         ticker = candidate['ticker']
@@ -363,6 +365,13 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                         )
                         decision = create_skip_decision(ticker, reason)
                         logging.info(f"{ticker}: OPTION gated by entry window - {decision}")
+                    elif not rth_open:
+                        # Alpaca restricts OPTION *market* orders to regular market hours.
+                        decision = create_skip_decision(
+                            ticker,
+                            "options market orders are only allowed during market hours",
+                        )
+                        logging.info(f"{ticker}: OPTION gated by RTH market-hours - {decision}")
                     else:
                         decision = {
                             'ticker': ticker,
