@@ -4,10 +4,15 @@ Monitors and enforces risk limits to protect capital
 """
 
 import logging
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 import json
 from utils.policy_profile import get_profile_bundle
+from utils.volatility_adaptive_sizing import (
+    adaptive_position_size_pct,
+    load_latest_vix_from_fortress_report,
+)
 
 # Setup logging
 log_dir = Path("logs")
@@ -145,6 +150,30 @@ def get_risk_limits(strict_mode: bool = False) -> dict:
     for k in ["max_positions", "max_position_size_pct", "max_total_risk_pct", "daily_loss_limit_pct", "weekly_loss_limit_pct"]:
         if risk_cfg.get(k) is not None:
             base[k] = risk_cfg.get(k)
+    # Task 2: volatility-adaptive position cap (counter-cyclical exposure).
+    # Enabled by default; can be disabled with FORTRESS_VOL_ADAPTIVE_SIZING=0.
+    vol_adapt_enabled = str(os.getenv("FORTRESS_VOL_ADAPTIVE_SIZING", "1")).strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+    vix_now = load_latest_vix_from_fortress_report(Path("data")) if vol_adapt_enabled else None
+    if vol_adapt_enabled:
+        new_cap, tier = adaptive_position_size_pct(
+            base_position_size_pct=float(base.get("max_position_size_pct", MAX_POSITION_SIZE_PCT)),
+            vix=vix_now,
+        )
+        base["max_position_size_pct"] = float(new_cap)
+        base["volatility_adaptive_sizing"] = {
+            "enabled": True,
+            "vix": vix_now,
+            "tier": tier.name,
+            "mode": tier.mode,
+            "max_position_size_pct": float(new_cap),
+        }
+    else:
+        base["volatility_adaptive_sizing"] = {"enabled": False, "vix": None}
     base["policy_profile"] = policy.get("active_profile")
     return base
 
