@@ -22,7 +22,9 @@ PORTFOLIO_VALUE = get_default_portfolio_usd()
 BASE_POSITION_PCT = 0.05  # 5% of portfolio per position
 MAX_POSITION_SIZE = 2000  # Maximum dollars per position
 RSI_THRESHOLD = 35  # Extra oversold threshold
-STABILIZATION_FACTOR = 1.02  # Price must be 2% above low
+# Relax/tighten stabilization via env for operator tuning (paper/prototype safe).
+# Condition: current_price > day_low * STABILIZATION_FACTOR
+STABILIZATION_FACTOR = float(os.getenv("ENTRY_STABILIZATION_FACTOR", "1.02"))
 ENTRY_WINDOW_START = (14, 30)  # 2:30 PM ET
 ENTRY_WINDOW_END = (15, 45)  # 3:45 PM ET
 
@@ -319,6 +321,15 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
         rsi_effective = float(_params.get("rsi_threshold", RSI_THRESHOLD))
     except Exception:
         rsi_effective = float(RSI_THRESHOLD)
+
+    # Optional operator override (useful when tuning entry stack without code changes).
+    # If set and parseable, it replaces whatever `load_current_params()` returned.
+    env_rsi = (os.getenv("ENTRY_RSI_THRESHOLD_OVERRIDE") or "").strip()
+    if env_rsi:
+        try:
+            rsi_effective = float(env_rsi)
+        except ValueError:
+            pass
     
     decisions = []
     
