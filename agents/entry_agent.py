@@ -332,6 +332,11 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
             pass
     
     decisions = []
+    # Entry-window gating must apply to both stock and option decisions.
+    # The stock path already enforces this inside `evaluate_single_entry()`;
+    # previously the option path could bypass it and attempt option market orders
+    # even when the operator runs after-hours.
+    in_entry_window = bool(is_entry_window())
     
     for candidate in candidates:
         ticker = candidate['ticker']
@@ -347,6 +352,16 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
             if option_trade:
                 option_roi = stock_confidence * 0.50
                 if option_roi > stock_roi * 2:
+                    if not in_entry_window:
+                        # Match the stock-path reason format so `print_entry_skips`
+                        # and audit top reasons stay explainable.
+                        current_time_et = get_current_time_et()
+                        eh, em = _entry_window_end_with_extension()
+                        reason = (
+                            f"Outside entry window (current: {current_time_et.strftime('%H:%M')} ET, "
+                            f"window: 14:30-{eh:02d}:{em:02d} ET)"
+                        )
+                        return create_skip_decision(ticker, reason)
                     decision = {
                         'ticker': ticker,
                         'trade_type': 'OPTION',
