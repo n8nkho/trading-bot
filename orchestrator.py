@@ -1372,14 +1372,22 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         return result
         
     except Exception as e:
-        logger.error(f"Error in daily screening workflow: {type(e).__name__}: {str(e)}")
-        logger.error(f"Traceback:", exc_info=True)
+        # Ensure operators always see the underlying exception location.
+        # Some environments may not route logger output to disk reliably,
+        # so also print the full traceback to stdout.
+        import traceback as _traceback
+        err = f"{type(e).__name__}: {str(e)}"
+        logger.error(f"Error in daily screening workflow: {err}")
+        tb_txt = _traceback.format_exc()
+        logger.error("Traceback:\n%s", tb_txt)
+        print(tb_txt)
         
         # Return error result
         result = {
             'timestamp': datetime.now().isoformat(),
             'error': str(e),
             'error_type': type(e).__name__,
+            'error_trace': tb_txt[-4000:],
             'candidates_found': 0,
             'approved_trades': [],
             'rejected_trades': [],
