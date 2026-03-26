@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 
 # Import Alpaca
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
+from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, GetOrdersRequest
 from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 
 # Import agents
@@ -58,6 +58,7 @@ from utils.run_registry import (
     log_screening_failed,
     log_screening_started,
 )
+from utils.smart_execution import build_execution_plan
 from utils.pre_trade_gate import evaluate_pre_trade_submission, format_gate_block_message
 from utils.runtime_config import (
     get_default_portfolio_usd,
@@ -608,6 +609,9 @@ async def submit_approved_screening_trade(trade, candidates, current_params):
         option_symbol = format_option_symbol(ticker, expiration, strike, call)
         logger.info(f"Executing OPTION order: {option_symbol} x {contracts} contracts")
 
+        # Smart execution: prefer LIMIT for options when we have an expected entry premium.
+        exec_plan = build_execution_plan(trade, market_open=True)
+
         if not alpaca_client:
             order_result = {
                 "success": False,
@@ -642,12 +646,21 @@ async def submit_approved_screening_trade(trade, candidates, current_params):
                 }
             else:
                 try:
-                    order_data = MarketOrderRequest(
-                        symbol=option_symbol,
-                        qty=contracts,
-                        side=OrderSide.BUY,
-                        time_in_force=TimeInForce.DAY,
-                    )
+                    if exec_plan.get("order_type") == "limit" and exec_plan.get("limit_price") is not None:
+                        order_data = LimitOrderRequest(
+                            symbol=option_symbol,
+                            qty=contracts,
+                            side=OrderSide.BUY,
+                            limit_price=exec_plan["limit_price"],
+                            time_in_force=TimeInForce.DAY,
+                        )
+                    else:
+                        order_data = MarketOrderRequest(
+                            symbol=option_symbol,
+                            qty=contracts,
+                            side=OrderSide.BUY,
+                            time_in_force=TimeInForce.DAY,
+                        )
                     order = alpaca_client.submit_order(order_data)
                     order_result = {
                         "success": True,
