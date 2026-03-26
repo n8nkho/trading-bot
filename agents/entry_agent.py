@@ -6,6 +6,7 @@ import yfinance as yf
 from datetime import datetime
 import pytz
 import numpy as np
+from typing import Any
 
 from utils.runtime_config import get_default_portfolio_usd
 from utils.policy_profile import get_profile_bundle
@@ -67,14 +68,33 @@ def get_options_chain(ticker, dte_target=35):
         if not options_dates:
             logging.warning(f"{ticker}: No options data available")
             return None
-        
-        expiration_date = next((date for date in options_dates if 30 <= (datetime.strptime(date, '%Y-%m-%d') - datetime.now()).days <= 45), None)
-        if not expiration_date:
-            logging.warning(f"{ticker}: No suitable expiration date found")
+
+        # Choose the expiration closest to the target DTE (with a broad fallback).
+        today = datetime.now()
+        parsed: list[tuple[str, int]] = []
+        for date_str in options_dates:
+            try:
+                dte = (datetime.strptime(date_str, "%Y-%m-%d") - today).days
+                parsed.append((date_str, int(dte)))
+            except Exception:
+                continue
+
+        if not parsed:
+            logging.warning(f"{ticker}: Could not parse option expirations")
             return None
-        
+
+        # Prefer "nearby" expirations; if none exist in that band, pick nearest overall.
+        dte_target_f = float(dte_target)
+        band_lo, band_hi = max(7, dte_target_f - 20), dte_target_f + 20
+        nearby = [(ds, d) for (ds, d) in parsed if band_lo <= d <= band_hi]
+        candidates = nearby if nearby else parsed
+        expiration_date = min(candidates, key=lambda x: abs(x[1] - dte_target_f))[0]
+
         options_chain = stock.option_chain(expiration_date)
-        return options_chain.calls, expiration_date
+        calls = getattr(options_chain, "calls", None)
+        if calls is None or getattr(calls, "empty", True):
+            return None
+        return calls, expiration_date
     except Exception as e:
         logging.error(f"Error fetching options chain for {ticker}: {type(e).__name__}: {str(e)}")
         return None
@@ -97,17 +117,50 @@ def find_atm_option(ticker, current_price, dte=35):
     calls, expiration = result
     if calls.empty:
         return None
-    
-    atm_strike = min(calls['strike'], key=lambda x: abs(x - current_price))
-    option = calls[calls['strike'] == atm_strike].iloc[0]
-    
+
+    # Pick strike with minimum absolute distance to spot.
+    try:
+        strikes = calls["strike"]
+        atm_idx = (strikes - float(current_price)).abs().idxmin()
+        option = calls.loc[atm_idx]
+    except Exception:
+        # Fallback if the DataFrame shape isn't as expected.
+        atm_strike = min(calls["strike"], key=lambda x: abs(float(x) - float(current_price)))
+        option = calls[calls["strike"] == atm_strike].iloc[0]
+
+    premium = option.get("lastPrice", None)
+    bid = option.get("bid", None)
+    ask = option.get("ask", None)
+    volume = option.get("volume", 0)
+
+    # Normalize NaNs/None.
+    def _to_float(x: Any) -> float | None:
+        try:
+            if x is None:
+                return None
+            v = float(x)
+            return v
+        except Exception:
+            return None
+
+    premium_f = _to_float(premium)
+    bid_f = _to_float(bid)
+    ask_f = _to_float(ask)
+
+    # If lastPrice is missing, prefer ask as a conservative proxy.
+    if premium_f is None or premium_f <= 0:
+        premium_f = ask_f if ask_f is not None and ask_f > 0 else None
+
+    if premium_f is None or bid_f is None or ask_f is None:
+        return None
+
     return {
-        'strike': atm_strike,
-        'premium': option['lastPrice'],
-        'bid': option['bid'],
-        'ask': option['ask'],
-        'volume': option['volume'],
-        'expiration': expiration
+        "strike": float(option.get("strike")),
+        "premium": premium_f,
+        "bid": bid_f,
+        "ask": ask_f,
+        "volume": float(volume) if volume is not None else 0,
+        "expiration": expiration,
     }
 
 def evaluate_option_trade(ticker, current_price, stock_confidence):
@@ -125,24 +178,29 @@ def evaluate_option_trade(ticker, current_price, stock_confidence):
     option = find_atm_option(ticker, current_price)
     if option is None:
         return None
-    if option is None:
+
+    premium = float(option["premium"] or 0)
+    bid = float(option["bid"] or 0)
+    ask = float(option["ask"] or 0)
+    strike = float(option["strike"])
+    expiration = option["expiration"]
+    volume = float(option.get("volume") or 0)
+
+    if premium <= 0 or ask <= 0 or bid <= 0:
         return None
-    
-    premium = option['premium']
-    bid = option['bid']
-    ask = option['ask']
-    strike = option['strike']
-    expiration = option['expiration']
-    
-    bid_ask_spread_pct = (ask - bid) / premium * 100
+
+    bid_ask_spread_pct = (ask - bid) / premium * 100 if premium else 999.0
     breakeven = strike + premium
     leverage = current_price / (premium * 100)
     max_contracts = min(3, int(500 / (premium * 100)))
     
-    if (bid_ask_spread_pct < 15 and
-        option['volume'] > 100 and
-        premium * 100 < 500 and
-        premium > 0.50):
+    # Relax the "too strict" filters so paper/screening doesn't end up always skipping.
+    if (
+        bid_ask_spread_pct < 30
+        and volume > 50
+        and premium * 100 < 900
+        and premium > 0.15
+    ):
         return {
             'ticker': ticker,
             'type': 'OPTION',
