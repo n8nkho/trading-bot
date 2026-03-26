@@ -292,6 +292,25 @@ def _read_json(path, default=None):
     return default
 
 
+def _read_latest_json_glob(pattern: str | Path, default=None):
+    """
+    Best-effort: read newest JSON file matching a glob (sorted reverse).
+    Returns `default` (dict) when no match or JSON errors.
+    """
+    if default is None:
+        default = {}
+    try:
+        pattern_s = str(pattern)
+        paths = sorted(glob.glob(pattern_s), reverse=True)
+        if not paths:
+            return default
+        p = Path(paths[0])
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        return doc if isinstance(doc, dict) else default
+    except Exception:
+        return default
+
+
 def _read_jsonl(path, limit=500):
     out = []
     try:
@@ -1045,6 +1064,92 @@ def get_trading_performance():
     except Exception:
         perf["trust_ledger_recent"] = []
 
+    # Agentic artifacts (Task 5-8)
+    # These are planning-only JSON artifacts produced by autonomous layers; they
+    # are safe to read in the UI any time.
+    try:
+        scout = _read_latest_json_glob(DATA_DIR / "scout_opportunity_queue_*.json", default={})
+        cio = _read_latest_json_glob(DATA_DIR / "cio_directive_*.json", default={})
+        analyst = _read_latest_json_glob(DATA_DIR / "analyst_consensus_*.json", default={})
+        mtf = _read_latest_json_glob(DATA_DIR / "multi_timeframe_plan_*.json", default={})
+        sector = _read_latest_json_glob(DATA_DIR / "sector_rotation_signal_*.json", default={})
+        geo = _read_latest_json_glob(DATA_DIR / "geographic_allocation_plan_*.json", default={})
+
+        def _top_list(d: dict, key: str, n: int = 5):
+            v = d.get(key)
+            if not isinstance(v, list):
+                return []
+            return v[:n]
+
+        # Multi-timeframe: produce a compact, UI-friendly summary.
+        mtf_sleeves = mtf.get("sleeves") or {}
+        mtf_summary = []
+        if isinstance(mtf_sleeves, dict):
+            for sleeve_key, row in mtf_sleeves.items():
+                if not isinstance(row, dict):
+                    continue
+                mtf_summary.append(
+                    {
+                        "sleeve": sleeve_key,
+                        "active": bool(row.get("active")),
+                        "selected": row.get("selected_count") if row.get("selected_count") is not None else None,
+                    }
+                )
+        mtf_summary.sort(key=lambda x: x.get("sleeve") or "")
+
+        available = any(
+            bool(x)
+            for x in [
+                scout,
+                cio,
+                analyst,
+                mtf,
+                sector,
+                geo,
+            ]
+        )
+        perf["agentic_artifacts"] = {
+            "available": available,
+            "scout_queue": {
+                "timestamp": scout.get("timestamp"),
+                "opportunity_count": scout.get("opportunity_count"),
+                "top_opportunities": _top_list(scout, "opportunities", 5),
+            },
+            "cio_directive": {
+                "timestamp": cio.get("timestamp"),
+                "portfolio_directive": cio.get("portfolio_directive"),
+                "confidence": cio.get("confidence"),
+                "regime": cio.get("regime"),
+                "vix": cio.get("vix"),
+            },
+            "analyst_consensus": {
+                "timestamp": analyst.get("timestamp"),
+                "evaluated": analyst.get("evaluated"),
+                "recommendations_top": _top_list(analyst, "recommendations", 5),
+            },
+            "multi_timeframe_plan": {
+                "timestamp": mtf.get("timestamp"),
+                "regime": mtf.get("regime"),
+                "vix": mtf.get("vix"),
+                "candidates_found": mtf.get("candidates_found"),
+                "sleeves_summary": mtf_summary,
+            },
+            "sector_rotation": {
+                "timestamp": sector.get("timestamp"),
+                "macro_quadrant": sector.get("macro_quadrant"),
+                "vix": sector.get("vix"),
+                "signals": sector.get("signals") if isinstance(sector.get("signals"), list) else [],
+            },
+            "geographic_allocation": {
+                "timestamp": geo.get("timestamp"),
+                "international_sleeve_pct": geo.get("international_sleeve_pct"),
+                "international_capital_usd": geo.get("international_capital_usd"),
+                "allocations": geo.get("allocations") if isinstance(geo.get("allocations"), list) else [],
+            },
+        }
+    except Exception:
+        perf["agentic_artifacts"] = {"available": False}
+
     try:
         from utils.execution_mode import get_execution_mode
         from utils.pending_execution_queue import pending_summary
@@ -1300,6 +1405,28 @@ def get_safety_status():
 
     hs = get_halt_state()
     strict_now, strict_reason_now = _strict_mode_live(risk)
+
+    # Risk guardian auto-reset (for operator clarity).
+    auto_reset_enabled = str(os.getenv("FORTRESS_AUTO_RESET_RISK_GUARDIAN_STATE", "1")).strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+    risk_state_max_age_hours = float(os.getenv("FORTRESS_RISK_STATE_MAX_AGE_HOURS", "24"))
+
+    # Entry gating defaults: useful to explain why screening yields 0 BUYs.
+    entry_window_end_et = None
+    entry_stabilization_factor = None
+    try:
+        from agents import entry_agent as _entry_agent
+
+        eh, em = _entry_agent._entry_window_end_with_extension()
+        entry_window_end_et = f"{eh:02d}:{em:02d}"
+        entry_stabilization_factor = float(getattr(_entry_agent, "STABILIZATION_FACTOR", None))
+    except Exception:
+        pass
+
     return {
         "timestamp": datetime.now().isoformat(),
         "policy_profile": policy.get("active_profile"),
@@ -1308,7 +1435,10 @@ def get_safety_status():
         "forced_rollback_profile": rollback.get("forced_profile"),
         "forced_rollback_until": rollback.get("forced_until"),
         "circuit_breaker_active": bool(risk.get("circuit_breaker_active")),
+        "consecutive_losses": risk.get("consecutive_losses"),
         "position_size_reduction": risk.get("position_size_reduction"),
+        "risk_auto_reset_enabled": auto_reset_enabled,
+        "risk_state_max_age_hours": risk_state_max_age_hours,
         "strict_mode": strict_now,
         "strict_mode_reason": strict_reason_now,
         "latest_screening_time": screening.get("time"),
@@ -1321,6 +1451,8 @@ def get_safety_status():
         "latest_release_signature": (_latest_release_snapshot_dict() or {}).get("signature_sha256"),
         "trading_halt": hs,
         "trading_halt_active": bool(hs.get("effective_halted")),
+        "entry_window_end_et": entry_window_end_et,
+        "entry_stabilization_factor": entry_stabilization_factor,
     }
 
 

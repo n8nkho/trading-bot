@@ -890,6 +890,30 @@
         }
       }
 
+      // Agentic planning artifacts (CIO, scouts, analysts, MTF, sector, geo)
+      const agentic = data.agentic_artifacts || {};
+      if (agentic.available) {
+        const esc = (t) => String(t == null ? '—' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+        const cio = agentic.cio_directive || {};
+        const scout = agentic.scout_queue || {};
+        const analyst = agentic.analyst_consensus || {};
+        const sector = agentic.sector_rotation || {};
+        const geo = agentic.geographic_allocation || {};
+        const mtf = agentic.multi_timeframe_plan || {};
+        const mtfActive = (mtf.sleeves_summary || []).filter(x => x && x.active).length;
+        const geoUsd = geo.international_capital_usd != null ? Number(geo.international_capital_usd).toFixed(0) : '—';
+        const cioConf = cio.confidence != null ? Number(cio.confidence).toFixed(2) : '—';
+        el.innerHTML += `
+          <div class="perf-stat">
+            <div class="label">Agentic artifacts</div>
+            <div class="num" style="font-size:0.85rem;">
+              CIO: ${esc(cio.portfolio_directive)} (conf=${cioConf}) · Scouts: ${esc(scout.opportunity_count)} · Analysts: ${esc(analyst.evaluated)}<br>
+              MTF: ${esc(mtf.regime)} · active sleeves=${esc(mtfActive)} · Sector: ${esc(sector.macro_quadrant)} · Geo: $${esc(geoUsd)}
+            </div>
+          </div>
+        `;
+      }
+
       // Detailed hedging panel (commodities/forex/targets)
       if (hedgeEl) {
         const safe = (t) => (t == null ? '' : String(t)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -1119,8 +1143,10 @@
         <div>Forced rollback: <strong>${roll}</strong></div>
         <div>Release sig: <strong>${relSig}</strong></div>
         <div>Circuit Breaker: <strong>${cb}</strong></div>
+        <div>Risk streak: <strong>${data.consecutive_losses ?? '—'}</strong> · Auto-reset: <strong>${data.risk_auto_reset_enabled ? 'ON' : 'OFF'}</strong> (${data.risk_state_max_age_hours ?? '24'}h)</div>
         <div>Strict Mode: <strong>${strict}</strong></div>
         <div>Hedge Gate: <strong>${data.hedge_gate_passed === true ? 'PASS' : (data.hedge_gate_passed === false ? 'FAIL' : 'N/A')}</strong></div>
+        <div>Entry defaults: window-end ${data.entry_window_end_et ?? '—'} ET · stabilization ${data.entry_stabilization_factor ?? '—'}</div>
         <div>Open Positions: <strong>${data.open_positions ?? 0}</strong> | Net P&L: <strong>${data.net_pnl ?? '—'}</strong></div>
         <div>Last Screening Finish: <strong>${screenTs}</strong></div>
         <div>Cron Heartbeat: <strong>${hb}</strong></div>
