@@ -44,6 +44,7 @@ from agents.spy_intraday_swing import run_spy_swing_cycle
 from agents.day_trading_manager import DayTradingManager
 from agents.swing_trading_manager import SwingTradingManager
 from agents.position_trading_manager import PositionTradingManager
+from agents.sector_rotation_manager import run_sector_rotation_manager
 from utils.grok_sentiment import check_twitter_sentiment
 from utils.option_contract_schema import normalize_option_decision
 from utils.policy_profile import get_profile_bundle
@@ -2351,6 +2352,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py execute_pending            - Submit queued HITL trades (see FORTRESS_EXECUTION_MODE)")
         print("  python orchestrator.py headline_event [--fixture] - Headline event agent (shadow; --fixture = sample fixture)")
         print("  python orchestrator.py multi_timeframe [portfolio_value] - Run task-1 sleeve allocation planner")
+        print("  python orchestrator.py sector_rotation [portfolio_value] - Build monthly sector rotation signal")
         print("  python orchestrator.py ops_recovery [--no-fortress] [--no-screen] [--no-pending] [portfolio_value]")
         print("  python orchestrator.py regime_check               - Print fortress + hedging file snapshot")
         print("  python orchestrator.py print_entry_skips          - Print latest daily_signals entry_gate_summary")
@@ -2375,6 +2377,21 @@ if __name__ == "__main__":
         ensure_repo_root_cwd()
         portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else get_default_portfolio_usd()
         out = run_multi_timeframe_framework(portfolio_value)
+        print(json.dumps(out, indent=2, default=str))
+        sys.exit(0)
+
+    if command in ("sector_rotation", "sector-rotation"):
+        ensure_repo_root_cwd()
+        portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else get_default_portfolio_usd()
+        report, _meta = _load_latest_fortress_report(max_age_hours=FORTRESS_REPORT_MAX_AGE_HOURS)
+        vix = None
+        if isinstance(report, dict):
+            mc = report.get("market_conditions") or {}
+            try:
+                vix = float(mc.get("vix")) if mc.get("vix") is not None else None
+            except (TypeError, ValueError):
+                vix = None
+        out = run_sector_rotation_manager(data_dir=DATA_DIR, portfolio_value=portfolio_value, vix=vix)
         print(json.dumps(out, indent=2, default=str))
         sys.exit(0)
 
