@@ -1689,6 +1689,42 @@ def get_runbooks():
                 "impact": "Shows newest daily_signals entry_gate_summary for tuning ENTRY_WINDOW_* / RSI via current_params.json.",
                 "command": "python3 orchestrator.py print_entry_skips",
             },
+            {
+                "id": "agentic_scout_swarm",
+                "title": "Build scout opportunity queue",
+                "impact": "Runs Task 6 scout swarm and writes scout_opportunity_queue_*.json for later analysis/execution gating.",
+                "command": "python3 orchestrator.py scout_swarm",
+            },
+            {
+                "id": "agentic_analyst_ensemble",
+                "title": "Run analyst ensemble consensus",
+                "impact": "Runs Task 7 analyst quorum from the latest scout queue and writes analyst_consensus_*.json.",
+                "command": "python3 orchestrator.py analyst_ensemble",
+            },
+            {
+                "id": "agentic_cio_cycle",
+                "title": "Produce top-level CIO directive",
+                "impact": "Runs Task 5 deterministic CIO cycle using latest planning artifacts and writes cio_directive_*.json.",
+                "command": "python3 orchestrator.py cio_cycle",
+            },
+            {
+                "id": "agentic_task1_multi_timeframe",
+                "title": "Run Task 1 multi-timeframe planner",
+                "impact": "Runs Task 1 sleeve allocation framework and writes multi_timeframe_plan_*.json.",
+                "command": "python3 orchestrator.py multi_timeframe",
+            },
+            {
+                "id": "agentic_sector_rotation",
+                "title": "Run sector rotation signal",
+                "impact": "Runs Task 3 sector rotation and writes sector_rotation_signal_*.json.",
+                "command": "python3 orchestrator.py sector_rotation",
+            },
+            {
+                "id": "agentic_geographic_allocation",
+                "title": "Run geographic allocation plan",
+                "impact": "Runs Task 4 international allocation planner and writes geographic_allocation_plan_*.json.",
+                "command": "python3 orchestrator.py geographic_allocation",
+            },
         ],
     }
 
