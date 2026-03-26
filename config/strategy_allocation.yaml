@@ -1,0 +1,52 @@
+version: 1
+default_currency: USD
+
+sleeves:
+  day_trading:
+    name: day_trading
+    capital_allocation_pct: 30.0
+    holding_period: "1h-1d"
+    enabled: true
+    risk:
+      max_position_size_pct: 2.5
+      max_total_risk_pct: 8.0
+      max_open_positions: 4
+      stop_loss_pct: -1.0
+      take_profit_pct: 2.0
+    activation:
+      min_vix: 18.0
+      max_vix: 45.0
+      allowed_regimes: ["RISK_ON", "RISK_OFF", "MIXED"]
+
+  swing_trading:
+    name: swing_trading
+    capital_allocation_pct: 40.0
+    holding_period: "2-10d"
+    enabled: true
+    risk:
+      max_position_size_pct: 3.0
+      max_total_risk_pct: 10.0
+      max_open_positions: 6
+      stop_loss_pct: -2.5
+      take_profit_pct: 6.0
+    activation:
+      min_vix: 12.0
+      max_vix: 55.0
+      allowed_regimes: ["RISK_ON", "RISK_OFF", "MIXED"]
+
+  position_trading:
+    name: position_trading
+    capital_allocation_pct: 30.0
+    holding_period: "2-8w"
+    enabled: true
+    risk:
+      max_position_size_pct: 3.5
+      max_total_risk_pct: 12.0
+      max_open_positions: 8
+      stop_loss_pct: -5.0
+      take_profit_pct: 12.0
+    activation:
+      min_vix: 8.0
+      max_vix: 60.0
+      allowed_regimes: ["RISK_ON", "MIXED"]
+

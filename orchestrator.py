@@ -41,6 +41,9 @@ from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mod
 from agents.document_analyst import quick_fundamental_check
 from agents.intraday_sniper import scan_intraday_opportunities, evaluate_quick_entry
 from agents.spy_intraday_swing import run_spy_swing_cycle
+from agents.day_trading_manager import DayTradingManager
+from agents.swing_trading_manager import SwingTradingManager
+from agents.position_trading_manager import PositionTradingManager
 from utils.grok_sentiment import check_twitter_sentiment
 from utils.option_contract_schema import normalize_option_decision
 from utils.policy_profile import get_profile_bundle
@@ -56,6 +59,7 @@ from utils.runtime_config import (
     get_spy_swing_default_equity_usd,
     is_agent_enabled,
 )
+from utils.strategy_allocation import load_strategy_allocation_config
 from utils.cost_calculator import (
     get_daily_costs,
     get_monthly_projection,
@@ -2222,6 +2226,65 @@ def print_latest_entry_skips() -> None:
                 print(f"  - {row.get('count')}×  {row.get('reason')}")
 
 
+def run_multi_timeframe_framework(portfolio_value: float) -> dict:
+    """
+    Task-1 multi-timeframe sleeve planner.
+    Produces a deterministic sleeve allocation plan from current screener candidates.
+    """
+    cfg = load_strategy_allocation_config()
+    candidates = run_screener()
+    report, _meta = _load_latest_fortress_report(max_age_hours=FORTRESS_REPORT_MAX_AGE_HOURS)
+    regime = "MIXED"
+    vix = None
+    if isinstance(report, dict):
+        mc = report.get("market_conditions") or {}
+        regime = str(mc.get("regime") or regime)
+        try:
+            vix = float(mc.get("vix")) if mc.get("vix") is not None else None
+        except (TypeError, ValueError):
+            vix = None
+
+    managers = {
+        "day_trading": DayTradingManager(),
+        "swing_trading": SwingTradingManager(),
+        "position_trading": PositionTradingManager(),
+    }
+    sleeves_out = {}
+    for key, mgr in managers.items():
+        s = cfg.sleeves.get(key)
+        if s is None:
+            continue
+        active = bool(s.enabled)
+        if active and s.activation.allowed_regimes:
+            active = regime in set(s.activation.allowed_regimes)
+        if active and s.activation.min_vix is not None and vix is not None:
+            active = vix >= float(s.activation.min_vix)
+        if active and s.activation.max_vix is not None and vix is not None:
+            active = vix <= float(s.activation.max_vix)
+        result = mgr.evaluate(
+            candidates,
+            sleeve_cfg=s.model_dump(),
+            regime=regime,
+            vix=vix,
+            portfolio_value=portfolio_value,
+        )
+        result["active"] = bool(active)
+        sleeves_out[key] = result
+        mgr.record_outcome(result, data_dir=DATA_DIR)
+
+    out = {
+        "timestamp": datetime.now().isoformat(),
+        "portfolio_value": portfolio_value,
+        "regime": regime,
+        "vix": vix,
+        "candidates_found": len(candidates),
+        "sleeves": sleeves_out,
+    }
+    fn = DATA_DIR / f"multi_timeframe_plan_{datetime.now().strftime('%Y%m%d')}.json"
+    fn.write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
+    return out
+
+
 def run_ops_recovery(raw_argv: list[str]) -> int:
     """
     Operator one-shot: cd repo root → optional fortress → screen → execute_pending.
@@ -2287,6 +2350,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py spy_swing [--execute] [portfolio_value] - SPY swing agent (default shadow; equity from runtime config)")
         print("  python orchestrator.py execute_pending            - Submit queued HITL trades (see FORTRESS_EXECUTION_MODE)")
         print("  python orchestrator.py headline_event [--fixture] - Headline event agent (shadow; --fixture = sample fixture)")
+        print("  python orchestrator.py multi_timeframe [portfolio_value] - Run task-1 sleeve allocation planner")
         print("  python orchestrator.py ops_recovery [--no-fortress] [--no-screen] [--no-pending] [portfolio_value]")
         print("  python orchestrator.py regime_check               - Print fortress + hedging file snapshot")
         print("  python orchestrator.py print_entry_skips          - Print latest daily_signals entry_gate_summary")
@@ -2305,6 +2369,13 @@ if __name__ == "__main__":
     if command in ("print_entry_skips", "print-entry-skips"):
         ensure_repo_root_cwd()
         print_latest_entry_skips()
+        sys.exit(0)
+
+    if command in ("multi_timeframe", "multi-timeframe"):
+        ensure_repo_root_cwd()
+        portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else get_default_portfolio_usd()
+        out = run_multi_timeframe_framework(portfolio_value)
+        print(json.dumps(out, indent=2, default=str))
         sys.exit(0)
 
     # Cron/systemd often starts with wrong cwd; keep data/ + logs/ under repo root.
