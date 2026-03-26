@@ -64,6 +64,31 @@ class TestEntryAgentParams(unittest.TestCase):
         self.assertEqual(len(decisions), 1)
         self.assertEqual(decisions[0].get("action"), "BUY")
 
+    def test_evaluate_entry_option_gating_outside_window_returns_list_of_dict(self):
+        """
+        Regression test:
+        `evaluate_entry()` must always return a list[dict].
+        A previous regression returned a dict early, which broke orchestrator screen.
+        """
+        cand = {
+            "ticker": "TEST",
+            "current_price": 100.0,
+            "analysis": {"confidence": 0.9},
+            "rsi": 10.0,
+            "drop_pct": -10.0,
+            "volume_ratio": 2.0,
+            "news": [],
+        }
+
+        with mock.patch.object(entry_agent, "is_entry_window", return_value=False), mock.patch.object(
+            entry_agent, "evaluate_option_trade", return_value={"strike": 100.0, "expiration": "2026-04-01", "premium": 2.0, "bid": 1.5, "ask": 1.6, "volume": 200.0, "contracts": 1, "cost": 200.0, "type": "OPTION"}
+        ):
+            out = entry_agent.evaluate_entry([cand], portfolio_value=20000.0)
+        self.assertIsInstance(out, list)
+        self.assertEqual(len(out), 1)
+        self.assertIsInstance(out[0], dict)
+        self.assertEqual(out[0].get("action"), "SKIP")
+
 
 if __name__ == "__main__":
     unittest.main()

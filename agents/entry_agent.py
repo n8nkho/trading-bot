@@ -361,23 +361,25 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                             f"Outside entry window (current: {current_time_et.strftime('%H:%M')} ET, "
                             f"window: 14:30-{eh:02d}:{em:02d} ET)"
                         )
-                        return create_skip_decision(ticker, reason)
-                    decision = {
-                        'ticker': ticker,
-                        'trade_type': 'OPTION',
-                        'action': 'BUY',
-                        'option_details': option_trade,
-                        # Keys consumed by orchestrator/execution
-                        'strike': option_trade['strike'],
-                        'expiration': option_trade['expiration'],
-                        'contracts': option_trade['contracts'],
-                        'call': option_trade.get('call', True),
-                        'entry_price': option_trade['premium'],  # option premium per share-equivalent
-                        'position_size': option_trade['cost'],   # total premium cost
-                        'confidence': stock_confidence,
-                        'reason': 'Option trade offers better ROI'
-                    }
-                    logging.info(f"{ticker}: OPTION decision - {decision}")
+                        decision = create_skip_decision(ticker, reason)
+                        logging.info(f"{ticker}: OPTION gated by entry window - {decision}")
+                    else:
+                        decision = {
+                            'ticker': ticker,
+                            'trade_type': 'OPTION',
+                            'action': 'BUY',
+                            'option_details': option_trade,
+                            # Keys consumed by orchestrator/execution
+                            'strike': option_trade['strike'],
+                            'expiration': option_trade['expiration'],
+                            'contracts': option_trade['contracts'],
+                            'call': option_trade.get('call', True),
+                            'entry_price': option_trade['premium'],  # option premium per share-equivalent
+                            'position_size': option_trade['cost'],   # total premium cost
+                            'confidence': stock_confidence,
+                            'reason': 'Option trade offers better ROI'
+                        }
+                        logging.info(f"{ticker}: OPTION decision - {decision}")
                 else:
                     decision = evaluate_single_entry(candidate, portfolio_value, rsi_threshold=rsi_effective)
                     decision['trade_type'] = 'STOCK'
