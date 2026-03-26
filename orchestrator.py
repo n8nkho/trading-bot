@@ -47,6 +47,7 @@ from agents.position_trading_manager import PositionTradingManager
 from agents.sector_rotation_manager import run_sector_rotation_manager
 from agents.geographic_allocation_manager import run_geographic_allocation_manager
 from agents.cio_agent import run_cio_cycle
+from agents.scouts.swarm import run_scout_swarm
 from utils.grok_sentiment import check_twitter_sentiment
 from utils.option_contract_schema import normalize_option_decision
 from utils.policy_profile import get_profile_bundle
@@ -2357,6 +2358,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py sector_rotation [portfolio_value] - Build monthly sector rotation signal")
         print("  python orchestrator.py geographic_allocation [portfolio_value] - Build international allocation plan")
         print("  python orchestrator.py cio_cycle - Produce top-level CIO directive")
+        print("  python orchestrator.py scout_swarm - Run scout swarm queue builder")
         print("  python orchestrator.py ops_recovery [--no-fortress] [--no-screen] [--no-pending] [portfolio_value]")
         print("  python orchestrator.py regime_check               - Print fortress + hedging file snapshot")
         print("  python orchestrator.py print_entry_skips          - Print latest daily_signals entry_gate_summary")
@@ -2424,6 +2426,12 @@ if __name__ == "__main__":
     if command in ("cio_cycle", "cio-cycle"):
         ensure_repo_root_cwd()
         out = run_cio_cycle(data_dir=DATA_DIR)
+        print(json.dumps(out, indent=2, default=str))
+        sys.exit(0)
+
+    if command in ("scout_swarm", "scout-swarm"):
+        ensure_repo_root_cwd()
+        out = run_scout_swarm(data_dir=DATA_DIR)
         print(json.dumps(out, indent=2, default=str))
         sys.exit(0)
 
