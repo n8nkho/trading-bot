@@ -1,5 +1,5 @@
 {
-  "active_profile": "balanced",
+  "active_profile": "opportunistic",
   "book_reference": {
     "portfolio_value_usd": 20000,
     "notes": "Authoritative limits are the risk.*_pct fields below. Dollar amounts are illustrative at this reference book (matches defaults.portfolio_value_usd in fortress_runtime.yaml).",

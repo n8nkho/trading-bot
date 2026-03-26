@@ -25,7 +25,7 @@ MAX_POSITION_SIZE = 2000  # Maximum dollars per position
 RSI_THRESHOLD = 35  # Extra oversold threshold
 # Relax/tighten stabilization via env for operator tuning (paper/prototype safe).
 # Condition: current_price > day_low * STABILIZATION_FACTOR
-STABILIZATION_FACTOR = float(os.getenv("ENTRY_STABILIZATION_FACTOR", "1.02"))
+STABILIZATION_FACTOR = float(os.getenv("ENTRY_STABILIZATION_FACTOR", "1.00"))
 ENTRY_WINDOW_START = (14, 30)  # 2:30 PM ET
 ENTRY_WINDOW_END = (15, 45)  # 3:45 PM ET
 
@@ -43,7 +43,8 @@ def _entry_window_end_with_extension() -> tuple[int, int]:
     """Extend end of entry window by ENTRY_WINDOW_EXTEND_END_MINUTES (env, default 0)."""
     end_h, end_m = ENTRY_WINDOW_END
     try:
-        extra = int(os.getenv("ENTRY_WINDOW_EXTEND_END_MINUTES", "0") or "0")
+        # Default extension keeps screening -> entry evaluation robust against runtime drift.
+        extra = int(os.getenv("ENTRY_WINDOW_EXTEND_END_MINUTES", "15") or "0")
     except ValueError:
         extra = 0
     if extra <= 0:
