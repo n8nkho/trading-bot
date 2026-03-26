@@ -2069,6 +2069,28 @@ def flush_pending_execution_queue() -> dict:
         logger.info("execute_pending: no pending batches in data/pending_execution_queue.json")
         return {"ok": True, "message": "no pending batches", "batches": 0, "executed": 0, "failed": 0}
 
+    # If markets are closed, do not clear anything.
+    # This makes it safe for cron/systemd to call `execute_pending` repeatedly.
+    try:
+        from utils.market_calendar import is_us_equity_rth_open
+
+        if not is_us_equity_rth_open():
+            logger.info(
+                "execute_pending: RTH closed; deferring %d pending batch(es) without clearing queue",
+                len(batches),
+            )
+            return {
+                "ok": True,
+                "message": "market closed; pending kept",
+                "batches": len(batches),
+                "executed": 0,
+                "failed": 0,
+                "deferred": True,
+            }
+    except Exception:
+        # Never let this guard break execution; if it's broken, fallback to old behavior.
+        pass
+
     current_params = load_current_params()
 
     async def _run_all():
