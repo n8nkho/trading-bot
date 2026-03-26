@@ -9,6 +9,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.local_llm import call_ollama
 from agents.screener_agent import get_news_headlines
 from utils.option_contract_schema import normalize_option_position
+from utils.runtime_config import get_llm_config
 
 logging.basicConfig(
     filename='logs/exit_monitor.log',
@@ -431,7 +432,24 @@ Respond with ONLY a JSON object in this exact format:
 Consider negative: earnings misses, regulatory issues, lawsuits, management changes, downgrades, guidance cuts.
 Consider neutral/positive: normal market moves, analyst upgrades, product launches."""
 
-        # Call local LLM
+        # LLM is advisory/optional. If provider=none (default runtime), skip the
+        # blocking Ollama call so the monitor can run autonomously.
+        try:
+            llm_cfg = get_llm_config() or {}
+        except Exception:
+            llm_cfg = {}
+        llm_provider = str(llm_cfg.get("provider") or "").strip().lower()
+        disable_llm = str(os.getenv("EXITMONITOR_DISABLE_LLM", "0") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if disable_llm or llm_provider == "none":
+            logging.info(f"{ticker}: Exit-monitor LLM disabled (provider=none or EXITMONITOR_DISABLE_LLM=1).")
+            return {"has_negative_news": False, "summary": "LLM disabled (provider=none)."}
+
+        # Call local LLM (only when enabled)
         response = call_ollama(prompt, model="llama3.1:8b", timeout=30)
         
         # Parse response
