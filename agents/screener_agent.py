@@ -10,6 +10,7 @@ import yfinance as yf
 from utils.local_llm import analyze_stock_drop
 from agents.vision_analyst import analyze_chart_patterns, pattern_to_signal
 from utils.policy_profile import get_profile_bundle
+from utils.runtime_config import get_llm_config
 
 # Load current parameters
 DATA_DIR = Path("data")
@@ -52,6 +53,21 @@ def run_screener():
     
     with open('config/watchlist.json', 'r') as f:
         watchlist_payload = json.load(f)
+
+    # LLM is optional/advisory. By default runtime config sets llm.provider=none,
+    # so we should not block screening on a local Ollama call.
+    llm_cfg = {}
+    try:
+        llm_cfg = get_llm_config() or {}
+    except Exception:
+        llm_cfg = {}
+    llm_provider = str(llm_cfg.get("provider") or "").strip().lower()
+    disable_llm = str(os.getenv("SCREENER_DISABLE_LLM", "0") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    } or llm_provider == "none"
 
     def _norm_stock(x):
         # Accept either {"ticker": "..."} objects or plain ticker strings.
@@ -297,7 +313,16 @@ def run_screener():
 
             try:
                 news_headlines = get_news_headlines(ticker, 3)
-                analysis = analyze_stock_drop(ticker, news_headlines, {"drop_pct": drop_pct, "rsi": rsi})
+                # Only call local LLM when enabled. Otherwise keep analysis bounded so
+                # downstream entry sizing still has a confidence value.
+                if disable_llm:
+                    analysis = {
+                        "classification": "UNCERTAIN",
+                        "confidence": 0.5,
+                        "reasoning": "LLM disabled (provider=none or SCREENER_DISABLE_LLM=1).",
+                    }
+                else:
+                    analysis = analyze_stock_drop(ticker, news_headlines, {"drop_pct": drop_pct, "rsi": rsi})
                 pattern_result = analyze_chart_patterns(ticker, price_data=stock_data, period="3mo", interval="1d")
 
                 vision_signal = None
