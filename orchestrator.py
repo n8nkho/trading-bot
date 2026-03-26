@@ -856,6 +856,21 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
                 hedge_gate_summary["passed"] = None
                 hedge_gate_summary["reason"] = "Failed to compute hedge gate metrics from fortress report"
 
+        # Defensive: never allow non-dict hedge_gate_summary to escape.
+        # Some unexpected fortress_report payloads (or compute regressions) can yield
+        # a non-dict value; this would later break `hedge_gate_summary.get("passed")`.
+        if not isinstance(hedge_gate_summary, dict):
+            hedge_gate_summary = {
+                "passed": None,
+                "applied_count": None,
+                "skipped_count": None,
+                "not_evaluated_count": None,
+                "bonds_target_present": None,
+                "total_known": None,
+                "strategy_gate_details": None,
+                "reason": "fortress hedge gate returned non-dict result; coerced to safe defaults",
+            }
+
         # Attach strict/hedge gate telemetry to the daily signals screener meta.
         screening_meta["strict_mode"] = strict_mode
         screening_meta["strict_mode_reason"] = strict_mode_reason
