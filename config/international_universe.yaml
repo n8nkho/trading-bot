@@ -1,0 +1,16 @@
+regions:
+  - symbol: EFA
+    region: Developed ex-US
+    hedge_symbol: DX-Y.NYB
+  - symbol: EEM
+    region: Emerging Markets
+    hedge_symbol: UUP
+  - symbol: EWJ
+    region: Japan
+    hedge_symbol: DX-Y.NYB
+  - symbol: VGK
+    region: Europe
+    hedge_symbol: FXE
+allocation:
+  international_sleeve_pct: 20
+  max_region_pct: 8
