@@ -58,6 +58,19 @@ position_size_reduction = 1.0  # multiplier for position sizing
 
 STATE_FILE = Path("data") / "risk_guardian_state.json"
 
+# If enabled, automatically clears persisted circuit-breaker state after a time window,
+# so a single losing streak doesn't permanently require operator intervention.
+#
+# - Default: ON
+# - Disable: FORTRESS_AUTO_RESET_RISK_GUARDIAN_STATE=0
+AUTO_RESET_RISK_GUARDIAN_STATE = str(os.getenv("FORTRESS_AUTO_RESET_RISK_GUARDIAN_STATE", "1")).strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+RISK_STATE_MAX_AGE_HOURS = float(os.getenv("FORTRESS_RISK_STATE_MAX_AGE_HOURS", "24"))
+
 
 def _load_risk_state() -> None:
     """
@@ -71,6 +84,23 @@ def _load_risk_state() -> None:
             consecutive_losses = int(data.get("consecutive_losses", 0) or 0)
             circuit_breaker_active = bool(data.get("circuit_breaker_active", False))
             position_size_reduction = float(data.get("position_size_reduction", 1.0) or 1.0)
+
+            updated_at_raw = data.get("updated_at")
+            if AUTO_RESET_RISK_GUARDIAN_STATE and updated_at_raw:
+                try:
+                    updated_at = datetime.fromisoformat(str(updated_at_raw))
+                    age_hours = (datetime.now() - updated_at).total_seconds() / 3600.0
+                    if age_hours > RISK_STATE_MAX_AGE_HOURS:
+                        logger.warning(
+                            "Auto-resetting risk_guardian state because persisted state is stale "
+                            f"(age_hours={age_hours:.2f} > max_age_hours={RISK_STATE_MAX_AGE_HOURS})"
+                        )
+                        consecutive_losses = 0
+                        circuit_breaker_active = False
+                        position_size_reduction = 1.0
+                except Exception:
+                    # If parsing fails, do not reset (safer than clearing state unexpectedly).
+                    pass
             logger.info(f"Loaded persisted risk state: consecutive_losses={consecutive_losses}")
     except Exception as e:
         logger.warning(f"Could not load risk state from {STATE_FILE}: {type(e).__name__}: {str(e)}")
