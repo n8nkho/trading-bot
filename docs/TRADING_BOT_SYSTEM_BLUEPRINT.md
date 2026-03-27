@@ -97,6 +97,9 @@ This document is a single-source blueprint for external review of the Fortress t
   5. meta-learning state update in `data/meta_learning_state.json`
 - Writes operational telemetry to `logs/evolution.log`.
 - Safety default: no automatic file changes unless `FORTRESS_EVOLUTION_ALLOW_WRITES=1`.
+- Current operator setting (from `.env`): `FORTRESS_EVOLUTION_ALLOW_WRITES=1` (parameter auto-write path enabled).
+  - Scope is intentionally limited to safe parameter patching (`data/current_params.json`).
+  - `evolve` does not auto-commit or auto-deploy code changes.
 
 ## 4) Agent Inventory (High-Level)
 
