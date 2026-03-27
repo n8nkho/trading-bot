@@ -158,8 +158,11 @@ fi
 REMOTE_CMD+=" && echo \"[deploy] remote steps finished.\""
 
 echo "[deploy] Running remote setup commands..."
-if ! ssh -p "${PORT}" "${USER_NAME}@${HOST}" "${REMOTE_CMD}"; then
-  echo "[deploy] ERROR: remote SSH command failed (exit $?). Common causes:"
+# Run ssh and capture exit code immediately — inside `if ! ssh; then ... $?` is often 0 (if construct), not ssh's code.
+ssh -p "${PORT}" "${USER_NAME}@${HOST}" "${REMOTE_CMD}"
+_ssh_ec=$?
+if [[ "${_ssh_ec}" -ne 0 ]]; then
+  echo "[deploy] ERROR: remote SSH command failed (exit ${_ssh_ec}). Common causes:"
   echo "  - sudo systemctl needs passwordless sudo for ${SERVICE_NAME:-<service>}"
   echo "  - port 8083 still held: on server run: sudo fuser -k 8083/tcp && sudo systemctl restart fortress-dashboard"
   exit 255
