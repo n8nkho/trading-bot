@@ -119,6 +119,7 @@ This document is a single-source blueprint for external review of the Fortress t
   - DeepSeek calls now log token usage and estimated USD cost into `data/api_costs.jsonl`.
   - Daily/monthly/lifetime summaries are available via `utils/cost_calculator.py`.
   - CLI usage report: `python3 scripts/report_llm_usage.py`.
+  - Operator check: `python3 orchestrator.py verify_learning` — prints provider, env tunables, and whether `data/llm_decisions.jsonl` / `data/llm_lessons.jsonl` / `data/api_costs.jsonl` exist with line counts.
 
 ## 4) Agent Inventory (High-Level)
 

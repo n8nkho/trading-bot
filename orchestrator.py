@@ -309,6 +309,69 @@ logger = logging.getLogger(__name__)
 DATA_DIR = _ORCHESTRATOR_ROOT / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def verify_learning() -> dict:
+    """
+    Report DeepSeek/LLM config, recursive-learning artifacts (llm_decisions / llm_lessons),
+    and cost telemetry. JSON-serializable for dashboards/scripts.
+    """
+    from utils.runtime_config import get_llm_config
+
+    cfg = get_llm_config() or {}
+    provider = str(cfg.get("provider") or "none").strip().lower()
+    deepseek_model = str(cfg.get("deepseek_model") or cfg.get("default_model") or "").strip()
+
+    def _file_info(path: Path) -> dict:
+        out = {"path": str(path), "exists": path.exists(), "lines": 0, "last_timestamp": None}
+        if not path.exists():
+            return out
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            nonempty = [ln for ln in lines if ln.strip()]
+            out["lines"] = len(nonempty)
+            if nonempty:
+                try:
+                    last = json.loads(nonempty[-1])
+                    out["last_timestamp"] = last.get("timestamp") or last.get("outcome_timestamp")
+                except Exception:
+                    out["last_timestamp"] = "parse_error"
+        except OSError as e:
+            out["error"] = str(e)
+        return out
+
+    decisions = _file_info(DATA_DIR / "llm_decisions.jsonl")
+    lessons = _file_info(DATA_DIR / "llm_lessons.jsonl")
+    api_costs = _file_info(DATA_DIR / "api_costs.jsonl")
+
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "llm": {
+            "provider": provider,
+            "deepseek_model": deepseek_model or None,
+            "entry_min_confidence": float(os.getenv("FORTRESS_LLM_ENTRY_MIN_CONFIDENCE", "0.55")),
+            "learning_on_exit": str(os.getenv("FORTRESS_LLM_LEARNING_ON_EXIT", "1")).strip().lower()
+            in {"1", "true", "yes", "on"},
+        },
+        "artifacts": {
+            "llm_decisions_jsonl": decisions,
+            "llm_lessons_jsonl": lessons,
+            "api_costs_jsonl": api_costs,
+        },
+        "integration": {
+            "entry_eval": "agents/entry_agent.py → LLMReasoningEngine.evaluate_trade_opportunity → utils/local_llm.call_llm",
+            "exit_eval": "agents/exit_monitor.py → LLMReasoningEngine.evaluate_exit (+ call_llm for news)",
+            "screener_drop": "agents/screener_agent.py → analyze_stock_drop → call_llm",
+            "learning_lesson": "agents/llm_learning_agent.py → call_llm; orchestrator links signal_id on BUY + outcome on SELL_ALL",
+            "evolve": "orchestrator.py evolve → recursive_evolution + llm_learning_review",
+        },
+        "hints": [
+            "llm_decisions.jsonl is created on first LLM entry evaluation (screen → entry gate with provider≠none).",
+            "llm_lessons.jsonl appears after a full position exit (SELL_ALL) with signal_id on the position, or after evolve batch review.",
+            "If files stay empty: confirm config/fortress_runtime.yaml llm.provider is deepseek (or ollama), DEEPSEEK_API_KEY set, and run a weekday screen during/after RTH for candidates.",
+        ],
+    }
+
+
 POSITIONS_FILE = DATA_DIR / "positions.json"
 PNL_LEDGER_FILE = DATA_DIR / "pnl_ledger.jsonl"
 FORTRESS_REPORT_MAX_AGE_HOURS = float(os.getenv("FORTRESS_REPORT_MAX_AGE_HOURS", "30"))
@@ -2501,6 +2564,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py analyst_ensemble - Score opportunities with analyst quorum")
         print("  python orchestrator.py generate_intelligence_brief - Generate daily self-QA intelligence brief")
         print("  python orchestrator.py evolve - Run recursive self-improvement cycle")
+        print("  python orchestrator.py verify_learning            - LLM provider + recursive-learning file status")
         print("  python orchestrator.py ops_recovery [--no-fortress] [--no-screen] [--no-pending] [portfolio_value]")
         print("  python orchestrator.py regime_check               - Print fortress + hedging file snapshot")
         print("  python orchestrator.py print_entry_skips          - Print latest daily_signals entry_gate_summary")
@@ -2618,6 +2682,11 @@ if __name__ == "__main__":
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         out = run_recursive_evolution(data_dir=DATA_DIR)
         print(json.dumps(out, indent=2, default=str))
+        sys.exit(0)
+
+    if command in ("verify_learning", "verify-learning"):
+        ensure_repo_root_cwd()
+        print(json.dumps(verify_learning(), indent=2, default=str))
         sys.exit(0)
 
     # Cron/systemd often starts with wrong cwd; keep data/ + logs/ under repo root.
