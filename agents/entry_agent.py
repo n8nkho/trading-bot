@@ -13,6 +13,7 @@ from pathlib import Path
 from utils.runtime_config import get_default_portfolio_usd
 from utils.policy_profile import get_profile_bundle
 from utils.market_calendar import is_us_equity_rth_open
+from agents.llm_reasoning_engine import LLMReasoningEngine
 
 logging.basicConfig(
     filename='logs/entry.log',
@@ -30,6 +31,14 @@ RSI_THRESHOLD = 35  # Extra oversold threshold
 STABILIZATION_FACTOR = float(os.getenv("ENTRY_STABILIZATION_FACTOR", "1.00"))
 ENTRY_WINDOW_START = (14, 30)  # 2:30 PM ET
 ENTRY_WINDOW_END = (15, 45)  # 3:45 PM ET
+_LLM_ENGINE: LLMReasoningEngine | None = None
+
+
+def _get_llm_engine() -> LLMReasoningEngine:
+    global _LLM_ENGINE
+    if _LLM_ENGINE is None:
+        _LLM_ENGINE = LLMReasoningEngine()
+    return _LLM_ENGINE
 def _load_analyst_consensus_index(data_dir: Path | None = None) -> dict[str, dict]:
     root = data_dir or Path("data")
     try:
@@ -503,6 +512,40 @@ def evaluate_single_entry(candidate, portfolio_value, *, rsi_threshold: float | 
     screener_rsi = candidate.get('rsi', 100)
     rsi_cap = float(rsi_threshold) if rsi_threshold is not None else float(RSI_THRESHOLD)
     confidence = candidate.get('analysis', {}).get('confidence', 0.5)
+
+    # LLM-first reasoning path (replaces deterministic gating when provider is enabled).
+    llm_decision = _get_llm_engine().evaluate_trade_opportunity(candidate)
+    if llm_decision.get("llm_available"):
+        llm_action = str(llm_decision.get("decision") or "SKIP").upper()
+        llm_conf = float(llm_decision.get("confidence") or 0.0)
+        if llm_action == "BUY" and llm_conf >= 0.60:
+            # Keep sizing bounded by existing policy/risk caps.
+            current_price = float(candidate.get("current_price") or 0.0)
+            if current_price <= 0:
+                return create_skip_decision(ticker, "LLM BUY but current price unavailable")
+            base_position = float(portfolio_value) * BASE_POSITION_PCT
+            multiplier = float(llm_decision.get("position_size_multiplier") or 1.0)
+            multiplier = max(0.5, min(1.5, multiplier))
+            policy_cap = _max_new_position_usd_from_policy(portfolio_value)
+            position_size = min(base_position * multiplier, MAX_POSITION_SIZE, policy_cap)
+            shares = int(position_size / current_price)
+            if shares < 1:
+                return create_skip_decision(ticker, "LLM BUY but position size below 1 share")
+            return {
+                "ticker": ticker,
+                "action": "BUY",
+                "reason": f"LLM reasoning BUY: {llm_decision.get('reasoning')}",
+                "position_size": round(shares * current_price, 2),
+                "shares": shares,
+                "entry_price": current_price,
+                "confidence": llm_conf,
+                "timestamp": datetime.now().isoformat(),
+                "llm_powered": True,
+                "llm_key_factors": llm_decision.get("key_factors") or [],
+                "llm_risks": llm_decision.get("risks") or [],
+            }
+        # LLM explicitly SKIPs or low-confidence BUY => skip.
+        return create_skip_decision(ticker, f"LLM decision {llm_action}: {llm_decision.get('reasoning')}")
     
     # Fetch current intraday data
     logging.info(f"{ticker}: Fetching intraday data...")

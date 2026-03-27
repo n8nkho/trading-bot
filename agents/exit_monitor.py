@@ -7,6 +7,7 @@ import os
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.local_llm import call_llm
+from agents.llm_reasoning_engine import LLMReasoningEngine
 from agents.screener_agent import get_news_headlines
 from utils.option_contract_schema import normalize_option_position
 from utils.runtime_config import get_llm_config
@@ -16,6 +17,14 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+_LLM_ENGINE: LLMReasoningEngine | None = None
+
+
+def _get_llm_engine() -> LLMReasoningEngine:
+    global _LLM_ENGINE
+    if _LLM_ENGINE is None:
+        _LLM_ENGINE = LLMReasoningEngine()
+    return _LLM_ENGINE
 
 # Exit Configuration
 STOP_LOSS_PCT = -0.02  # -2% stop loss
@@ -327,6 +336,26 @@ def evaluate_exit(position):
     pnl_pct = (current_price - entry_price) / entry_price
     
     logging.info(f"{ticker}: Entry: ${entry_price:.2f}, Current: ${current_price:.2f}, P&L: {pnl_pct*100:.2f}%")
+
+    # LLM-first reasoning path for stock exits.
+    llm_decision = _get_llm_engine().evaluate_exit(
+        {
+            "ticker": ticker,
+            "entry_price": entry_price,
+            "current_price": float(current_price),
+            "pnl_pct": float(pnl_pct * 100.0),
+            "days_held": (datetime.now() - entry_time.replace(tzinfo=None)).days,
+            "qty": qty,
+        }
+    )
+    if llm_decision.get("llm_available"):
+        decision = str(llm_decision.get("decision") or "HOLD").upper()
+        confidence = float(llm_decision.get("confidence") or 0.0)
+        if decision == "EXIT" and confidence >= 0.70:
+            reason = f"LLM EXIT ({confidence:.2f}): {llm_decision.get('reasoning')}"
+            return create_exit_decision(ticker, "SELL_ALL", reason, qty, current_price, pnl_pct)
+        reason = f"LLM HOLD/SKIP ({confidence:.2f}): {llm_decision.get('reasoning')}"
+        return create_hold_decision(ticker, reason, current_price, pnl_pct)
     
     # Check 1: Stop Loss (-2%)
     if pnl_pct <= STOP_LOSS_PCT:

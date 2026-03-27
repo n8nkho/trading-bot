@@ -14,15 +14,14 @@ from __future__ import annotations
 import glob
 import json
 import logging
-import math
 import os
 import random
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from agents.risk_guardian import get_risk_status
+from agents.llm_reasoning_engine import LLMReasoningEngine
 from utils.local_llm import call_llm
 
 
@@ -286,6 +285,17 @@ def run_recursive_evolution(*, data_dir: Path = DATA_DIR) -> dict[str, Any]:
     p3 = _phase3_strategy_ab()
     p4 = _phase4_autonomous_changes(p2)
     p5 = _phase5_meta_learning(p1, p2, p3, p4)
+    llm_meta: dict[str, Any] = {"patterns": [], "insights": [], "recommendations": [], "new_strategy": None}
+    trades = _extract_trade_outcomes()
+    if len(trades) >= 10:
+        engine = LLMReasoningEngine()
+        llm_meta = engine.discover_patterns(trades)
+        perf = {
+            "total_trades": len(trades),
+            "win_rate": round(sum(1 for t in trades if float(t.get("pnl_pct") or 0.0) > 0) / max(1, len(trades)), 4),
+            "avg_pnl_pct": round(sum(float(t.get("pnl_pct") or 0.0) for t in trades) / max(1, len(trades)), 4),
+        }
+        llm_meta["new_strategy"] = engine.generate_new_strategy(perf)
 
     result = {
         "timestamp": datetime.now().isoformat(),
@@ -294,6 +304,7 @@ def run_recursive_evolution(*, data_dir: Path = DATA_DIR) -> dict[str, Any]:
         "phase3_strategy_ab_testing": p3,
         "phase4_autonomous_changes": p4,
         "phase5_meta_learning": p5,
+        "llm_pattern_discovery": llm_meta,
         "safety": {
             "paper_only_recommended": True,
             "autonomous_writes_enabled": str(os.getenv("FORTRESS_EVOLUTION_ALLOW_WRITES", "0")).strip().lower()

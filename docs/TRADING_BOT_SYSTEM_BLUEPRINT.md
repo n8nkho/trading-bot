@@ -2,7 +2,7 @@
 
 This document is a single-source blueprint for external review of the Fortress trading bot system: architecture, controls, runtime behavior, and improvement targets.
 
-**Last updated:** 2026-03-27 (post recursive evolution rollout + Command Center daily evolution telemetry)
+**Last updated:** 2026-03-27 (post LLM-first entry/exit reasoning integration + daily evolution telemetry)
 
 ## 1) Executive Snapshot
 
@@ -100,6 +100,17 @@ This document is a single-source blueprint for external review of the Fortress t
 - Current operator setting (from `.env`): `FORTRESS_EVOLUTION_ALLOW_WRITES=1` (parameter auto-write path enabled).
   - Scope is intentionally limited to safe parameter patching (`data/current_params.json`).
   - `evolve` does not auto-commit or auto-deploy code changes.
+- LLM pattern discovery extension:
+  - when sufficient completed trades exist, `evolve` adds `llm_pattern_discovery` with discovered patterns + strategy proposal.
+
+### J) LLM-First Reasoning Flow (`agents/llm_reasoning_engine.py`)
+
+- Entry and stock-exit decisions are LLM-first when LLM provider is enabled.
+- LLM response contract is strict JSON and persisted to `data/llm_reasoning_history.jsonl`.
+- Safety fallback remains active:
+  - if provider is disabled/unavailable or response is malformed, deterministic fallback path executes.
+- Provider routing:
+  - `llm.provider=ollama|deepseek|none` in runtime config (`none` remains safest default).
 
 ## 4) Agent Inventory (High-Level)
 
@@ -111,6 +122,7 @@ This document is a single-source blueprint for external review of the Fortress t
 - **Agentic overlay:** `scouts/*`, `analysts/*`, `cio_agent.py`
 - **Self-improvement/QA intelligence:** `intelligence_brief_generator.py`
 - **Recursive evolution engine:** `recursive_evolution.py`
+- **LLM reasoning agent:** `llm_reasoning_engine.py`
 - **Audit/governance:** `bot_audit_agent.py`, `drift_detector.py`, `error_detective.py`
 - **Adaptation/analysis:** `performance_analyzer.py`, `walk_forward_validator.py`, `meta_architect.py`
 
@@ -238,6 +250,7 @@ Ask reviewers to evaluate:
 - `agents/bot_audit_agent.py` — objective audit and diagnostics
 - `agents/intelligence_brief_generator.py` — daily self-QA/learning brief generation
 - `agents/recursive_evolution.py` — 5-phase recursive improvement cycle
+- `agents/llm_reasoning_engine.py` — LLM-first entry/exit reasoning + pattern discovery
 - `utils/pre_trade_gate.py` — final broker submission controls
 - `utils/runtime_config.py` — runtime defaults and toggles
 - `utils/policy_profile.py` + `config/policy_profiles.json` — policy layer
