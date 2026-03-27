@@ -2,7 +2,7 @@
 
 This document is a single-source blueprint for external review of the Fortress trading bot system: architecture, controls, runtime behavior, and improvement targets.
 
-**Last updated:** 2026-03-26 (post Task 1-8 implementation + Command Center refresh)
+**Last updated:** 2026-03-27 (post agentic execution integration + daily intelligence brief system)
 
 ## 1) Executive Snapshot
 
@@ -75,6 +75,18 @@ This document is a single-source blueprint for external review of the Fortress t
 - `orchestrator.py analyst_ensemble` -> `data/analyst_consensus_YYYYMMDD.json`
 - `orchestrator.py cio_cycle` -> `data/cio_directive_YYYYMMDD.json`
 
+### H) Daily Intelligence Brief (`orchestrator.py generate_intelligence_brief`)
+
+- Generates post-close self-QA + learning report artifacts:
+  - `data/fortress_intelligence_brief_YYYYMMDD.json` (machine-readable)
+  - `data/fortress_intelligence_brief_YYYYMMDD.md` (human-readable summary)
+- Aggregates outcomes from PnL/decision logs plus agentic artifacts (CIO/scout/analyst/sector/geo).
+- Runs rule-based self-diagnosis checks for:
+  - unexecuted analyst BUY recommendations
+  - scout conversion gaps
+  - execution-layer and scheduler coverage gaps
+- Produces forward-looking optimization queue and experiment suggestions.
+
 ## 4) Agent Inventory (High-Level)
 
 - **Signal generation:** `screener_agent.py`, `intraday_sniper.py`, `spy_intraday_swing.py`
@@ -83,6 +95,7 @@ This document is a single-source blueprint for external review of the Fortress t
 - **Regime/hedging:** `fortress_orchestrator.py`, strategy sleeves (`bond_manager.py`, `vix_insurance.py`, etc.)
 - **Allocation/planning managers:** `day_trading_manager.py`, `swing_trading_manager.py`, `position_trading_manager.py`, `sector_rotation_manager.py`, `geographic_allocation_manager.py`
 - **Agentic overlay:** `scouts/*`, `analysts/*`, `cio_agent.py`
+- **Self-improvement/QA intelligence:** `intelligence_brief_generator.py`
 - **Audit/governance:** `bot_audit_agent.py`, `drift_detector.py`, `error_detective.py`
 - **Adaptation/analysis:** `performance_analyzer.py`, `walk_forward_validator.py`, `meta_architect.py`
 
@@ -123,7 +136,7 @@ This document is a single-source blueprint for external review of the Fortress t
 
 ## 7) Operational Architecture
 
-- **Scheduler:** cron (user crontab) runs `screen`, `monitor`, `snipe`, `fortress`, `execute_pending`.
+- **Scheduler:** cron (user crontab) runs `screen`, `monitor`, `snipe`, `fortress`, `execute_pending`, `generate_intelligence_brief` (17:00 ET weekdays).
 - **Logs:** `logs/screener.log`, `logs/monitor.log`, `logs/sniper.log`, `logs/fortress.log`, etc.
 - **Dashboard:** systemd service for command center (`deploy/systemd/` docs/templates).
 - **State files:** all under repo `data/`.
@@ -136,11 +149,12 @@ This document is a single-source blueprint for external review of the Fortress t
   - live safety status (halt, circuit state, strict mode, risk streak, auto-reset window)
   - hedging context + strategy gate metrics
   - agentic artifact summary (CIO directive, scout queue, analyst consensus, multi-timeframe, sector rotation, geo allocation)
+  - fortress intelligence brief panel (latest report status, executive summary, critical blockers, markdown preview)
   - expanded runbooks including new agentic commands
 - Remaining caveat:
   - data shown is artifact-driven; absence usually means command/cadence not run yet, not necessarily failure.
 
-### Verification Snapshot (2026-03-26)
+### Verification Snapshot (2026-03-27)
 
 - **Broker smoke:** `python3 smoke_alpaca_paper_trade_cancel.py` passed (`AAPL` limit order submitted and canceled on Alpaca paper).
 - **Executor dry safety check:** forced sector/geographic executor commands ran with trading halt enabled and were blocked by pre-trade gate as expected:
@@ -149,6 +163,11 @@ This document is a single-source blueprint for external review of the Fortress t
     - `data/sector_execution_log.jsonl`
     - `data/geographic_execution_log.jsonl`
 - **Test suite status:** all current integration/unit tests green after agentic execution wiring.
+- **Daily intelligence brief generation:** command succeeds locally and on Oracle VM:
+  - `python3 orchestrator.py generate_intelligence_brief`
+  - output files confirmed in `data/` with current date stamp.
+- **Dashboard/API wiring:** `/api/intelligence_brief` returns latest report payload and Command Center panel renders summary + blockers.
+- **Cron scheduling:** weekday 17:00 ET intelligence job installed on Oracle user crontab.
 
 ## 9) Known Improvement Opportunities (for External Review)
 
@@ -192,6 +211,7 @@ Ask reviewers to evaluate:
 - `utils/volatility_adaptive_sizing.py` — VIX-tiered adaptive risk cap
 - `utils/smart_execution.py` — order-type planning helper
 - `agents/bot_audit_agent.py` — objective audit and diagnostics
+- `agents/intelligence_brief_generator.py` — daily self-QA/learning brief generation
 - `utils/pre_trade_gate.py` — final broker submission controls
 - `utils/runtime_config.py` — runtime defaults and toggles
 - `utils/policy_profile.py` + `config/policy_profiles.json` — policy layer
