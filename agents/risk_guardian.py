@@ -72,6 +72,45 @@ AUTO_RESET_RISK_GUARDIAN_STATE = str(os.getenv("FORTRESS_AUTO_RESET_RISK_GUARDIA
 RISK_STATE_MAX_AGE_HOURS = float(os.getenv("FORTRESS_RISK_STATE_MAX_AGE_HOURS", "24"))
 
 
+def _policy_bundle() -> dict:
+    """
+    Return active policy bundle with safe fallbacks.
+    """
+    try:
+        bundle = get_profile_bundle()
+        if isinstance(bundle, dict):
+            return bundle
+    except Exception as e:
+        logger.warning(f"Policy profile unavailable, falling back to built-ins: {type(e).__name__}: {str(e)}")
+    return {"active_profile": "balanced", "risk": {}}
+
+
+def _policy_risk_limits() -> dict:
+    """
+    Source-of-truth profile limits from config/policy_profiles.json.
+    These are the configured policy limits (without volatility adaptation).
+    """
+    bundle = _policy_bundle()
+    risk_cfg = bundle.get("risk") or {}
+    profile_name = bundle.get("active_profile") or "balanced"
+    out = {
+        "max_positions": int(risk_cfg.get("max_positions", MAX_POSITIONS)),
+        "max_position_size_pct": float(risk_cfg.get("max_position_size_pct", MAX_POSITION_SIZE_PCT)),
+        "max_total_risk_pct": float(risk_cfg.get("max_total_risk_pct", MAX_TOTAL_RISK_PCT)),
+        "daily_loss_limit_pct": float(risk_cfg.get("daily_loss_limit_pct", DAILY_LOSS_LIMIT_PCT)),
+        "weekly_loss_limit_pct": float(risk_cfg.get("weekly_loss_limit_pct", WEEKLY_LOSS_LIMIT_PCT)),
+        "policy_profile": str(profile_name),
+    }
+    logger.info(
+        "Loaded risk policy profile '%s' limits: max_positions=%s, max_position_size_pct=%s, max_total_risk_pct=%s",
+        out["policy_profile"],
+        out["max_positions"],
+        out["max_position_size_pct"],
+        out["max_total_risk_pct"],
+    )
+    return out
+
+
 def _load_risk_state() -> None:
     """
     Load persisted risk state so the circuit breaker isn't lost on restart.
@@ -84,6 +123,14 @@ def _load_risk_state() -> None:
             consecutive_losses = int(data.get("consecutive_losses", 0) or 0)
             circuit_breaker_active = bool(data.get("circuit_breaker_active", False))
             position_size_reduction = float(data.get("position_size_reduction", 1.0) or 1.0)
+            state_profile = str(data.get("policy_profile") or "").strip().lower()
+            active_profile = str(_policy_bundle().get("active_profile") or "").strip().lower()
+            if state_profile and active_profile and state_profile != active_profile:
+                logger.info(
+                    "Risk state profile changed from '%s' to '%s'; runtime loss/circuit state kept, limits sourced from active policy.",
+                    state_profile,
+                    active_profile,
+                )
 
             updated_at_raw = data.get("updated_at")
             if AUTO_RESET_RISK_GUARDIAN_STATE and updated_at_raw:
@@ -118,6 +165,7 @@ def _persist_risk_state() -> None:
                     "consecutive_losses": consecutive_losses,
                     "circuit_breaker_active": circuit_breaker_active,
                     "position_size_reduction": position_size_reduction,
+                    "policy_profile": _policy_bundle().get("active_profile"),
                     "updated_at": datetime.now().isoformat(),
                 },
                 f,
@@ -154,8 +202,8 @@ def get_risk_limits(strict_mode: bool = False) -> dict:
     Return effective limits for risk evaluation.
     This does not change global state; it only affects *this* decision.
     """
-    policy = get_profile_bundle()
-    risk_cfg = policy.get("risk") or {}
+    policy_limits = _policy_risk_limits()
+    policy_profile = policy_limits.get("policy_profile")
     if strict_mode:
         base = {
             "max_positions": STRICT_MODE_MAX_POSITIONS,
@@ -168,18 +216,14 @@ def get_risk_limits(strict_mode: bool = False) -> dict:
         }
     else:
         base = {
-        "max_positions": MAX_POSITIONS,
-        "max_position_size_pct": MAX_POSITION_SIZE_PCT,
-        "max_total_risk_pct": MAX_TOTAL_RISK_PCT,
-        "daily_loss_limit_pct": DAILY_LOSS_LIMIT_PCT,
-        "weekly_loss_limit_pct": WEEKLY_LOSS_LIMIT_PCT,
-        "circuit_breaker_reduce_threshold": CIRCUIT_BREAKER_REDUCE_THRESHOLD,
-        "circuit_breaker_halt_threshold": CIRCUIT_BREAKER_HALT_THRESHOLD,
-    }
-    # Policy profile can further tighten/adjust global limits without code changes.
-    for k in ["max_positions", "max_position_size_pct", "max_total_risk_pct", "daily_loss_limit_pct", "weekly_loss_limit_pct"]:
-        if risk_cfg.get(k) is not None:
-            base[k] = risk_cfg.get(k)
+            "max_positions": policy_limits["max_positions"],
+            "max_position_size_pct": policy_limits["max_position_size_pct"],
+            "max_total_risk_pct": policy_limits["max_total_risk_pct"],
+            "daily_loss_limit_pct": policy_limits["daily_loss_limit_pct"],
+            "weekly_loss_limit_pct": policy_limits["weekly_loss_limit_pct"],
+            "circuit_breaker_reduce_threshold": CIRCUIT_BREAKER_REDUCE_THRESHOLD,
+            "circuit_breaker_halt_threshold": CIRCUIT_BREAKER_HALT_THRESHOLD,
+        }
     # Task 2: volatility-adaptive position cap (counter-cyclical exposure).
     # Enabled by default; can be disabled with FORTRESS_VOL_ADAPTIVE_SIZING=0.
     vol_adapt_enabled = str(os.getenv("FORTRESS_VOL_ADAPTIVE_SIZING", "1")).strip().lower() not in {
@@ -204,7 +248,7 @@ def get_risk_limits(strict_mode: bool = False) -> dict:
         }
     else:
         base["volatility_adaptive_sizing"] = {"enabled": False, "vix": None}
-    base["policy_profile"] = policy.get("active_profile")
+    base["policy_profile"] = policy_profile
     return base
 
 
@@ -411,18 +455,21 @@ def get_risk_status():
     Returns:
         dict: Current risk status including circuit breaker state
     """
-    policy = get_profile_bundle()
+    policy_limits = _policy_risk_limits()
+    effective_limits = get_risk_limits(strict_mode=False)
     return {
         "consecutive_losses": consecutive_losses,
         "position_size_reduction": position_size_reduction,
         "circuit_breaker_active": circuit_breaker_active,
-        "max_positions": MAX_POSITIONS,
-        "max_position_size_pct": MAX_POSITION_SIZE_PCT,
-        "max_total_risk_pct": MAX_TOTAL_RISK_PCT,
-        "daily_loss_limit_pct": DAILY_LOSS_LIMIT_PCT,
-        "weekly_loss_limit_pct": WEEKLY_LOSS_LIMIT_PCT,
+        "max_positions": policy_limits["max_positions"],
+        "max_position_size_pct": policy_limits["max_position_size_pct"],
+        "max_total_risk_pct": policy_limits["max_total_risk_pct"],
+        "daily_loss_limit_pct": policy_limits["daily_loss_limit_pct"],
+        "weekly_loss_limit_pct": policy_limits["weekly_loss_limit_pct"],
         "max_sector_concentration_pct": MAX_SECTOR_CONCENTRATION_PCT,
-        "policy_profile": policy.get("active_profile"),
+        "policy_profile": policy_limits["policy_profile"],
+        "effective_max_position_size_pct": effective_limits.get("max_position_size_pct"),
+        "volatility_adaptive_sizing": effective_limits.get("volatility_adaptive_sizing"),
     }
 
 
