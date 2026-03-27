@@ -140,6 +140,16 @@ This document is a single-source blueprint for external review of the Fortress t
 - Remaining caveat:
   - data shown is artifact-driven; absence usually means command/cadence not run yet, not necessarily failure.
 
+### Verification Snapshot (2026-03-26)
+
+- **Broker smoke:** `python3 smoke_alpaca_paper_trade_cancel.py` passed (`AAPL` limit order submitted and canceled on Alpaca paper).
+- **Executor dry safety check:** forced sector/geographic executor commands ran with trading halt enabled and were blocked by pre-trade gate as expected:
+  - `pre_trade_gate: global_trading_halt` for `XLK/XLF/XLV` and `EFA/EEM/EWJ/VGK`
+  - execution logs written to:
+    - `data/sector_execution_log.jsonl`
+    - `data/geographic_execution_log.jsonl`
+- **Test suite status:** all current integration/unit tests green after agentic execution wiring.
+
 ## 9) Known Improvement Opportunities (for External Review)
 
 1. **Unified logging consistency:** some modules log to their own files while orchestrator logging may differ.
