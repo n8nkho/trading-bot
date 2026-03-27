@@ -1774,6 +1774,36 @@ def get_trust_report():
     }
 
 
+def get_intelligence_brief_status() -> dict:
+    """
+    Load latest fortress intelligence brief JSON + short markdown preview.
+    """
+    out = {
+        "timestamp": datetime.now().isoformat(),
+        "available": False,
+        "json_path": None,
+        "markdown_path": None,
+        "brief": {},
+        "markdown_preview": "",
+    }
+    files = sorted(glob.glob(str(DATA_DIR / "fortress_intelligence_brief_*.json")), reverse=True)
+    if not files:
+        return out
+    jp = Path(files[0])
+    out["json_path"] = str(jp)
+    out["available"] = True
+    out["brief"] = _read_json(jp, default={}) or {}
+    md = jp.with_suffix(".md")
+    if md.exists():
+        out["markdown_path"] = str(md)
+        try:
+            txt = md.read_text(encoding="utf-8", errors="replace")
+            out["markdown_preview"] = "\n".join(txt.splitlines()[:40])
+        except OSError:
+            out["markdown_preview"] = ""
+    return out
+
+
 def get_pricing_gates():
     return _read_json(CONFIG_DIR / "pricing_gates.json", default={"tiers": [], "disclaimer": ""})
 
@@ -2669,6 +2699,11 @@ def api_drift():
 @app.route("/api/trust_report")
 def api_trust_report():
     return jsonify(get_trust_report())
+
+
+@app.route("/api/intelligence_brief")
+def api_intelligence_brief():
+    return jsonify(get_intelligence_brief_status())
 
 
 @app.route("/manifest.json")

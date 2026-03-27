@@ -428,6 +428,10 @@
         </div>
         <div id="botAudit" class="rec-list loading">Loading…</div>
       </div>
+      <div class="panel col-8">
+        <div class="panel-title">FORTRESS INTELLIGENCE BRIEF</div>
+        <div id="intelligenceBrief" class="loading">Loading…</div>
+      </div>
 
       <div class="panel col-12">
         <div class="panel-title">HEADLINE EVENT AGENT <span class="text-muted" style="font-size:0.65em;font-weight:400;">shadow · policy headlines · <a href="/api/headline_event_status" style="color:inherit;">JSON</a></span></div>
@@ -529,7 +533,7 @@
   </div>
 
   <script>
-    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine', botAudit: '/api/bot_audit' };
+    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine', botAudit: '/api/bot_audit', intelligenceBrief: '/api/intelligence_brief' };
 
     let _chartRedraw = null;
     let _chartResizeDebounce = null;
@@ -1414,6 +1418,38 @@
       `;
     }
 
+    function renderIntelligenceBrief(data) {
+      const el = document.getElementById('intelligenceBrief');
+      if (!el) return;
+      el.classList.remove('loading');
+      if (!data || !data.available || !data.brief) {
+        el.innerHTML = '<span class="empty">No intelligence brief yet. Run <code>python3 orchestrator.py generate_intelligence_brief</code>.</span>';
+        return;
+      }
+      const b = data.brief || {};
+      const es = b.executive_summary || {};
+      const qa = b.qa_checklist || {};
+      const meta = b.meta || {};
+      const blockers = (qa.critical_blockers || []).slice(0, 5);
+      const blockersHtml = blockers.length
+        ? '<ul style="margin:0.35rem 0 0 1rem;padding:0;">' + blockers.map(x => '<li style="margin:0.15rem 0;">' + String(x).replace(/</g, '&lt;') + '</li>').join('') + '</ul>'
+        : '<span class="text-muted">No critical blockers flagged.</span>';
+      const mdPrev = (data.markdown_preview || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      el.innerHTML = `
+        <div><strong>Date:</strong> ${meta.report_date || '—'} · <strong>Grade:</strong> ${es.grade || '—'} · <strong>Win/Loss:</strong> ${es.win_loss_record || '—'}</div>
+        <div><strong>Daily P&L:</strong> ${es.daily_pnl ?? '—'} (${es.daily_pnl_pct ?? '—'}%) · <strong>Total P&L:</strong> ${es.total_pnl ?? '—'} (${es.total_pnl_pct ?? '—'}%)</div>
+        <div style="margin-top:0.4rem;"><strong>Top insight:</strong> ${(es.top_insight || '—').replace(/</g, '&lt;')}</div>
+        <div><strong>Top risk:</strong> ${(es.top_risk || '—').replace(/</g, '&lt;')}</div>
+        <div><strong>Top opportunity:</strong> ${(es.top_opportunity || '—').replace(/</g, '&lt;')}</div>
+        <div style="margin-top:0.5rem;padding-top:0.45rem;border-top:1px solid var(--border);"><strong>Critical blockers</strong>${blockersHtml}</div>
+        <div class="text-muted" style="font-size:11px;margin-top:0.5rem;">JSON: ${String(data.json_path || '—').replace(/</g, '&lt;')}</div>
+        <details style="margin-top:0.45rem;">
+          <summary style="cursor:pointer;color:var(--cyan);">Markdown preview</summary>
+          <pre style="white-space:pre-wrap;max-height:240px;overflow:auto;background:var(--bg-card);border:1px solid var(--border);padding:0.55rem;border-radius:4px;">${mdPrev || 'No markdown preview.'}</pre>
+        </details>
+      `;
+    }
+
     async function runBotAudit() {
       const st = document.getElementById('botAuditStatus');
       if (st) st.textContent = 'Running…';
@@ -1663,7 +1699,7 @@
 
     async function loadAll() {
       try {
-        const [health, agents, performance, news, recommendations, safetyStatus, botAudit, headlineEvent, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, drift, trustReport, feed, positions, orders, tvSignals] = await Promise.all([
+        const [health, agents, performance, news, recommendations, safetyStatus, botAudit, intelligenceBrief, headlineEvent, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, drift, trustReport, feed, positions, orders, tvSignals] = await Promise.all([
           fetch(API.health).then(r => r.json()),
           fetch(API.agents).then(r => r.json()),
           fetch(API.performance).then(r => r.json()),
@@ -1671,6 +1707,7 @@
           fetch(API.recommendations).then(r => r.json()),
           fetch(API.safetyStatus).then(r => r.json()),
           fetch(API.botAudit).then(r => r.json()).catch(() => ({})),
+          fetch(API.intelligenceBrief).then(r => r.json()).catch(() => ({})),
           fetch(API.headlineEvent).then(function (r) { return r.ok ? r.json() : { error: true }; }).catch(function () { return { error: true }; }),
           fetch(API.actionQueue).then(r => r.json()),
           fetch(API.operatorRuns).then(r => r.json()),
@@ -1693,6 +1730,7 @@
         renderRecommendations(recommendations);
         renderSafetyStatus(safetyStatus);
         renderBotAudit(botAudit);
+        renderIntelligenceBrief(intelligenceBrief);
         renderHeadlineEventStatus(headlineEvent);
         renderActionQueue(actionQueue);
         renderOperatorRuns(operatorRuns);

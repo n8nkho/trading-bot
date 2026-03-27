@@ -51,6 +51,7 @@ from agents.geographic_executor import run_geographic_allocation_execution
 from agents.cio_agent import run_cio_cycle
 from agents.scouts.swarm import run_scout_swarm
 from agents.analysts.consensus import run_analyst_ensemble
+from agents.intelligence_brief_generator import generate_brief, generate_markdown_summary
 from utils.grok_sentiment import check_twitter_sentiment
 from utils.option_contract_schema import normalize_option_decision
 from utils.policy_profile import get_profile_bundle
@@ -2395,6 +2396,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py cio_cycle - Produce top-level CIO directive")
         print("  python orchestrator.py scout_swarm - Run scout swarm queue builder")
         print("  python orchestrator.py analyst_ensemble - Score opportunities with analyst quorum")
+        print("  python orchestrator.py generate_intelligence_brief - Generate daily self-QA intelligence brief")
         print("  python orchestrator.py ops_recovery [--no-fortress] [--no-screen] [--no-pending] [portfolio_value]")
         print("  python orchestrator.py regime_check               - Print fortress + hedging file snapshot")
         print("  python orchestrator.py print_entry_skips          - Print latest daily_signals entry_gate_summary")
@@ -2493,6 +2495,18 @@ if __name__ == "__main__":
             opportunities = queue.get("opportunities") or []
         out = run_analyst_ensemble(opportunities=opportunities, data_dir=DATA_DIR)
         print(json.dumps(out, indent=2, default=str))
+        sys.exit(0)
+
+    if command in ("generate_intelligence_brief", "generate-intelligence-brief"):
+        ensure_repo_root_cwd()
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        brief = generate_brief(data_dir=DATA_DIR, logs_dir=Path("logs"))
+        day = datetime.now().strftime("%Y%m%d")
+        json_path = DATA_DIR / f"fortress_intelligence_brief_{day}.json"
+        md_path = DATA_DIR / f"fortress_intelligence_brief_{day}.md"
+        json_path.write_text(json.dumps(brief, indent=2, default=str), encoding="utf-8")
+        md_path.write_text(generate_markdown_summary(brief), encoding="utf-8")
+        print(json.dumps({"ok": True, "json_path": str(json_path), "markdown_path": str(md_path)}, indent=2))
         sys.exit(0)
 
     # Cron/systemd often starts with wrong cwd; keep data/ + logs/ under repo root.
