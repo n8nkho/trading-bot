@@ -6,7 +6,7 @@ import os
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.local_llm import call_ollama
+from utils.local_llm import call_llm
 from agents.screener_agent import get_news_headlines
 from utils.option_contract_schema import normalize_option_position
 from utils.runtime_config import get_llm_config
@@ -449,8 +449,8 @@ Consider neutral/positive: normal market moves, analyst upgrades, product launch
             logging.info(f"{ticker}: Exit-monitor LLM disabled (provider=none or EXITMONITOR_DISABLE_LLM=1).")
             return {"has_negative_news": False, "summary": "LLM disabled (provider=none)."}
 
-        # Call local LLM (only when enabled)
-        response = call_ollama(prompt, model="llama3.1:8b", timeout=30)
+        # Call configured provider (ollama/deepseek) only when enabled.
+        response = call_llm(prompt, timeout=30)
         
         # Parse response
         import json

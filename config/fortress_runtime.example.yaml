@@ -26,8 +26,13 @@ defaults:
   portfolio_value_usd: 20000
 
 llm:
-  # provider: none | ollama  (advisory only; execution stays deterministic)
+  # provider: none | ollama | deepseek  (advisory only; execution stays deterministic)
   provider: none
   # Oracle VM: Ollama often on localhost:11434
   ollama_base_url: http://127.0.0.1:11434
   default_model: llama3.2:3b
+  # Optional DeepSeek (OpenAI-compatible endpoint)
+  deepseek_base_url: https://api.deepseek.com/v1
+  deepseek_model: deepseek-chat
+  # Prefer env var in production; inline key is optional for testing only.
+  deepseek_api_key: ""
