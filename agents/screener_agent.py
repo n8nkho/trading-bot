@@ -16,6 +16,97 @@ from utils.runtime_config import get_llm_config
 DATA_DIR = Path("data")
 CURRENT_PARAMS_FILE = DATA_DIR / "current_params.json"
 
+
+def _read_latest_json(data_dir: Path, pattern: str) -> dict:
+    try:
+        files = sorted(data_dir.glob(pattern), reverse=True)
+        if not files:
+            return {}
+        with open(files[0], "r", encoding="utf-8") as f:
+            doc = json.load(f)
+        return doc if isinstance(doc, dict) else {}
+    except Exception:
+        return {}
+
+
+def load_agentic_opportunities(
+    data_dir: Path = DATA_DIR,
+    *,
+    min_consensus: float = 0.60,
+) -> dict:
+    """
+    Build a prioritized symbol set from scout + analyst artifacts.
+
+    Rules:
+    - Symbol must appear in analyst_consensus with recommendation BUY.
+    - consensus_score must be strictly > min_consensus.
+    - If CIO sleeve tilts are present, expose an agentic budget fraction so caller
+      can respect CIO allocation percentages when merging with deterministic flow.
+    """
+    scout = _read_latest_json(data_dir, "scout_opportunity_queue_*.json")
+    analyst = _read_latest_json(data_dir, "analyst_consensus_*.json")
+    cio = _read_latest_json(data_dir, "cio_directive_*.json")
+
+    scout_rows = scout.get("opportunities") if isinstance(scout.get("opportunities"), list) else []
+    analyst_rows = analyst.get("recommendations") if isinstance(analyst.get("recommendations"), list) else []
+
+    analyst_index: dict[str, dict] = {}
+    for row in analyst_rows:
+        if not isinstance(row, dict):
+            continue
+        sym = str(row.get("symbol") or "").strip().upper()
+        if not sym:
+            continue
+        analyst_index[sym] = row
+
+    selected: list[dict] = []
+    for row in scout_rows:
+        if not isinstance(row, dict):
+            continue
+        sym = str(row.get("symbol") or "").strip().upper()
+        if not sym:
+            continue
+        ar = analyst_index.get(sym) or {}
+        rec = str(ar.get("recommendation") or "").strip().upper()
+        score = ar.get("consensus_score")
+        try:
+            score_f = float(score)
+        except Exception:
+            continue
+        if rec != "BUY" or score_f <= float(min_consensus):
+            continue
+        selected.append(
+            {
+                "ticker": sym,
+                "source": "agentic",
+                "scout_theme": row.get("theme"),
+                "scout_score": row.get("score"),
+                "consensus_score": score_f,
+                "consensus_recommendation": rec,
+            }
+        )
+
+    selected.sort(key=lambda x: float(x.get("consensus_score") or 0.0), reverse=True)
+
+    tilts = cio.get("sleeve_tilts_pct") if isinstance(cio.get("sleeve_tilts_pct"), dict) else {}
+    # For the screener stage, treat day+swing sleeves as immediate opportunity budget.
+    try:
+        day_pct = float(tilts.get("day_trading", 0) or 0)
+        swing_pct = float(tilts.get("swing_trading", 0) or 0)
+        agentic_budget_fraction = max(0.0, min(1.0, (day_pct + swing_pct) / 100.0))
+    except Exception:
+        agentic_budget_fraction = 1.0
+
+    return {
+        "symbols": selected,
+        "agentic_count": len(selected),
+        "scout_timestamp": scout.get("timestamp"),
+        "analyst_timestamp": analyst.get("timestamp"),
+        "cio_timestamp": cio.get("timestamp"),
+        "cio_directive": cio.get("portfolio_directive"),
+        "agentic_budget_fraction": agentic_budget_fraction if tilts else 1.0,
+    }
+
 def load_screening_params():
     """Load current screening parameters (may have been auto-tuned)"""
     try:
@@ -53,6 +144,21 @@ def run_screener():
     
     with open('config/watchlist.json', 'r') as f:
         watchlist_payload = json.load(f)
+
+    # Agentic opportunity integration (Task 1):
+    # Scout + analyst consensus creates a high-priority seed tier.
+    # Deterministic watchlist tiers remain as fallback.
+    agentic_pack = load_agentic_opportunities(DATA_DIR, min_consensus=0.60)
+    agentic_symbols = agentic_pack.get("symbols") or []
+    if agentic_symbols:
+        logging.info(
+            "Agentic queue loaded: %d BUY symbol(s) from scout+analyst (cio=%s, budget_fraction=%.2f)",
+            len(agentic_symbols),
+            agentic_pack.get("cio_directive"),
+            float(agentic_pack.get("agentic_budget_fraction") or 1.0),
+        )
+    else:
+        logging.info("Agentic queue unavailable or empty; using deterministic-only screener tiers.")
 
     # LLM is optional/advisory. By default runtime config sets llm.provider=none,
     # so we should not block screening on a local Ollama call.
@@ -117,6 +223,20 @@ def run_screener():
     except Exception:
         # Telemetry should never break screening.
         pass
+
+    # Inject agentic symbols as highest-priority tier before license capping.
+    # Existing deterministic tiers remain and will still run.
+    if agentic_symbols:
+        seen_agentic = set()
+        agentic_tier = []
+        for row in agentic_symbols:
+            t = str(row.get("ticker") or "").strip().upper()
+            if not t or t in seen_agentic:
+                continue
+            seen_agentic.add(t)
+            agentic_tier.append({"ticker": t, "__source": "agentic", "__agentic_meta": row})
+        if agentic_tier:
+            tiers = [agentic_tier] + tiers
 
     # License tier: cap distinct tickers (Starter/Pro/Enterprise); master is effectively unlimited.
     universe_cap_meta: dict = {}
@@ -190,6 +310,8 @@ def run_screener():
     tiers_configured = len(tiers)
     tiers_scanned = 0
     tier_stop_reason = "none"
+    agentic_candidate_count = 0
+    deterministic_candidate_count = 0
 
     def _prefilter_one(stock, params_for_tier: dict):
         ticker = stock["ticker"]
@@ -340,7 +462,16 @@ def run_screener():
                         original_confidence = analysis.get("confidence", 0)
                         analysis["confidence"] = max(original_confidence - 0.15, 0.0)
 
-                candidates.append({
+                # Determine signal source for auditability.
+                source_label = "deterministic"
+                agentic_meta = {}
+                for s in tier_stocks:
+                    if str((s or {}).get("ticker") or "").strip().upper() == ticker:
+                        source_label = str((s or {}).get("__source") or "deterministic")
+                        agentic_meta = (s or {}).get("__agentic_meta") or {}
+                        break
+
+                cand = {
                     "ticker": ticker,
                     "current_price": latest_close,
                     "drop_pct": drop_pct,
@@ -349,7 +480,17 @@ def run_screener():
                     "news": news_headlines,
                     "analysis": analysis,
                     "vision_signal": vision_signal,
-                })
+                    "signal_source": source_label,
+                }
+                if source_label == "agentic":
+                    cand["agentic_meta"] = agentic_meta
+                candidates.append(cand)
+                if source_label == "agentic":
+                    agentic_candidate_count += 1
+                    logging.info("%s: candidate accepted via AGENTIC priority path", ticker)
+                else:
+                    deterministic_candidate_count += 1
+                    logging.info("%s: candidate accepted via deterministic path", ticker)
                 tier_candidates_added += 1
             except Exception as e:
                 logging.error(f"Error heavy-analyzing {ticker}: {type(e).__name__}: {str(e)}")
@@ -397,6 +538,16 @@ def run_screener():
             "prefilter_workers": prefilter_workers,
             "max_screening_runtime_seconds": max_runtime_seconds,
             "tier_telemetry": tier_telemetry,
+            "agentic": {
+                "scout_timestamp": agentic_pack.get("scout_timestamp"),
+                "analyst_timestamp": agentic_pack.get("analyst_timestamp"),
+                "cio_timestamp": agentic_pack.get("cio_timestamp"),
+                "cio_directive": agentic_pack.get("cio_directive"),
+                "agentic_budget_fraction": agentic_pack.get("agentic_budget_fraction"),
+                "agentic_symbols_loaded": len(agentic_symbols),
+                "agentic_candidates_output": agentic_candidate_count,
+                "deterministic_candidates_output": deterministic_candidate_count,
+            },
         }
         with open(meta_path, "w") as f:
             json.dump(meta, f, indent=2)

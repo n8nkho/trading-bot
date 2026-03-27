@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 import os
+import json
 import yfinance as yf
 from datetime import datetime
 import pytz
 import numpy as np
 from typing import Any
+from pathlib import Path
 
 from utils.runtime_config import get_default_portfolio_usd
 from utils.policy_profile import get_profile_bundle
@@ -28,6 +30,30 @@ RSI_THRESHOLD = 35  # Extra oversold threshold
 STABILIZATION_FACTOR = float(os.getenv("ENTRY_STABILIZATION_FACTOR", "1.00"))
 ENTRY_WINDOW_START = (14, 30)  # 2:30 PM ET
 ENTRY_WINDOW_END = (15, 45)  # 3:45 PM ET
+def _load_analyst_consensus_index(data_dir: Path | None = None) -> dict[str, dict]:
+    root = data_dir or Path("data")
+    try:
+        files = sorted(root.glob("analyst_consensus_*.json"), reverse=True)
+        if not files:
+            return {}
+        with open(files[0], "r", encoding="utf-8") as f:
+            doc = json.load(f)
+        rows = doc.get("recommendations") if isinstance(doc, dict) else None
+        if not isinstance(rows, list):
+            return {}
+        out: dict[str, dict] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            sym = str(row.get("symbol") or "").strip().upper()
+            if not sym:
+                continue
+            out[sym] = row
+        return out
+    except Exception:
+        return {}
+
+
 
 
 def _max_new_position_usd_from_policy(portfolio_value: float) -> float:
@@ -334,6 +360,7 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
             pass
     
     decisions = []
+    analyst_index = _load_analyst_consensus_index(Path("data"))
     # Entry-window gating must apply to both stock and option decisions.
     # The stock path already enforces this inside `evaluate_single_entry()`;
     # previously the option path could bypass it and attempt option market orders
@@ -348,6 +375,28 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
         try:
             current_price = candidate['current_price']
             stock_confidence = candidate.get('analysis', {}).get('confidence', 0.5)
+            signal_mode = "deterministic_only"
+            # Agentic boost: if analyst consensus is BUY, lift confidence by +0.10.
+            ar = analyst_index.get(str(ticker).upper()) or {}
+            rec = str(ar.get("recommendation") or "").strip().upper()
+            if rec == "BUY":
+                try:
+                    base_conf = float(stock_confidence)
+                except Exception:
+                    base_conf = 0.5
+                stock_confidence = min(base_conf + 0.10, 1.0)
+                signal_mode = "agentic_signal_boost"
+                if isinstance(candidate.get("analysis"), dict):
+                    candidate["analysis"]["confidence"] = stock_confidence
+                logging.info(
+                    "%s: agentic_signal_boost applied (analyst BUY, consensus_score=%s, confidence %.2f -> %.2f)",
+                    ticker,
+                    ar.get("consensus_score"),
+                    base_conf,
+                    stock_confidence,
+                )
+            else:
+                logging.info("%s: deterministic_only path (analyst recommendation=%s)", ticker, rec or "N/A")
             
             stock_roi = stock_confidence * 0.05
             option_trade = evaluate_option_trade(ticker, current_price, stock_confidence)
@@ -389,6 +438,7 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                             'confidence': stock_confidence,
                             'reason': 'Option trade offers better ROI'
                         }
+                        decision["signal_mode"] = signal_mode
                         logging.info(f"{ticker}: OPTION decision - {decision}")
                 else:
                     decision = evaluate_single_entry(candidate, portfolio_value, rsi_threshold=rsi_effective)
@@ -396,14 +446,18 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                     # Do not overwrite SKIP reasons (RSI, window, stabilization, etc.).
                     if decision.get("action") == "BUY":
                         decision["reason"] = "Stock trade offers better ROI"
+                    decision["signal_mode"] = signal_mode
                     logging.info(f"{ticker}: STOCK decision - {decision}")
             else:
                 decision = evaluate_single_entry(candidate, portfolio_value, rsi_threshold=rsi_effective)
                 decision['trade_type'] = 'STOCK'
                 if decision.get("action") == "BUY":
                     decision["reason"] = "No suitable option found (stock path)"
+                decision["signal_mode"] = signal_mode
                 logging.info(f"{ticker}: STOCK decision - {decision}")
             
+            if isinstance(decision, dict):
+                decision.setdefault("signal_mode", signal_mode)
             decisions.append(decision)
         except Exception as e:
             logging.error(f"Error evaluating {ticker}: {type(e).__name__}: {str(e)}")

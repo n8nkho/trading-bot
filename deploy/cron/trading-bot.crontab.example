@@ -24,3 +24,9 @@
 #
 # Fortress / hedge refresh (daily)
 # 0 0 * * * $REPO/scripts/cron_run.sh fortress >> $REPO/logs/orchestrator.log 2>&1
+#
+# Sector rotation execution (first day of month; executor self-guards for trading day logic)
+# 35 9 1 * * $REPO/scripts/cron_run.sh execute_sector_rotation >> $REPO/logs/sector_executor.log 2>&1
+#
+# Geographic allocation execution (first Monday window each month)
+# 40 9 1-7 * 1 $REPO/scripts/cron_run.sh execute_geographic_allocation >> $REPO/logs/geographic_executor.log 2>&1

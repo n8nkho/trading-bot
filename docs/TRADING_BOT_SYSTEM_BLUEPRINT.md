@@ -2,6 +2,8 @@
 
 This document is a single-source blueprint for external review of the Fortress trading bot system: architecture, controls, runtime behavior, and improvement targets.
 
+**Last updated:** 2026-03-26 (post Task 1-8 implementation + Command Center refresh)
+
 ## 1) Executive Snapshot
 
 - **Primary objective:** paper-first, rules-driven autonomous trading with hard risk/compliance gates.
@@ -9,6 +11,7 @@ This document is a single-source blueprint for external review of the Fortress t
 - **Execution posture:** supports `autonomous` and `human_in_loop` (`utils/execution_mode.py`).
 - **Operating model:** Oracle VM is production runner; local machine is editor/mirror.
 - **Core promise:** bounded automation, not unconstrained AI execution.
+- **Strategy posture:** multi-timeframe sleeves + sector/geographic overlays + CIO directive artifacts for operator review.
 
 ## 2) System Boundaries
 
@@ -55,6 +58,7 @@ This document is a single-source blueprint for external review of the Fortress t
 
 - Calls `agents/fortress_orchestrator.py`
 - Produces `data/fortress_report_*.json`
+- Drives commodities/forex/theta/dividend/pairs/vix sleeve recommendations
 
 ### F) HITL Flush (`orchestrator.py execute_pending`)
 
@@ -62,12 +66,23 @@ This document is a single-source blueprint for external review of the Fortress t
 - Submits queued trades
 - **Guard:** queue is preserved when market is closed (RTH check)
 
+### G) Agentic Planning Artifacts (new orchestration commands)
+
+- `orchestrator.py multi_timeframe` -> `data/multi_timeframe_plan_YYYYMMDD.json`
+- `orchestrator.py sector_rotation` -> `data/sector_rotation_signal_YYYYMM.json`
+- `orchestrator.py geographic_allocation` -> `data/geographic_allocation_plan_YYYYMMDD.json`
+- `orchestrator.py scout_swarm` -> `data/scout_opportunity_queue_YYYYMMDD.json`
+- `orchestrator.py analyst_ensemble` -> `data/analyst_consensus_YYYYMMDD.json`
+- `orchestrator.py cio_cycle` -> `data/cio_directive_YYYYMMDD.json`
+
 ## 4) Agent Inventory (High-Level)
 
 - **Signal generation:** `screener_agent.py`, `intraday_sniper.py`, `spy_intraday_swing.py`
 - **Entry/exit logic:** `entry_agent.py`, `exit_monitor.py`
 - **Risk/compliance:** `risk_guardian.py`, `pre_trade_gate.py`, `operator_halt.py`
 - **Regime/hedging:** `fortress_orchestrator.py`, strategy sleeves (`bond_manager.py`, `vix_insurance.py`, etc.)
+- **Allocation/planning managers:** `day_trading_manager.py`, `swing_trading_manager.py`, `position_trading_manager.py`, `sector_rotation_manager.py`, `geographic_allocation_manager.py`
+- **Agentic overlay:** `scouts/*`, `analysts/*`, `cio_agent.py`
 - **Audit/governance:** `bot_audit_agent.py`, `drift_detector.py`, `error_detective.py`
 - **Adaptation/analysis:** `performance_analyzer.py`, `walk_forward_validator.py`, `meta_architect.py`
 
@@ -77,8 +92,11 @@ This document is a single-source blueprint for external review of the Fortress t
 - **Pre-trade gate:** notional/qty caps + halt checks (`utils/pre_trade_gate.py`).
 - **Execution mode gate:** autonomous vs HITL (`utils/execution_mode.py`).
 - **Circuit breaker / strict mode:** consecutive-loss based reductions/halts (`agents/risk_guardian.py`).
+- **Risk state resilience:** stale persisted risk streak state auto-resets by default (configurable env window).
 - **Policy profiles:** max positions, max position pct, total risk pct, daily/weekly loss limits (`config/policy_profiles.json`).
 - **Operator halt:** file/API-driven kill switch (`utils/operator_halt.py` + dashboard endpoints).
+- **Volatility-adaptive sizing:** counter-cyclical max position cap from latest VIX tier (`utils/volatility_adaptive_sizing.py` + risk_guardian integration).
+- **Smart execution layer:** option order planning prefers limit orders when entry premium is known (`utils/smart_execution.py`).
 
 ## 6) Current Default Config Posture
 
@@ -87,11 +105,21 @@ This document is a single-source blueprint for external review of the Fortress t
   - `agents.spy_intraday_swing.default_equity_usd: 20000`
   - `llm.provider: none`
 - `config/policy_profiles.json`
-  - active profile default: `balanced`
-  - risk profile includes `max_positions=5`, `max_position_size_pct=3.0`, `max_total_risk_pct=7.0`
+  - active profile default: `opportunistic`
+  - default risk profile includes `max_positions=6`, `max_position_size_pct=3.5`, `max_total_risk_pct=8.0`
 - `.env.example`
   - paper API URL
   - optional `FORTRESS_PORTFOLIO_VALUE=20000`
+  - entry window extension + RSI tuning knobs documented
+  - execution mode and pre-trade gate control knobs documented
+
+### Entry/Risk behavior defaults (as of current build)
+
+- Entry stabilization default is permissive (`ENTRY_STABILIZATION_FACTOR` default `1.00` in code).
+- Entry window end defaults to `16:00 ET` (via default extension path in `entry_agent`).
+- Risk auto-reset defaults:
+  - `FORTRESS_AUTO_RESET_RISK_GUARDIAN_STATE=1`
+  - `FORTRESS_RISK_STATE_MAX_AGE_HOURS=24`
 
 ## 7) Operational Architecture
 
@@ -99,8 +127,20 @@ This document is a single-source blueprint for external review of the Fortress t
 - **Logs:** `logs/screener.log`, `logs/monitor.log`, `logs/sniper.log`, `logs/fortress.log`, etc.
 - **Dashboard:** systemd service for command center (`deploy/systemd/` docs/templates).
 - **State files:** all under repo `data/`.
+- **Source of truth:** Oracle VM runtime + cron; Mac is code mirror (Oracle -> Mac sync script).
 
-## 8) Known Improvement Opportunities (for External Review)
+## 8) Command Center Coverage (Current)
+
+- Command Center now surfaces:
+  - screening funnel + top skip reasons
+  - live safety status (halt, circuit state, strict mode, risk streak, auto-reset window)
+  - hedging context + strategy gate metrics
+  - agentic artifact summary (CIO directive, scout queue, analyst consensus, multi-timeframe, sector rotation, geo allocation)
+  - expanded runbooks including new agentic commands
+- Remaining caveat:
+  - data shown is artifact-driven; absence usually means command/cadence not run yet, not necessarily failure.
+
+## 9) Known Improvement Opportunities (for External Review)
 
 1. **Unified logging consistency:** some modules log to their own files while orchestrator logging may differ.
 2. **Order-type intelligence:** stock/option execution strategy can be refined by session type (market/limit by liquidity/time).
@@ -110,7 +150,7 @@ This document is a single-source blueprint for external review of the Fortress t
 6. **Alerting:** strengthen incident alerts for stale core logs, queue age, and repeated broker rejects.
 7. **Dependency isolation:** graceful fallback paths for optional providers (LLM/news endpoints).
 
-## 9) External Review Checklist
+## 10) External Review Checklist
 
 Ask reviewers to evaluate:
 
@@ -132,23 +172,27 @@ Ask reviewers to evaluate:
 - **Security/ops**
   - Secret handling, env hygiene, endpoint hardening, dashboard auth.
 
-## 10) File Map (Critical References)
+## 11) File Map (Critical References)
 
 - `orchestrator.py` — main workflows and CLI
 - `agents/screener_agent.py` — candidate generation
 - `agents/entry_agent.py` — entry/option/stock gating
 - `agents/exit_monitor.py` — exit decisions
 - `agents/risk_guardian.py` — risk limits and circuit breaker
+- `utils/volatility_adaptive_sizing.py` — VIX-tiered adaptive risk cap
+- `utils/smart_execution.py` — order-type planning helper
 - `agents/bot_audit_agent.py` — objective audit and diagnostics
 - `utils/pre_trade_gate.py` — final broker submission controls
 - `utils/runtime_config.py` — runtime defaults and toggles
 - `utils/policy_profile.py` + `config/policy_profiles.json` — policy layer
 - `utils/pending_execution_queue.py` — HITL queue
 - `dashboard/command_center.py` — operator APIs/UI
+- `agents/scouts/` + `agents/analysts/` + `agents/cio_agent.py` — agentic overlay
+- `agents/sector_rotation_manager.py` + `agents/geographic_allocation_manager.py` — allocation extensions
 - `config/fortress_runtime.yaml` — runtime declarative config
 - `.env.example` — operator environment template
 
-## 11) Reviewer Notes
+## 12) Reviewer Notes
 
 - This system is intentionally deterministic-first with optional LLM advisory paths.
 - “Winning strategy” should be judged as **process quality + bounded risk + repeatability**, not guaranteed returns.

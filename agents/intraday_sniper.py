@@ -43,6 +43,66 @@ data_dir.mkdir(exist_ok=True)
 TRADES_FILE = data_dir / "intraday_trades.jsonl"
 
 
+def _read_latest_json(data_dir: Path, pattern: str) -> dict:
+    try:
+        files = sorted(data_dir.glob(pattern), reverse=True)
+        if not files:
+            return {}
+        with open(files[0], "r", encoding="utf-8") as f:
+            doc = json.load(f)
+        return doc if isinstance(doc, dict) else {}
+    except Exception:
+        return {}
+
+
+def load_sniper_agentic_symbols(data_dir: Path = data_dir, *, min_consensus: float = 0.60) -> list[str]:
+    """
+    Intraday sniper-specific agentic symbols:
+    - from scout queue themes: event_breakout OR volatility_dislocation
+    - analyst consensus recommendation BUY and score > min_consensus
+    """
+    scout = _read_latest_json(data_dir, "scout_opportunity_queue_*.json")
+    analyst = _read_latest_json(data_dir, "analyst_consensus_*.json")
+    scout_rows = scout.get("opportunities") if isinstance(scout.get("opportunities"), list) else []
+    analyst_rows = analyst.get("recommendations") if isinstance(analyst.get("recommendations"), list) else []
+
+    allowed_themes = {"event_breakout", "volatility_dislocation"}
+    analyst_index: dict[str, dict] = {}
+    for row in analyst_rows:
+        if not isinstance(row, dict):
+            continue
+        sym = str(row.get("symbol") or "").strip().upper()
+        if sym:
+            analyst_index[sym] = row
+
+    out: list[tuple[str, float]] = []
+    for row in scout_rows:
+        if not isinstance(row, dict):
+            continue
+        sym = str(row.get("symbol") or "").strip().upper()
+        theme = str(row.get("theme") or "").strip().lower()
+        if not sym or theme not in allowed_themes:
+            continue
+        ar = analyst_index.get(sym) or {}
+        rec = str(ar.get("recommendation") or "").strip().upper()
+        try:
+            score = float(ar.get("consensus_score"))
+        except Exception:
+            continue
+        if rec == "BUY" and score > float(min_consensus):
+            out.append((sym, score))
+
+    out.sort(key=lambda x: x[1], reverse=True)
+    dedup = []
+    seen = set()
+    for sym, _score in out:
+        if sym in seen:
+            continue
+        seen.add(sym)
+        dedup.append(sym)
+    return dedup
+
+
 def calculate_rsi(prices, period=5):
     """Calculate RSI for intraday (5-period for 1-min bars)"""
     if len(prices) < period + 1:
@@ -151,6 +211,13 @@ def scan_intraday_opportunities(portfolio_value=10000):
             # Backward compatibility (older configs).
             watchlist = [str(t).strip().upper() for t in (watchlist_data.get("tickers") or [])]
 
+    # Agentic intraday themes are prioritized first.
+    agentic_priority = load_sniper_agentic_symbols(data_dir=data_dir, min_consensus=0.60)
+    if agentic_priority:
+        logger.info(
+            "Intraday sniper agentic priority symbols loaded: %s",
+            ", ".join(agentic_priority[:8]),
+        )
     # Bound intraday workload (important when universe grows).
     max_tickers_per_run = int(watchlist_data.get("sniper_max_tickers_per_run") or os.getenv("SNIPER_MAX_TICKERS_PER_RUN") or 25)
     # Deterministic 5-minute bucket sharding based on current epoch.
@@ -174,9 +241,13 @@ def scan_intraday_opportunities(portfolio_value=10000):
     start = chunk_index * max_tickers_per_run
     end = start + max_tickers_per_run
     scan_tickers = tickers[start:end]
+    if agentic_priority:
+        # Ensure agentic symbols are always scanned this run, ahead of deterministic slice.
+        merged = agentic_priority + scan_tickers
+        scan_tickers = list(dict.fromkeys(merged))[:max_tickers_per_run]
     logger.info(
         f"Intraday sniper scan slice: chunk_index={chunk_index}/{num_chunks-1} "
-        f"tickers={len(scan_tickers)}/{len(tickers)}"
+        f"tickers={len(scan_tickers)}/{len(tickers)} agentic_priority={len(agentic_priority)}"
     )
     
     opportunities = []

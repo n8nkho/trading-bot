@@ -46,6 +46,8 @@ from agents.swing_trading_manager import SwingTradingManager
 from agents.position_trading_manager import PositionTradingManager
 from agents.sector_rotation_manager import run_sector_rotation_manager
 from agents.geographic_allocation_manager import run_geographic_allocation_manager
+from agents.sector_executor import run_sector_rotation_execution
+from agents.geographic_executor import run_geographic_allocation_execution
 from agents.cio_agent import run_cio_cycle
 from agents.scouts.swarm import run_scout_swarm
 from agents.analysts.consensus import run_analyst_ensemble
@@ -2388,6 +2390,8 @@ if __name__ == "__main__":
         print("  python orchestrator.py multi_timeframe [portfolio_value] - Run task-1 sleeve allocation planner")
         print("  python orchestrator.py sector_rotation [portfolio_value] - Build monthly sector rotation signal")
         print("  python orchestrator.py geographic_allocation [portfolio_value] - Build international allocation plan")
+        print("  python orchestrator.py execute_sector_rotation [--force] - Execute sector rotation sleeve")
+        print("  python orchestrator.py execute_geographic_allocation [--force] - Execute geographic allocation sleeve")
         print("  python orchestrator.py cio_cycle - Produce top-level CIO directive")
         print("  python orchestrator.py scout_swarm - Run scout swarm queue builder")
         print("  python orchestrator.py analyst_ensemble - Score opportunities with analyst quorum")
@@ -2452,6 +2456,20 @@ if __name__ == "__main__":
             regime=regime,
             vix=vix,
         )
+        print(json.dumps(out, indent=2, default=str))
+        sys.exit(0)
+
+    if command in ("execute_sector_rotation", "execute-sector-rotation"):
+        ensure_repo_root_cwd()
+        force = "--force" in sys.argv[2:]
+        out = run_sector_rotation_execution(force=force)
+        print(json.dumps(out, indent=2, default=str))
+        sys.exit(0)
+
+    if command in ("execute_geographic_allocation", "execute-geographic-allocation"):
+        ensure_repo_root_cwd()
+        force = "--force" in sys.argv[2:]
+        out = run_geographic_allocation_execution(force=force)
         print(json.dumps(out, indent=2, default=str))
         sys.exit(0)
 
