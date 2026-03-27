@@ -126,24 +126,32 @@ if [[ "${SKIP_IMPORT_GATE}" != "1" ]]; then
   REMOTE_CMD+=" && python3 smoke_deploy_import_gate.py"
 fi
 
+REMOTE_CMD+=" && echo '[deploy] remote: recording version…'"
 REMOTE_CMD+=" && DEPLOY_COMMIT=\"${LOCAL_COMMIT}\" DEPLOY_DIRTY=\"${DEPLOY_DIRTY}\" python3 record_version.py >/dev/null 2>&1 || true"
 
 if [[ -n "${SERVICE_NAME}" ]]; then
   # Stale nohup/manual command_center.py often still owns 8083; systemctl restart alone leaves it
   # serving old code → new routes 404 on disk but not in curl. Free the port, then restart the unit.
   DASH_PORT="${COMMAND_CENTER_PORT:-8083}"
+  REMOTE_CMD+=" && echo '[deploy] remote: freeing port ${DASH_PORT} (stale dashboard)…'"
   # fuser -k prints killed PIDs to stdout — suppress both fds (otherwise zsh shows "PID%" with no newline).
   REMOTE_CMD+=" && ( command -v fuser >/dev/null 2>&1 && sudo fuser -k ${DASH_PORT}/tcp >/dev/null 2>&1 || true )"
   REMOTE_CMD+=" && sudo pkill -f \"${REMOTE_DIR}/dashboard/command_center.py\" 2>/dev/null || true"
   REMOTE_CMD+=" && sleep 1"
   # Do not swallow failures — a silent skip leaves old code running (e.g. billing links missing).
+  REMOTE_CMD+=" && echo '[deploy] remote: systemctl restart ${SERVICE_NAME}…'"
   REMOTE_CMD+=" && sudo systemctl restart \"${SERVICE_NAME}\" || { echo '[deploy] ERROR: systemctl restart failed (check sudo / unit name).'; exit 1; }"
 fi
 
 REMOTE_CMD+=" && echo \"[deploy] remote steps finished.\""
 
 echo "[deploy] Running remote setup commands..."
-ssh -p "${PORT}" "${USER_NAME}@${HOST}" "${REMOTE_CMD}"
+if ! ssh -p "${PORT}" "${USER_NAME}@${HOST}" "${REMOTE_CMD}"; then
+  echo "[deploy] ERROR: remote SSH command failed (exit $?). Common causes:"
+  echo "  - sudo systemctl needs passwordless sudo for ${SERVICE_NAME:-<service>}"
+  echo "  - port 8083 still held: on server run: sudo fuser -k 8083/tcp && sudo systemctl restart fortress-dashboard"
+  exit 255
+fi
 
 echo "[deploy] Done."
 echo "[deploy] Note: rsync copies this machine's repo root \`.env\` to the server (if it exists here)."
