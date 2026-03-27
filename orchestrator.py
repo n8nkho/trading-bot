@@ -3306,4 +3306,16 @@ if __name__ == "__main__":
         print(json.dumps(out, indent=2))
         if not out.get("ok"):
             sys.exit(1)
+        sys.exit(0)
+
+    else:
+        print(f"Unknown command: {command!r}", file=sys.stderr)
+        print("Run: python3 orchestrator.py   (no arguments) for usage.", file=sys.stderr)
+        if "verify" in command and "learn" in command:
+            print(
+                "Hint: If you meant verify_learning, deploy the latest trading-bot from your Mac "
+                "(rsync does not update git metadata; pull orchestrator.py with the verify_learning block).",
+                file=sys.stderr,
+            )
+        sys.exit(2)
 
