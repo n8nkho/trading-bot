@@ -33,3 +33,6 @@
 #
 # Daily intelligence brief after close (self-QA + continuous improvement report)
 # 0 17 * * 1-5 $REPO/scripts/cron_run.sh generate_intelligence_brief >> $REPO/logs/intelligence.log 2>&1
+#
+# Daily recursive evolution cycle (paper-safe by default; dry-run unless FORTRESS_EVOLUTION_ALLOW_WRITES=1)
+# 5 17 * * 1-5 $REPO/scripts/cron_run.sh evolve >> $REPO/logs/evolution.log 2>&1

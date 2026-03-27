@@ -87,6 +87,17 @@ This document is a single-source blueprint for external review of the Fortress t
   - execution-layer and scheduler coverage gaps
 - Produces forward-looking optimization queue and experiment suggestions.
 
+### I) Recursive Self-Improvement Cycle (`orchestrator.py evolve`)
+
+- Runs a 5-phase evolution loop and writes `data/recursive_evolution_YYYYMMDD_HHMMSS.json`:
+  1. self-diagnosis from latest artifacts + blockers
+  2. parameter auto-tuning proposal from realized outcomes
+  3. strategy A/B allocation recommendation via Thompson sampling
+  4. autonomous change plan (safe dry-run by default)
+  5. meta-learning state update in `data/meta_learning_state.json`
+- Writes operational telemetry to `logs/evolution.log`.
+- Safety default: no automatic file changes unless `FORTRESS_EVOLUTION_ALLOW_WRITES=1`.
+
 ## 4) Agent Inventory (High-Level)
 
 - **Signal generation:** `screener_agent.py`, `intraday_sniper.py`, `spy_intraday_swing.py`
@@ -96,6 +107,7 @@ This document is a single-source blueprint for external review of the Fortress t
 - **Allocation/planning managers:** `day_trading_manager.py`, `swing_trading_manager.py`, `position_trading_manager.py`, `sector_rotation_manager.py`, `geographic_allocation_manager.py`
 - **Agentic overlay:** `scouts/*`, `analysts/*`, `cio_agent.py`
 - **Self-improvement/QA intelligence:** `intelligence_brief_generator.py`
+- **Recursive evolution engine:** `recursive_evolution.py`
 - **Audit/governance:** `bot_audit_agent.py`, `drift_detector.py`, `error_detective.py`
 - **Adaptation/analysis:** `performance_analyzer.py`, `walk_forward_validator.py`, `meta_architect.py`
 
@@ -141,7 +153,7 @@ This document is a single-source blueprint for external review of the Fortress t
 
 ## 7) Operational Architecture
 
-- **Scheduler:** cron (user crontab) runs `screen`, `monitor`, `snipe`, `fortress`, `execute_pending`, `generate_intelligence_brief` (17:00 ET weekdays).
+- **Scheduler:** cron (user crontab) runs `screen`, `monitor`, `snipe`, `fortress`, `execute_pending`, `generate_intelligence_brief`, and `evolve` (post-close).
 - **Logs:** `logs/screener.log`, `logs/monitor.log`, `logs/sniper.log`, `logs/fortress.log`, etc.
 - **Dashboard:** systemd service for command center (`deploy/systemd/` docs/templates).
 - **State files:** all under repo `data/`.
@@ -221,6 +233,7 @@ Ask reviewers to evaluate:
 - `utils/smart_execution.py` — order-type planning helper
 - `agents/bot_audit_agent.py` — objective audit and diagnostics
 - `agents/intelligence_brief_generator.py` — daily self-QA/learning brief generation
+- `agents/recursive_evolution.py` — 5-phase recursive improvement cycle
 - `utils/pre_trade_gate.py` — final broker submission controls
 - `utils/runtime_config.py` — runtime defaults and toggles
 - `utils/policy_profile.py` + `config/policy_profiles.json` — policy layer
