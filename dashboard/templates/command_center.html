@@ -428,9 +428,13 @@
         </div>
         <div id="botAudit" class="rec-list loading">Loading…</div>
       </div>
-      <div class="panel col-8">
+      <div class="panel col-4">
         <div class="panel-title">FORTRESS INTELLIGENCE BRIEF</div>
         <div id="intelligenceBrief" class="loading">Loading…</div>
+      </div>
+      <div class="panel col-4">
+        <div class="panel-title">RECURSIVE EVOLUTION STATUS</div>
+        <div id="evolutionStatus" class="loading">Loading…</div>
       </div>
 
       <div class="panel col-12">
@@ -533,7 +537,7 @@
   </div>
 
   <script>
-    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine', botAudit: '/api/bot_audit', intelligenceBrief: '/api/intelligence_brief' };
+    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine', botAudit: '/api/bot_audit', intelligenceBrief: '/api/intelligence_brief', evolutionStatus: '/api/evolution_status' };
 
     let _chartRedraw = null;
     let _chartResizeDebounce = null;
@@ -1450,6 +1454,36 @@
       `;
     }
 
+    function renderEvolutionStatus(data) {
+      const el = document.getElementById('evolutionStatus');
+      if (!el) return;
+      el.classList.remove('loading');
+      if (!data || !data.available || !data.latest) {
+        el.innerHTML = '<span class="empty">No evolution run yet. Run <code>python3 orchestrator.py evolve</code>.</span>';
+        return;
+      }
+      const latest = data.latest || {};
+      const p2 = latest.phase2_parameter_tuning || {};
+      const p3 = latest.phase3_strategy_ab_testing || {};
+      const p4 = latest.phase4_autonomous_changes || {};
+      const p5 = latest.phase5_meta_learning || {};
+      const alloc = p3.allocation_pct || {};
+      const trend = (data.meta_learning_state || {}).learning_trend;
+      const history = (data.meta_learning_state || {}).history || [];
+      const logTail = (data.log_tail || []).slice(-8).map(x => String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;')).join('\n');
+      el.innerHTML = `
+        <div><strong>Writes enabled:</strong> ${data.writes_enabled ? 'YES' : 'NO'} · <strong>Applied:</strong> ${p4.applied ? 'YES' : 'NO'}</div>
+        <div><strong>Observed trades:</strong> ${p2.observed_trades ?? '—'} · <strong>Win rate:</strong> ${p2.win_rate ?? '—'}</div>
+        <div><strong>Bandit allocation:</strong> agentic ${alloc.agentic_signal_boost ?? '—'}% · deterministic ${alloc.deterministic_only ?? '—'}%</div>
+        <div><strong>Loops completed:</strong> ${p5.loops_completed ?? history.length ?? '—'} · <strong>Trend:</strong> ${trend ?? '—'}</div>
+        <div class="text-muted" style="font-size:11px;margin-top:0.4rem;">JSON: ${String(data.json_path || '—').replace(/</g, '&lt;')}</div>
+        <details style="margin-top:0.45rem;">
+          <summary style="cursor:pointer;color:var(--cyan);">Recent evolution.log</summary>
+          <pre style="white-space:pre-wrap;max-height:210px;overflow:auto;background:var(--bg-card);border:1px solid var(--border);padding:0.55rem;border-radius:4px;">${logTail || 'No evolution.log lines yet.'}</pre>
+        </details>
+      `;
+    }
+
     async function runBotAudit() {
       const st = document.getElementById('botAuditStatus');
       if (st) st.textContent = 'Running…';
@@ -1699,7 +1733,7 @@
 
     async function loadAll() {
       try {
-        const [health, agents, performance, news, recommendations, safetyStatus, botAudit, intelligenceBrief, headlineEvent, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, drift, trustReport, feed, positions, orders, tvSignals] = await Promise.all([
+        const [health, agents, performance, news, recommendations, safetyStatus, botAudit, intelligenceBrief, evolutionStatus, headlineEvent, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, drift, trustReport, feed, positions, orders, tvSignals] = await Promise.all([
           fetch(API.health).then(r => r.json()),
           fetch(API.agents).then(r => r.json()),
           fetch(API.performance).then(r => r.json()),
@@ -1708,6 +1742,7 @@
           fetch(API.safetyStatus).then(r => r.json()),
           fetch(API.botAudit).then(r => r.json()).catch(() => ({})),
           fetch(API.intelligenceBrief).then(r => r.json()).catch(() => ({})),
+          fetch(API.evolutionStatus).then(r => r.json()).catch(() => ({})),
           fetch(API.headlineEvent).then(function (r) { return r.ok ? r.json() : { error: true }; }).catch(function () { return { error: true }; }),
           fetch(API.actionQueue).then(r => r.json()),
           fetch(API.operatorRuns).then(r => r.json()),
@@ -1731,6 +1766,7 @@
         renderSafetyStatus(safetyStatus);
         renderBotAudit(botAudit);
         renderIntelligenceBrief(intelligenceBrief);
+        renderEvolutionStatus(evolutionStatus);
         renderHeadlineEventStatus(headlineEvent);
         renderActionQueue(actionQueue);
         renderOperatorRuns(operatorRuns);

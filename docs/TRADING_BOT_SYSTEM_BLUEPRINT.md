@@ -2,7 +2,7 @@
 
 This document is a single-source blueprint for external review of the Fortress trading bot system: architecture, controls, runtime behavior, and improvement targets.
 
-**Last updated:** 2026-03-27 (post agentic execution integration + intelligence brief + circuit-breaker readiness validation)
+**Last updated:** 2026-03-27 (post recursive evolution rollout + Command Center daily evolution telemetry)
 
 ## 1) Executive Snapshot
 
@@ -170,6 +170,7 @@ This document is a single-source blueprint for external review of the Fortress t
   - hedging context + strategy gate metrics
   - agentic artifact summary (CIO directive, scout queue, analyst consensus, multi-timeframe, sector rotation, geo allocation)
   - fortress intelligence brief panel (latest report status, executive summary, critical blockers, markdown preview)
+  - recursive evolution status panel (latest evolution artifact, win-rate context, bandit allocations, apply-mode, meta-learning trend, evolution log tail)
   - expanded runbooks including new agentic commands
 - Remaining caveat:
   - data shown is artifact-driven; absence usually means command/cadence not run yet, not necessarily failure.

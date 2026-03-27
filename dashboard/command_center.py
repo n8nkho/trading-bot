@@ -1804,6 +1804,42 @@ def get_intelligence_brief_status() -> dict:
     return out
 
 
+def get_evolution_status() -> dict:
+    """
+    Load latest recursive evolution artifact and compact trend summary.
+    """
+    out = {
+        "timestamp": datetime.now().isoformat(),
+        "available": False,
+        "json_path": None,
+        "latest": {},
+        "meta_learning_state": {},
+        "writes_enabled": str(os.getenv("FORTRESS_EVOLUTION_ALLOW_WRITES", "0")).strip().lower()
+        in {"1", "true", "yes", "on"},
+        "log_tail": [],
+    }
+    files = sorted(glob.glob(str(DATA_DIR / "recursive_evolution_*.json")), reverse=True)
+    if files:
+        jp = Path(files[0])
+        out["json_path"] = str(jp)
+        out["available"] = True
+        out["latest"] = _read_json(jp, default={}) or {}
+
+    ml = DATA_DIR / "meta_learning_state.json"
+    if ml.exists():
+        out["meta_learning_state"] = _read_json(ml, default={}) or {}
+
+    # Small tail from evolution.log for operator visibility.
+    log_path = LOGS_DIR / "evolution.log"
+    if log_path.exists():
+        try:
+            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            out["log_tail"] = lines[-25:]
+        except OSError:
+            out["log_tail"] = []
+    return out
+
+
 def get_pricing_gates():
     return _read_json(CONFIG_DIR / "pricing_gates.json", default={"tiers": [], "disclaimer": ""})
 
@@ -2704,6 +2740,11 @@ def api_trust_report():
 @app.route("/api/intelligence_brief")
 def api_intelligence_brief():
     return jsonify(get_intelligence_brief_status())
+
+
+@app.route("/api/evolution_status")
+def api_evolution_status():
+    return jsonify(get_evolution_status())
 
 
 @app.route("/manifest.json")
