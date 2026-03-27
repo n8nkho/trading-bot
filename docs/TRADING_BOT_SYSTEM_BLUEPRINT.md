@@ -2,7 +2,7 @@
 
 This document is a single-source blueprint for external review of the Fortress trading bot system: architecture, controls, runtime behavior, and improvement targets.
 
-**Last updated:** 2026-03-27 (post agentic execution integration + daily intelligence brief system)
+**Last updated:** 2026-03-27 (post agentic execution integration + intelligence brief + circuit-breaker readiness validation)
 
 ## 1) Executive Snapshot
 
@@ -133,6 +133,11 @@ This document is a single-source blueprint for external review of the Fortress t
 - Risk auto-reset defaults:
   - `FORTRESS_AUTO_RESET_RISK_GUARDIAN_STATE=1`
   - `FORTRESS_RISK_STATE_MAX_AGE_HOURS=24`
+- Circuit-breaker persisted state file:
+  - `data/risk_guardian_state.json` (authoritative)
+  - note: `data/risk_state.json` is not used by `agents/risk_guardian.py`
+- Manual reset command (paper-safe operational recovery):
+  - `python3 -c "from agents.risk_guardian import reset_circuit_breaker; reset_circuit_breaker()"`
 
 ## 7) Operational Architecture
 
@@ -168,6 +173,10 @@ This document is a single-source blueprint for external review of the Fortress t
   - output files confirmed in `data/` with current date stamp.
 - **Dashboard/API wiring:** `/api/intelligence_brief` returns latest report payload and Command Center panel renders summary + blockers.
 - **Cron scheduling:** weekday 17:00 ET intelligence job installed on Oracle user crontab.
+- **Circuit-breaker readiness validation:** local + Oracle runtime verified with:
+  - pre-reset diagnosis: stale tripped state found in `data/risk_guardian_state.json`
+  - post-reset status: `consecutive_losses=0`, `circuit_breaker_active=False`
+  - end-to-end smoke chain (`scout_swarm -> analyst_ensemble -> cio_cycle -> screen -> execute_pending -> monitor -> generate_intelligence_brief`) completed successfully.
 
 ## 9) Known Improvement Opportunities (for External Review)
 
@@ -227,3 +236,13 @@ Ask reviewers to evaluate:
 - This system is intentionally deterministic-first with optional LLM advisory paths.
 - “Winning strategy” should be judged as **process quality + bounded risk + repeatability**, not guaranteed returns.
 - External recommendations should preserve safety invariants: pre-trade gate, execution mode, policy guardrails, and paper-first defaults unless explicitly changed.
+
+## 13) Pre-Open Readiness Runbook (Operator Quick Check)
+
+Run this before RTH if there is any concern about stale state or overnight drift:
+
+1. `python3 -c "from agents.risk_guardian import get_risk_status; print(get_risk_status())"`
+2. Verify `circuit_breaker_active` is `False` and `consecutive_losses` is expected.
+3. `python3 orchestrator.py scout_swarm && python3 orchestrator.py analyst_ensemble && python3 orchestrator.py cio_cycle`
+4. `python3 orchestrator.py generate_intelligence_brief`
+5. Confirm Command Center shows current brief and no unexpected critical blockers.
