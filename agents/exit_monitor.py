@@ -1,4 +1,5 @@
 import logging
+import threading
 import yfinance as yf
 from datetime import datetime, timedelta
 import sys
@@ -11,13 +12,123 @@ from agents.llm_reasoning_engine import LLMReasoningEngine
 from agents.screener_agent import get_news_headlines
 from utils.option_contract_schema import normalize_option_position
 from utils.runtime_config import get_llm_config
+from agents.performance_analyzer import track_outcome
+from utils.llm_decision_tracker import get_llm_decision_tracker
+from agents.llm_learning_agent import LLMLearningAgent
 
 logging.basicConfig(
     filename='logs/exit_monitor.log',
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+logger = logging.getLogger(__name__)
 _LLM_ENGINE: LLMReasoningEngine | None = None
+
+
+def _parse_position_entry_dt(pos: dict) -> datetime | None:
+    raw = pos.get("entry_date") or pos.get("entry_time")
+    if not raw:
+        return None
+    if isinstance(raw, datetime):
+        return raw.replace(tzinfo=None) if raw.tzinfo else raw
+    try:
+        s = str(raw).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        return dt.replace(tzinfo=None) if dt.tzinfo else dt
+    except Exception:
+        return None
+
+
+def record_llm_outcome_after_sell_all_fill(signal: dict, pos: dict | None) -> None:
+    """
+    After a broker-confirmed SELL_ALL fill, update decisions_log + llm_decisions.jsonl outcome
+    and optionally run LLMLearningAgent in a background thread.
+
+    Call this only when the exit order is filled (e.g. from orchestrator after execute_sell_order).
+    Do not call from evaluate_exit / check_option_exit alone — those are pre-trade signals only.
+    """
+    try:
+        if str(signal.get("action") or "") != "SELL_ALL":
+            return
+        if not pos:
+            return
+        signal_id = pos.get("signal_id")
+        if not signal_id:
+            return
+        filled_price = signal.get("filled_price")
+        sell_qty = signal.get("sell_qty")
+        if filled_price is None or sell_qty is None or float(sell_qty) <= 0:
+            return
+        filled_price = float(filled_price)
+        sell_qty = float(sell_qty)
+        trade_type = (pos or {}).get("type", "STOCK")
+        if trade_type == "OPTION":
+            entry_price = float((pos or {}).get("entry_premium") or 0)
+            pnl_dollars = (filled_price - entry_price) * sell_qty * 100.0
+        else:
+            entry_price = float((pos or {}).get("entry_price") or 0)
+            pnl_dollars = (filled_price - entry_price) * sell_qty
+
+        frac_pnl = float(signal.get("pnl_pct") or 0.0)
+        pnl_pct_pts = frac_pnl * 100.0
+
+        et = _parse_position_entry_dt(pos)
+        hold_days = 0
+        if et:
+            hold_days = max(0, (datetime.now() - et).days)
+
+        outcome_data = {
+            "exit_price": filled_price,
+            "pnl_pct": pnl_pct_pts,
+            "pnl_dollars": pnl_dollars,
+            "hold_days": hold_days,
+            "exit_reason": str(signal.get("reason") or "exit"),
+            "exit_timestamp": datetime.now().isoformat(),
+        }
+        track_outcome(str(signal_id), outcome_data)
+
+        duration_hours = None
+        if et:
+            duration_hours = (datetime.now() - et).total_seconds() / 3600.0
+
+        llm_outcome = {
+            "pnl": pnl_dollars,
+            "pnl_pct": pnl_pct_pts,
+            "duration_hours": duration_hours,
+            "exit_reason": outcome_data["exit_reason"],
+            "exit_price": filled_price,
+        }
+        tracker = get_llm_decision_tracker()
+        if tracker.record_outcome(str(signal_id), llm_outcome):
+            logger.info("Recorded LLM outcome for signal_id=%s (%s)", signal_id, pos.get("ticker"))
+
+            def _learn() -> None:
+                try:
+                    rec = tracker.get_decision_by_signal(str(signal_id))
+                    if rec:
+                        LLMLearningAgent().learn_from_trade(rec)
+                except Exception as exc:
+                    logger.warning("LLM learning post-exit failed: %s", exc)
+
+            if str(os.getenv("FORTRESS_LLM_LEARNING_ON_EXIT", "1")).strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }:
+                threading.Thread(target=_learn, daemon=True).start()
+    except Exception as e:
+        logger.warning("Closed-trade / LLM outcome recording failed: %s: %s", type(e).__name__, e)
+
+
+# --- LLM OUTCOME RECORDING (ARCHITECTURE) ---
+# ADDED: Single production exit path for llm_decisions.jsonl outcomes:
+#   orchestrator.monitor_positions_async -> execute_exit (filled SELL_ALL)
+#   -> orchestrator._record_closed_trade_and_llm_learning
+#   -> record_llm_outcome_after_sell_all_fill(signal, pos) [THIS MODULE]
+# Outcomes use signal_id (linked at BUY via link_signal(llm_decision_id, signal_id)), NOT raw ticker.
+# evaluate_exit / check_option_exit / create_exit_decision only emit signals — no broker fill here.
+# Total broker-confirmed exit points wired for LLM outcomes: 1 (record_llm_outcome_after_sell_all_fill).
 
 
 def _get_llm_engine() -> LLMReasoningEngine:
@@ -115,15 +226,7 @@ def monitor_positions(positions):
     logging.info(f"Exit monitoring complete: {action_summary}")
     
     return decisions
-    """
-    Evaluate exit conditions for an option position.
-    
-    Args:
-        position: Position dict with ticker, entry_premium, qty, expiration_date, type
-        
-    Returns:
-        Decision dict with action, reason, sell_qty, current_price, pnl_pct
-    """
+
 def check_option_exit(position):
     """
     Option exit logic based on option premium movement.
@@ -248,58 +351,6 @@ def check_option_exit(position):
     reason = f"No option exit conditions met (Profit: {profit_pct:.2f}%, DTE: {dte})"
     logging.info(f"{option_symbol}: {reason}")
     return create_hold_decision(option_symbol, reason, current_premium, profit_pct)
-
-def monitor_positions(positions):
-    """
-    Monitor open positions and generate exit decisions.
-    
-    Args:
-        positions: List of position dicts with:
-            - ticker: Stock symbol
-            - entry_price: Entry price per share
-            - qty or shares: Number of shares
-            - entry_time or entry_date: Entry timestamp (ISO format string or datetime)
-            - tiers_sold: Optional dict tracking which tiers have been sold
-            
-    Returns:
-        List of exit decision dicts with action and reasoning
-    """
-    logging.info(f"Starting exit monitoring for {len(positions)} positions")
-    
-    decisions = []
-    
-    for pos in positions:
-        ticker = pos['ticker']
-        logging.info(f"Monitoring position: {ticker} ({pos.get('type', 'STOCK')})")
-        
-        try:
-            if pos.get('type') == 'OPTION':
-                decision = check_option_exit(pos)
-            else:
-                decision = evaluate_exit(pos)
-            decisions.append(decision)
-            
-            logging.info(f"{ticker}: {decision['action']} - {decision['reason']}")
-            
-        except Exception as e:
-            logging.error(f"Error monitoring {ticker}: {type(e).__name__}: {str(e)}")
-            decisions.append({
-                'ticker': ticker,
-                'action': 'HOLD',
-                'reason': f'Error during evaluation: {str(e)}',
-                'current_price': None,
-                'pnl_pct': None,
-                'timestamp': datetime.now().isoformat()
-            })
-    
-    action_summary = {}
-    for d in decisions:
-        action = d['action']
-        action_summary[action] = action_summary.get(action, 0) + 1
-    
-    logging.info(f"Exit monitoring complete: {action_summary}")
-    
-    return decisions
 
 def evaluate_exit(position):
     """
