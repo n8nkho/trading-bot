@@ -2,7 +2,7 @@
 
 This document is a single-source blueprint for external review of the Fortress trading bot system: architecture, controls, runtime behavior, and improvement targets.
 
-**Last updated:** 2026-03-27 (post LLM-first entry/exit reasoning integration + daily evolution telemetry)
+**Last updated:** 2026-03-27 (post LLM reasoning + DeepSeek token/cost telemetry tracking)
 
 ## 1) Executive Snapshot
 
@@ -111,6 +111,10 @@ This document is a single-source blueprint for external review of the Fortress t
   - if provider is disabled/unavailable or response is malformed, deterministic fallback path executes.
 - Provider routing:
   - `llm.provider=ollama|deepseek|none` in runtime config (`none` remains safest default).
+- Cost/usage telemetry:
+  - DeepSeek calls now log token usage and estimated USD cost into `data/api_costs.jsonl`.
+  - Daily/monthly/lifetime summaries are available via `utils/cost_calculator.py`.
+  - CLI usage report: `python3 scripts/report_llm_usage.py`.
 
 ## 4) Agent Inventory (High-Level)
 

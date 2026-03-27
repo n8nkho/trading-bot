@@ -3,6 +3,7 @@ import re
 import subprocess
 from typing import Any
 
+from utils.cost_calculator import track_api_cost
 from utils.runtime_config import get_llm_config
 
 
@@ -56,6 +57,23 @@ def call_deepseek(prompt: str, *, timeout: int = 60) -> str:
             temperature=0.2,
             max_tokens=300,
         )
+        # Cost tracking: record prompt/completion token usage per call.
+        try:
+            usage = getattr(resp, "usage", None)
+            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0) if usage is not None else 0
+            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0) if usage is not None else 0
+            # DeepSeek cache-hit tokens are not consistently exposed by SDK responses.
+            # Track cached_tokens=0 unless provider starts returning explicit cache counters.
+            track_api_cost(
+                service="deepseek",
+                model=model,
+                input_tokens=prompt_tokens,
+                output_tokens=completion_tokens,
+                cached_tokens=0,
+            )
+        except Exception:
+            # Cost telemetry must never block trading decisions.
+            pass
         text = (resp.choices[0].message.content or "").strip() if resp.choices else ""
         return text or "Error: Empty DeepSeek response"
     except Exception as e:

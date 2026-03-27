@@ -17,8 +17,16 @@ PRICING = {
     'grok': {
         'grok-mini': {'input': 0.15, 'output': 0.60},
     },
+    'deepseek': {
+        # Pricing from user-provided DeepSeek sheet (USD per 1M tokens).
+        # Input cache-hit is modeled via cached_tokens + CACHE_DISCOUNT=90%.
+        'deepseek-chat': {'input': 0.28, 'output': 0.42},
+        'deepseek-reasoner': {'input': 0.28, 'output': 0.42},
+    },
     'ollama': {
         'llama3.1:8b': {'input': 0.0, 'output': 0.0},  # FREE
+        'llama3.2:3b': {'input': 0.0, 'output': 0.0},  # FREE
+        'deepseek-r1:14b': {'input': 0.0, 'output': 0.0},  # FREE local
     }
 }
 
