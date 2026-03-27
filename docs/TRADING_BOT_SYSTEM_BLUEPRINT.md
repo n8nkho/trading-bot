@@ -187,6 +187,7 @@ This document is a single-source blueprint for external review of the Fortress t
   - agentic artifact summary (CIO directive, scout queue, analyst consensus, multi-timeframe, sector rotation, geo allocation)
   - fortress intelligence brief panel (latest report status, executive summary, critical blockers, markdown preview)
   - recursive evolution status panel (latest evolution artifact, win-rate context, bandit allocations, apply-mode, meta-learning trend, evolution log tail)
+  - LLM usage and spend panel (today/7d/lifetime calls + tokens + estimated USD, model breakdown, recent metered calls)
   - expanded runbooks including new agentic commands
 - Remaining caveat:
   - data shown is artifact-driven; absence usually means command/cadence not run yet, not necessarily failure.

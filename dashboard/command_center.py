@@ -1840,6 +1840,94 @@ def get_evolution_status() -> dict:
     return out
 
 
+def get_llm_usage_status() -> dict:
+    """
+    Load DeepSeek/Ollama LLM token usage + estimated costs for dashboard display.
+    """
+    out = {
+        "timestamp": datetime.now().isoformat(),
+        "available": False,
+        "path": str(DATA_DIR / "api_costs.jsonl"),
+        "today": {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
+        "last_7_days": {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
+        "lifetime": {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
+        "by_model": [],
+        "recent_calls": [],
+    }
+    path = DATA_DIR / "api_costs.jsonl"
+    if not path.exists():
+        return out
+
+    rows: list[dict] = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(row, dict):
+                    rows.append(row)
+    except OSError:
+        return out
+
+    if not rows:
+        return out
+
+    out["available"] = True
+    today = datetime.now().date()
+    seven_days_ago = today - timedelta(days=6)
+    by_model: dict[str, dict] = {}
+
+    for row in rows:
+        ts_raw = row.get("timestamp")
+        if not ts_raw:
+            continue
+        try:
+            row_date = datetime.fromisoformat(str(ts_raw)).date()
+        except Exception:
+            continue
+        in_t = int(row.get("input_tokens", 0) or 0)
+        out_t = int(row.get("output_tokens", 0) or 0)
+        cost = float(row.get("cost_with_cache", 0.0) or 0.0)
+        model_name = f"{row.get('service', 'unknown')}/{row.get('model', 'unknown')}"
+
+        out["lifetime"]["calls"] += 1
+        out["lifetime"]["input_tokens"] += in_t
+        out["lifetime"]["output_tokens"] += out_t
+        out["lifetime"]["cost_usd"] += cost
+
+        bucket = by_model.setdefault(
+            model_name,
+            {"model": model_name, "calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
+        )
+        bucket["calls"] += 1
+        bucket["input_tokens"] += in_t
+        bucket["output_tokens"] += out_t
+        bucket["cost_usd"] += cost
+
+        if row_date == today:
+            out["today"]["calls"] += 1
+            out["today"]["input_tokens"] += in_t
+            out["today"]["output_tokens"] += out_t
+            out["today"]["cost_usd"] += cost
+        if row_date >= seven_days_ago:
+            out["last_7_days"]["calls"] += 1
+            out["last_7_days"]["input_tokens"] += in_t
+            out["last_7_days"]["output_tokens"] += out_t
+            out["last_7_days"]["cost_usd"] += cost
+
+    out["today"]["cost_usd"] = round(out["today"]["cost_usd"], 6)
+    out["last_7_days"]["cost_usd"] = round(out["last_7_days"]["cost_usd"], 6)
+    out["lifetime"]["cost_usd"] = round(out["lifetime"]["cost_usd"], 6)
+    out["by_model"] = sorted(by_model.values(), key=lambda x: x["cost_usd"], reverse=True)[:6]
+    out["recent_calls"] = rows[-10:]
+    return out
+
+
 def get_pricing_gates():
     return _read_json(CONFIG_DIR / "pricing_gates.json", default={"tiers": [], "disclaimer": ""})
 
@@ -2745,6 +2833,11 @@ def api_intelligence_brief():
 @app.route("/api/evolution_status")
 def api_evolution_status():
     return jsonify(get_evolution_status())
+
+
+@app.route("/api/llm_usage")
+def api_llm_usage():
+    return jsonify(get_llm_usage_status())
 
 
 @app.route("/manifest.json")

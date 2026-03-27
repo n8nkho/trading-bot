@@ -436,6 +436,10 @@
         <div class="panel-title">RECURSIVE EVOLUTION STATUS</div>
         <div id="evolutionStatus" class="loading">Loading…</div>
       </div>
+      <div class="panel col-4">
+        <div class="panel-title">LLM USAGE &amp; SPEND</div>
+        <div id="llmUsage" class="loading">Loading…</div>
+      </div>
 
       <div class="panel col-12">
         <div class="panel-title">HEADLINE EVENT AGENT <span class="text-muted" style="font-size:0.65em;font-weight:400;">shadow · policy headlines · <a href="/api/headline_event_status" style="color:inherit;">JSON</a></span></div>
@@ -537,7 +541,7 @@
   </div>
 
   <script>
-    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine', botAudit: '/api/bot_audit', intelligenceBrief: '/api/intelligence_brief', evolutionStatus: '/api/evolution_status' };
+    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine', botAudit: '/api/bot_audit', intelligenceBrief: '/api/intelligence_brief', evolutionStatus: '/api/evolution_status', llmUsage: '/api/llm_usage' };
 
     let _chartRedraw = null;
     let _chartResizeDebounce = null;
@@ -1484,6 +1488,43 @@
       `;
     }
 
+    function renderLlmUsage(data) {
+      const el = document.getElementById('llmUsage');
+      if (!el) return;
+      el.classList.remove('loading');
+      if (!data || !data.available) {
+        el.innerHTML = '<span class="empty">No LLM usage records yet. Run LLM-enabled commands to populate <code>data/api_costs.jsonl</code>.</span>';
+        return;
+      }
+      const today = data.today || {};
+      const week = data.last_7_days || {};
+      const life = data.lifetime || {};
+      const models = (data.by_model || []).slice(0, 4);
+      const recent = (data.recent_calls || []).slice(-5).reverse();
+      const modelRows = models.length
+        ? '<ul style="margin:0.35rem 0 0 1rem;padding:0;">' + models.map(function (m) {
+            return '<li style="margin:0.12rem 0;"><code>' + esc(m.model) + '</code> · calls ' + (m.calls ?? 0) + ' · in ' + (m.input_tokens ?? 0) + ' · out ' + (m.output_tokens ?? 0) + ' · $' + Number(m.cost_usd || 0).toFixed(6) + '</li>';
+          }).join('') + '</ul>'
+        : '<span class="text-muted">No model breakdown yet.</span>';
+      const recentRows = recent.length
+        ? '<ul style="margin:0.35rem 0 0 1rem;padding:0;">' + recent.map(function (r) {
+            const svc = String(r.service || 'unknown').replace(/</g, '&lt;');
+            const model = String(r.model || 'unknown').replace(/</g, '&lt;');
+            return '<li style="margin:0.12rem 0;">' + esc(r.timestamp || '—') + ' · ' + svc + '/' + model + ' · in ' + (r.input_tokens ?? 0) + ' · out ' + (r.output_tokens ?? 0) + ' · $' + Number(r.cost_with_cache || 0).toFixed(6) + '</li>';
+          }).join('') + '</ul>'
+        : '<span class="text-muted">No recent calls.</span>';
+      el.innerHTML = `
+        <div><strong>Today:</strong> ${today.calls ?? 0} calls · in ${today.input_tokens ?? 0} · out ${today.output_tokens ?? 0} · $${Number(today.cost_usd || 0).toFixed(6)}</div>
+        <div><strong>Last 7d:</strong> ${week.calls ?? 0} calls · in ${week.input_tokens ?? 0} · out ${week.output_tokens ?? 0} · $${Number(week.cost_usd || 0).toFixed(6)}</div>
+        <div><strong>Lifetime:</strong> ${life.calls ?? 0} calls · in ${life.input_tokens ?? 0} · out ${life.output_tokens ?? 0} · $${Number(life.cost_usd || 0).toFixed(6)}</div>
+        <div style="margin-top:0.45rem;padding-top:0.45rem;border-top:1px solid var(--border);"><strong>Top models</strong>${modelRows}</div>
+        <details style="margin-top:0.45rem;">
+          <summary style="cursor:pointer;color:var(--cyan);">Recent metered calls</summary>
+          ${recentRows}
+        </details>
+      `;
+    }
+
     async function runBotAudit() {
       const st = document.getElementById('botAuditStatus');
       if (st) st.textContent = 'Running…';
@@ -1733,7 +1774,7 @@
 
     async function loadAll() {
       try {
-        const [health, agents, performance, news, recommendations, safetyStatus, botAudit, intelligenceBrief, evolutionStatus, headlineEvent, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, drift, trustReport, feed, positions, orders, tvSignals] = await Promise.all([
+        const [health, agents, performance, news, recommendations, safetyStatus, botAudit, intelligenceBrief, evolutionStatus, llmUsage, headlineEvent, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, drift, trustReport, feed, positions, orders, tvSignals] = await Promise.all([
           fetch(API.health).then(r => r.json()),
           fetch(API.agents).then(r => r.json()),
           fetch(API.performance).then(r => r.json()),
@@ -1743,6 +1784,7 @@
           fetch(API.botAudit).then(r => r.json()).catch(() => ({})),
           fetch(API.intelligenceBrief).then(r => r.json()).catch(() => ({})),
           fetch(API.evolutionStatus).then(r => r.json()).catch(() => ({})),
+          fetch(API.llmUsage).then(r => r.json()).catch(() => ({})),
           fetch(API.headlineEvent).then(function (r) { return r.ok ? r.json() : { error: true }; }).catch(function () { return { error: true }; }),
           fetch(API.actionQueue).then(r => r.json()),
           fetch(API.operatorRuns).then(r => r.json()),
@@ -1767,6 +1809,7 @@
         renderBotAudit(botAudit);
         renderIntelligenceBrief(intelligenceBrief);
         renderEvolutionStatus(evolutionStatus);
+        renderLlmUsage(llmUsage);
         renderHeadlineEventStatus(headlineEvent);
         renderActionQueue(actionQueue);
         renderOperatorRuns(operatorRuns);
