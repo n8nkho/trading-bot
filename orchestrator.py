@@ -14,6 +14,7 @@ os.chdir(_ORCHESTRATOR_ROOT)
 import asyncio
 import json
 import logging
+import threading
 import glob
 import time
 import time as pytime
@@ -33,7 +34,9 @@ from agents.screener_agent import run_screener
 from agents.entry_agent import evaluate_entry
 from agents.exit_monitor import monitor_positions as monitor_exit_conditions
 from agents.risk_guardian import check_risk_limits, get_risk_limits, get_risk_status, update_consecutive_losses
-from agents.performance_analyzer import track_decision, load_current_params
+from agents.performance_analyzer import track_decision, track_outcome, load_current_params
+from utils.llm_decision_tracker import get_llm_decision_tracker
+from agents.llm_learning_agent import LLMLearningAgent
 from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mode
 # Fortress hedging is optionally deployable; avoid import-time failures.
 # We import it lazily inside `run_fortress()` so `orchestrator.py` can start
@@ -738,6 +741,8 @@ async def submit_approved_screening_trade(trade, candidates, current_params):
                     "stop_loss_pct": current_params["stop_loss_pct"],
                     "take_profit_pct": current_params.get("take_profit_pct", 15.0),
                     "tiers_sold": {"tier1": False, "tier2": False, "tier3": False},
+                    "signal_id": trade.get("signal_id"),
+                    "llm_decision_id": trade.get("llm_decision_id"),
                 },
             )
         else:
@@ -753,6 +758,8 @@ async def submit_approved_screening_trade(trade, candidates, current_params):
                     "stop_loss_pct": current_params["stop_loss_pct"],
                     "take_profit_pct": current_params.get("take_profit_pct", 15.0),
                     "tiers_sold": {"tier1": False, "tier2": False, "tier3": False},
+                    "signal_id": trade.get("signal_id"),
+                    "llm_decision_id": trade.get("llm_decision_id"),
                 },
             )
 
@@ -1259,8 +1266,12 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
                         'grok_sentiment': decision.get('grok_sentiment'),
                         'vision_analysis': decision.get('vision_analysis'),
                         'fundamental_analysis': decision.get('fundamental_analysis'),
-                        'timestamp': datetime.now().isoformat()
+                        'timestamp': datetime.now().isoformat(),
+                        'llm_decision_id': decision.get('llm_decision_id'),
                     })
+                    decision['signal_id'] = signal_id
+                    if decision.get('llm_decision_id'):
+                        get_llm_decision_tracker().link_signal(str(decision['llm_decision_id']), signal_id)
                     
                     # Update portfolio data for next iteration
                     portfolio_data['positions'].append({
@@ -1486,6 +1497,95 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
     return asyncio.run(run_daily_screening_async(portfolio_value))
 
 
+def _parse_position_entry_dt(pos: dict) -> datetime | None:
+    raw = pos.get("entry_date") or pos.get("entry_time")
+    if not raw:
+        return None
+    if isinstance(raw, datetime):
+        return raw.replace(tzinfo=None) if raw.tzinfo else raw
+    try:
+        s = str(raw).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        return dt.replace(tzinfo=None) if dt.tzinfo else dt
+    except Exception:
+        return None
+
+
+def _record_closed_trade_and_llm_learning(signal: dict, pos: dict | None) -> None:
+    """Full exit: update decisions_log outcome + LLM decision tracker + optional lesson (async thread)."""
+    try:
+        if str(signal.get("action") or "") != "SELL_ALL":
+            return
+        if not pos:
+            return
+        signal_id = pos.get("signal_id")
+        if not signal_id:
+            return
+        filled_price = signal.get("filled_price")
+        sell_qty = signal.get("sell_qty")
+        if filled_price is None or sell_qty is None or float(sell_qty) <= 0:
+            return
+        filled_price = float(filled_price)
+        sell_qty = float(sell_qty)
+        trade_type = (pos or {}).get("type", "STOCK")
+        if trade_type == "OPTION":
+            entry_price = float((pos or {}).get("entry_premium") or 0)
+            pnl_dollars = (filled_price - entry_price) * sell_qty * 100.0
+        else:
+            entry_price = float((pos or {}).get("entry_price") or 0)
+            pnl_dollars = (filled_price - entry_price) * sell_qty
+
+        frac_pnl = float(signal.get("pnl_pct") or 0.0)
+        pnl_pct_pts = frac_pnl * 100.0
+
+        et = _parse_position_entry_dt(pos)
+        hold_days = 0
+        if et:
+            hold_days = max(0, (datetime.now() - et).days)
+
+        outcome_data = {
+            "exit_price": filled_price,
+            "pnl_pct": pnl_pct_pts,
+            "pnl_dollars": pnl_dollars,
+            "hold_days": hold_days,
+            "exit_reason": str(signal.get("reason") or "exit"),
+            "exit_timestamp": datetime.now().isoformat(),
+        }
+        track_outcome(str(signal_id), outcome_data)
+
+        duration_hours = None
+        if et:
+            duration_hours = (datetime.now() - et).total_seconds() / 3600.0
+
+        llm_outcome = {
+            "pnl": pnl_dollars,
+            "pnl_pct": pnl_pct_pts,
+            "duration_hours": duration_hours,
+            "exit_reason": outcome_data["exit_reason"],
+            "exit_price": filled_price,
+        }
+        tracker = get_llm_decision_tracker()
+        if tracker.record_outcome(str(signal_id), llm_outcome):
+
+            def _learn() -> None:
+                try:
+                    rec = tracker.get_decision_by_signal(str(signal_id))
+                    if rec:
+                        LLMLearningAgent().learn_from_trade(rec)
+                except Exception as exc:
+                    logger.warning("LLM learning post-exit failed: %s", exc)
+
+            if str(os.getenv("FORTRESS_LLM_LEARNING_ON_EXIT", "1")).strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }:
+                threading.Thread(target=_learn, daemon=True).start()
+    except Exception as e:
+        logger.warning("Closed-trade recording failed: %s: %s", type(e).__name__, e)
+
+
 async def monitor_positions_async():
     """
     Monitor open positions and generate exit signals (async version).
@@ -1652,6 +1752,8 @@ async def monitor_positions_async():
                     'pnl': pnl_dollars,
                     'pnl_pct': signal.get('pnl_pct')
                 }, ledger_order_ids)
+
+                _record_closed_trade_and_llm_learning(signal, pos)
             except Exception as e:
                 logger.warning(f"Failed to record P&L ledger entry: {type(e).__name__}: {str(e)}")
 

@@ -106,7 +106,11 @@ This document is a single-source blueprint for external review of the Fortress t
 ### J) LLM-First Reasoning Flow (`agents/llm_reasoning_engine.py`)
 
 - Entry and stock-exit decisions are LLM-first when LLM provider is enabled.
+- Entry prompt is **paper-trading aggressive**: judge the **current** setup; do not refuse buys because of unrelated past losses. Structured lessons from closed trades are injected via `utils/llm_learning_context.py` (from `data/llm_lessons.jsonl`).
 - LLM response contract is strict JSON and persisted to `data/llm_reasoning_history.jsonl`.
+- Decision trace for learning: `data/llm_decisions.jsonl` (links to `signal_id` after a BUY is logged; outcomes filled on full exit in `orchestrator.py` monitor path).
+- Post-exit lesson extraction: `agents/llm_learning_agent.py` (uses configured `call_llm`; optional async thread via `FORTRESS_LLM_LEARNING_ON_EXIT`).
+- Entry confidence floor default: `FORTRESS_LLM_ENTRY_MIN_CONFIDENCE` (default **0.55** for paper learning).
 - Safety fallback remains active:
   - if provider is disabled/unavailable or response is malformed, deterministic fallback path executes.
 - Provider routing:
@@ -125,8 +129,9 @@ This document is a single-source blueprint for external review of the Fortress t
 - **Allocation/planning managers:** `day_trading_manager.py`, `swing_trading_manager.py`, `position_trading_manager.py`, `sector_rotation_manager.py`, `geographic_allocation_manager.py`
 - **Agentic overlay:** `scouts/*`, `analysts/*`, `cio_agent.py`
 - **Self-improvement/QA intelligence:** `intelligence_brief_generator.py`
-- **Recursive evolution engine:** `recursive_evolution.py`
+- **Recursive evolution engine:** `recursive_evolution.py` (includes `llm_learning_review` batch step)
 - **LLM reasoning agent:** `llm_reasoning_engine.py`
+- **LLM learning loop:** `llm_learning_agent.py`, `utils/llm_decision_tracker.py`, `utils/llm_learning_context.py`
 - **Audit/governance:** `bot_audit_agent.py`, `drift_detector.py`, `error_detective.py`
 - **Adaptation/analysis:** `performance_analyzer.py`, `walk_forward_validator.py`, `meta_architect.py`
 

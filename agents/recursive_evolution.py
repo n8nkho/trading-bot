@@ -22,6 +22,7 @@ from typing import Any
 
 from agents.risk_guardian import get_risk_status
 from agents.llm_reasoning_engine import LLMReasoningEngine
+from agents.llm_learning_agent import LLMLearningAgent
 from utils.local_llm import call_llm
 
 
@@ -297,6 +298,13 @@ def run_recursive_evolution(*, data_dir: Path = DATA_DIR) -> dict[str, Any]:
         }
         llm_meta["new_strategy"] = engine.generate_new_strategy(perf)
 
+    llm_learning_review: dict[str, Any] = {}
+    try:
+        llm_learning_review = LLMLearningAgent().daily_learning_review()
+    except Exception as e:
+        logger.warning("LLM learning review failed: %s", e)
+        llm_learning_review = {"error": str(e)}
+
     result = {
         "timestamp": datetime.now().isoformat(),
         "phase1_self_diagnosis": p1,
@@ -305,6 +313,7 @@ def run_recursive_evolution(*, data_dir: Path = DATA_DIR) -> dict[str, Any]:
         "phase4_autonomous_changes": p4,
         "phase5_meta_learning": p5,
         "llm_pattern_discovery": llm_meta,
+        "llm_learning_review": llm_learning_review,
         "safety": {
             "paper_only_recommended": True,
             "autonomous_writes_enabled": str(os.getenv("FORTRESS_EVOLUTION_ALLOW_WRITES", "0")).strip().lower()

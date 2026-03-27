@@ -17,9 +17,31 @@ from pathlib import Path
 from typing import Any
 
 from utils.local_llm import call_llm
+from utils.llm_learning_context import build_learning_context
 
 
 logger = logging.getLogger(__name__)
+
+# Paper trading: bias toward learning from current signals, not fearing past streaks.
+AGGRESSIVE_PAPER_TRADING_PROMPT = """You are an AGGRESSIVE paper trader learning through experience.
+
+CRITICAL: This is PAPER TRADING — zero real-money risk. Primary goal: take calculated trades to LEARN what works.
+
+REASONING:
+1. Judge THIS setup from current technicals (RSI, volume, price), analyst/scout/CIO context, and regime.
+2. Do NOT refuse a good setup because of unrelated past losing trades. Streaks are noise; each decision is new data.
+3. When signals align (e.g. oversold + volume + supportive analyst), prefer BUY to gather evidence.
+4. Size with confidence using position_size_multiplier in [0.8, 1.2].
+
+Return ONLY JSON with keys:
+decision (BUY or SKIP),
+confidence (0..1),
+reasoning (2-3 sentences),
+key_factors (array of strings),
+risks (array of strings),
+expected_outcome (string),
+position_size_multiplier (0.8..1.2),
+learning_hypothesis (what we might learn from taking or skipping this trade)."""
 
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -55,11 +77,7 @@ class LLMReasoningEngine:
 
     def evaluate_trade_opportunity(self, candidate: dict[str, Any]) -> dict[str, Any]:
         symbol = str(candidate.get("ticker") or candidate.get("symbol") or "").upper()
-        system = (
-            "You are an expert trader. Return ONLY JSON with keys: "
-            "decision (BUY/SKIP), confidence (0..1), reasoning, key_factors (array), "
-            "risks (array), expected_outcome, position_size_multiplier (0.5..1.5)."
-        )
+        system = AGGRESSIVE_PAPER_TRADING_PROMPT
         user = json.dumps(
             {
                 "symbol": symbol,
@@ -75,7 +93,7 @@ class LLMReasoningEngine:
                     if isinstance(candidate.get("agentic_meta"), dict)
                     else candidate.get("scout_score"),
                 },
-                "recent_performance_summary": self._recent_performance_summary(),
+                "learning_context": build_learning_context(),
             },
             default=str,
         )
@@ -101,7 +119,7 @@ class LLMReasoningEngine:
             conf_f = 0.0
         try:
             mult = float(parsed.get("position_size_multiplier", 1.0))
-            mult = max(0.5, min(1.5, mult))
+            mult = max(0.8, min(1.2, mult))
         except Exception:
             mult = 1.0
         out = {
@@ -111,6 +129,7 @@ class LLMReasoningEngine:
             "key_factors": parsed.get("key_factors") if isinstance(parsed.get("key_factors"), list) else [],
             "risks": parsed.get("risks") if isinstance(parsed.get("risks"), list) else [],
             "expected_outcome": str(parsed.get("expected_outcome") or ""),
+            "learning_hypothesis": str(parsed.get("learning_hypothesis") or ""),
             "position_size_multiplier": mult,
             "llm_available": True,
             "symbol": symbol,
@@ -135,7 +154,7 @@ class LLMReasoningEngine:
                     "days_held": position.get("days_held"),
                     "qty": position.get("qty") or position.get("shares"),
                 },
-                "recent_performance_summary": self._recent_performance_summary(),
+                "note": "Judge this position on its own merits (paper trading). Past trades are irrelevant.",
             },
             default=str,
         )

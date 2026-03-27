@@ -14,6 +14,7 @@ from utils.runtime_config import get_default_portfolio_usd
 from utils.policy_profile import get_profile_bundle
 from utils.market_calendar import is_us_equity_rth_open
 from agents.llm_reasoning_engine import LLMReasoningEngine
+from utils.llm_decision_tracker import get_llm_decision_tracker
 
 logging.basicConfig(
     filename='logs/entry.log',
@@ -32,6 +33,8 @@ STABILIZATION_FACTOR = float(os.getenv("ENTRY_STABILIZATION_FACTOR", "1.00"))
 ENTRY_WINDOW_START = (14, 30)  # 2:30 PM ET
 ENTRY_WINDOW_END = (15, 45)  # 3:45 PM ET
 _LLM_ENGINE: LLMReasoningEngine | None = None
+# Paper mode: lower bar than production; override with FORTRESS_LLM_ENTRY_MIN_CONFIDENCE.
+_LLM_MIN_CONF = float(os.getenv("FORTRESS_LLM_ENTRY_MIN_CONFIDENCE", "0.55"))
 
 
 def _get_llm_engine() -> LLMReasoningEngine:
@@ -485,9 +488,9 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
     
     return decisions
 
-def create_skip_decision(ticker, reason):
+def create_skip_decision(ticker, reason, **extra: Any):
     """Create a SKIP decision dict"""
-    return {
+    out: dict[str, Any] = {
         'ticker': ticker,
         'action': 'SKIP',
         'reason': reason,
@@ -495,6 +498,8 @@ def create_skip_decision(ticker, reason):
         'shares': 0,
         'timestamp': datetime.now().isoformat()
     }
+    out.update(extra)
+    return out
 
 def evaluate_single_entry(candidate, portfolio_value, *, rsi_threshold: float | None = None):
     """
@@ -516,21 +521,26 @@ def evaluate_single_entry(candidate, portfolio_value, *, rsi_threshold: float | 
     # LLM-first reasoning path (replaces deterministic gating when provider is enabled).
     llm_decision = _get_llm_engine().evaluate_trade_opportunity(candidate)
     if llm_decision.get("llm_available"):
+        llm_decision_id = get_llm_decision_tracker().record_decision(ticker, llm_decision, dict(candidate))
         llm_action = str(llm_decision.get("decision") or "SKIP").upper()
         llm_conf = float(llm_decision.get("confidence") or 0.0)
-        if llm_action == "BUY" and llm_conf >= 0.60:
+        if llm_action == "BUY" and llm_conf >= _LLM_MIN_CONF:
             # Keep sizing bounded by existing policy/risk caps.
             current_price = float(candidate.get("current_price") or 0.0)
             if current_price <= 0:
-                return create_skip_decision(ticker, "LLM BUY but current price unavailable")
+                return create_skip_decision(
+                    ticker, "LLM BUY but current price unavailable", llm_decision_id=llm_decision_id
+                )
             base_position = float(portfolio_value) * BASE_POSITION_PCT
             multiplier = float(llm_decision.get("position_size_multiplier") or 1.0)
-            multiplier = max(0.5, min(1.5, multiplier))
+            multiplier = max(0.8, min(1.2, multiplier))
             policy_cap = _max_new_position_usd_from_policy(portfolio_value)
             position_size = min(base_position * multiplier, MAX_POSITION_SIZE, policy_cap)
             shares = int(position_size / current_price)
             if shares < 1:
-                return create_skip_decision(ticker, "LLM BUY but position size below 1 share")
+                return create_skip_decision(
+                    ticker, "LLM BUY but position size below 1 share", llm_decision_id=llm_decision_id
+                )
             return {
                 "ticker": ticker,
                 "action": "BUY",
@@ -543,9 +553,15 @@ def evaluate_single_entry(candidate, portfolio_value, *, rsi_threshold: float | 
                 "llm_powered": True,
                 "llm_key_factors": llm_decision.get("key_factors") or [],
                 "llm_risks": llm_decision.get("risks") or [],
+                "llm_learning_hypothesis": llm_decision.get("learning_hypothesis") or "",
+                "llm_decision_id": llm_decision_id,
             }
         # LLM explicitly SKIPs or low-confidence BUY => skip.
-        return create_skip_decision(ticker, f"LLM decision {llm_action}: {llm_decision.get('reasoning')}")
+        return create_skip_decision(
+            ticker,
+            f"LLM decision {llm_action}: {llm_decision.get('reasoning')}",
+            llm_decision_id=llm_decision_id,
+        )
     
     # Fetch current intraday data
     logging.info(f"{ticker}: Fetching intraday data...")
