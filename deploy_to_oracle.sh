@@ -13,6 +13,10 @@ usage() {
   echo ""
   echo "Note: rsync excludes .git/. Do not run git checkout origin/master on the same tree unless you"
   echo "      resolve conflicts (mixed rsync + git leaves modified + untracked files). Prefer deploy from Mac."
+  echo ""
+  echo "IMPORTANT: Run this script from your Mac/laptop repo (source of truth). Running it *on* the Oracle VM"
+  echo "           with --host pointing to the same machine only re-rsyncs whatever is already on disk there —"
+  echo "           it will NOT pull new commits from your laptop unless you copied them first."
 }
 
 HOST=""
@@ -75,6 +79,14 @@ fi
 if [[ ! -f "orchestrator.py" ]]; then
   echo "This script must be run from the repo root containing orchestrator.py."
   exit 1
+fi
+
+_short_hostname="$(hostname -s 2>/dev/null || true)"
+if [[ -n "${_short_hostname}" && "${HOST}" == "${_short_hostname}" ]]; then
+  echo "[deploy] WARNING: --host (${HOST}) matches this machine's hostname."
+  echo "         You are probably running deploy ON the server. That only uploads this server's files to itself."
+  echo "         To push code from your Mac: run deploy from the Mac repo, or git pull on the server after pushing."
+  echo ""
 fi
 
 echo "[deploy] Syncing repo to ${USER_NAME}@${HOST}:${REMOTE_DIR}"
