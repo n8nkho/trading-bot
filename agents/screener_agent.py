@@ -379,12 +379,17 @@ def run_screener():
         tiers_scanned += 1
         tier_prefilter_passed = 0
         # Data hygiene guard: reject malformed symbols before network calls.
+        # tier entries may be dicts or plain ticker strings; (s or {}).get breaks on str s.
         valid_tier = []
         invalid_symbol_count = 0
         for s in tier_stocks:
-            ticker = str((s or {}).get("ticker") or "").strip().upper()
-            if ticker and ticker.replace("-", "").isalnum():
-                valid_tier.append({"ticker": ticker})
+            ns = _norm_stock(s)
+            if not ns:
+                invalid_symbol_count += 1
+                continue
+            sym = str(ns.get("ticker") or "").strip().upper()
+            if sym and sym.replace("-", "").isalnum():
+                valid_tier.append({"ticker": sym})
             else:
                 invalid_symbol_count += 1
         if invalid_symbol_count:
@@ -466,9 +471,12 @@ def run_screener():
                 source_label = "deterministic"
                 agentic_meta = {}
                 for s in tier_stocks:
-                    if str((s or {}).get("ticker") or "").strip().upper() == ticker:
-                        source_label = str((s or {}).get("__source") or "deterministic")
-                        agentic_meta = (s or {}).get("__agentic_meta") or {}
+                    ns = _norm_stock(s)
+                    if not ns:
+                        continue
+                    if str(ns.get("ticker") or "").strip().upper() == ticker:
+                        source_label = str(ns.get("__source") or "deterministic")
+                        agentic_meta = ns.get("__agentic_meta") or {}
                         break
 
                 cand = {
