@@ -801,7 +801,7 @@ async def submit_approved_screening_trade(trade, candidates, current_params):
                     "sector": get_sector_from_candidates(trade["ticker"], candidates),
                     "stop_loss_pct": current_params["stop_loss_pct"],
                     "take_profit_pct": current_params.get("take_profit_pct", 15.0),
-                    "tiers_sold": {"tier1": False, "tier2": False, "tier3": False},
+                    "tiers_sold": {"tier1": False, "tier2": False, "tier3": False, "tier4": False},
                     "signal_id": trade.get("signal_id"),
                     "llm_decision_id": trade.get("llm_decision_id"),
                 },
@@ -818,7 +818,7 @@ async def submit_approved_screening_trade(trade, candidates, current_params):
                     "sector": get_sector_from_candidates(trade["ticker"], candidates),
                     "stop_loss_pct": current_params["stop_loss_pct"],
                     "take_profit_pct": current_params.get("take_profit_pct", 15.0),
-                    "tiers_sold": {"tier1": False, "tier2": False, "tier3": False},
+                    "tiers_sold": {"tier1": False, "tier2": False, "tier3": False, "tier4": False},
                     "signal_id": trade.get("signal_id"),
                     "llm_decision_id": trade.get("llm_decision_id"),
                 },
@@ -1661,12 +1661,13 @@ async def monitor_positions_async():
                 # Update positions file
                 if signal['action'] == 'SELL_ALL':
                     await asyncio.to_thread(remove_position, ticker)
-                else:  # SELL_HALF
+                else:  # Partial (e.g. SELL_25%, SELL_50%)
                     await asyncio.to_thread(
                         update_position_quantity,
                         ticker,
                         sell_qty,
-                        signal.get('tier')
+                        signal.get('tier'),
+                        signal.get('filled_price'),
                     )
                 
                 return ('success', signal)
@@ -1977,6 +1978,13 @@ def remove_position(ticker):
         ticker: Stock ticker to remove
     """
     try:
+        try:
+            from utils.exit_trailing_state import clear as _clear_exit_trailing
+
+            _clear_exit_trailing(ticker)
+        except Exception as exc:
+            logger.warning("exit_trailing_state clear failed for %s: %s", ticker, exc)
+
         # Load existing positions
         positions = load_positions()
         
@@ -1993,14 +2001,15 @@ def remove_position(ticker):
         logger.error(f"Error removing position: {type(e).__name__}: {str(e)}")
 
 
-def update_position_quantity(ticker, qty_sold, tier=None):
+def update_position_quantity(ticker, qty_sold, tier=None, filled_price=None):
     """
     Update position quantity after partial sale.
     
     Args:
         ticker: Stock ticker
         qty_sold: Number of shares sold
-        tier: Optional tier name (e.g. 'tier1', 'tier2', 'tier3') to mark as sold
+        tier: Optional tier name (e.g. 'tier1', 'tier2', 'tier3', 'tier4') to mark as sold
+        filled_price: Broker fill price (seeds trailing-stop peak after tier1 partial)
     """
     try:
         # Load existing positions
@@ -2019,9 +2028,23 @@ def update_position_quantity(ticker, qty_sold, tier=None):
                 if 'qty' in pos:
                     pos['qty'] = new_qty
 
-                # Mark tier as sold so we don't repeatedly sell the same tranche.
-                if tier and 'tiers_sold' in pos and isinstance(pos['tiers_sold'], dict):
+                if tier:
+                    if 'tiers_sold' not in pos or not isinstance(pos['tiers_sold'], dict):
+                        pos['tiers_sold'] = {
+                            'tier1': False,
+                            'tier2': False,
+                            'tier3': False,
+                            'tier4': False,
+                        }
+                    else:
+                        for k in ('tier1', 'tier2', 'tier3', 'tier4'):
+                            pos['tiers_sold'].setdefault(k, False)
                     pos['tiers_sold'][tier] = True
+
+                    if tier == 'tier1' and filled_price is not None:
+                        from utils.exit_trailing_state import activate_after_tier1
+
+                        activate_after_tier1(ticker, float(filled_price))
                 
                 logger.info(f"Updated position: {ticker} - {old_qty} -> {new_qty} shares")
                 break
@@ -3071,7 +3094,7 @@ if __name__ == "__main__":
                     "sector": "Unknown",
                     "stop_loss_pct": -0.02,
                     "take_profit_pct": 0.05,
-                    "tiers_sold": {"tier1": False, "tier2": False, "tier3": False},
+                    "tiers_sold": {"tier1": False, "tier2": False, "tier3": False, "tier4": False},
                 })
 
                 portfolio_data["positions"].append({"ticker": ticker, "value": position_value, "sector": "Unknown"})
@@ -3191,7 +3214,7 @@ if __name__ == "__main__":
                         "sector": "ETF",
                         "stop_loss_pct": -0.0035,
                         "take_profit_pct": 0.004,
-                        "tiers_sold": {"tier1": False, "tier2": False, "tier3": False},
+                        "tiers_sold": {"tier1": False, "tier2": False, "tier3": False, "tier4": False},
                         "source": "spy_intraday_swing",
                     }
                 )

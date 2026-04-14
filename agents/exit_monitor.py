@@ -12,6 +12,7 @@ from agents.llm_reasoning_engine import LLMReasoningEngine
 from agents.screener_agent import get_news_headlines
 from utils.option_contract_schema import normalize_option_position
 from utils.runtime_config import get_llm_config
+from utils.exit_trailing_state import activate_after_tier1, get_state as get_trailing_state, update_peak
 from agents.performance_analyzer import track_outcome
 from utils.llm_decision_tracker import get_llm_decision_tracker
 from agents.llm_learning_agent import LLMLearningAgent
@@ -139,15 +140,35 @@ def _get_llm_engine() -> LLMReasoningEngine:
 
 # Exit Configuration
 STOP_LOSS_PCT = -0.02  # -2% stop loss
-TAKE_PROFIT_T1_PCT = 0.015  # +1.5% take profit tier 1
-TAKE_PROFIT_T2_PCT = 0.03  # +3% take profit tier 2
-TAKE_PROFIT_T3_PCT = 0.05  # +5% take profit tier 3
 MAX_HOLD_DAYS = 3  # Maximum hold period
 
-# Tier sell percentages
-TIER_1_SELL_PCT = 0.50  # Sell 50% at tier 1
-TIER_2_SELL_PCT = 0.30  # Sell 30% at tier 2
-TIER_3_SELL_PCT = 0.20  # Sell remaining 20% at tier 3
+# Default stock take-profit ladder (pnl_pct vs entry as fraction; one tier per monitor pass, in order)
+# Tier 1: +0.75% → 30% | Tier 2: +1.5% → 25% | Tier 3: +3% → 25% | Tier 4: +5% → 20% (= 100% over four clips)
+BALANCED_STOCK_TIERS = (
+    ("tier1", 0.0075, 0.30, "SELL_30%"),
+    ("tier2", 0.015, 0.25, "SELL_25%"),
+    ("tier3", 0.03, 0.25, "SELL_25%"),
+    ("tier4", 0.05, 0.20, "SELL_20%"),
+)
+
+
+def _trailing_stop_fraction() -> float:
+    try:
+        return max(0.001, float(os.getenv("FORTRESS_TRAILING_STOP_PCT", "0.01") or 0.01))
+    except ValueError:
+        return 0.01
+
+
+def _normalize_stock_tiers_sold(position: dict) -> dict:
+    ts = position.get("tiers_sold")
+    if not isinstance(ts, dict):
+        ts = {}
+    return {
+        "tier1": bool(ts.get("tier1")),
+        "tier2": bool(ts.get("tier2")),
+        "tier3": bool(ts.get("tier3")),
+        "tier4": bool(ts.get("tier4")),
+    }
 
 # In-memory cache for option chains to avoid repeated network calls.
 _OPTION_CHAIN_CACHE = {}
@@ -368,12 +389,18 @@ def evaluate_exit(position):
     qty = position.get('qty') or position.get('shares', 0)
     # Handle both 'entry_time' and 'entry_date' keys
     entry_time = position.get('entry_time') or position.get('entry_date')
-    tiers_sold = position.get('tiers_sold', {'tier1': False, 'tier2': False, 'tier3': False})
-    
-    # Parse entry time
+    tiers_sold = _normalize_stock_tiers_sold(position)
+
+    # Parse entry time — default to now if missing/invalid so days_held and LLM context never crash.
     if isinstance(entry_time, str):
-        entry_time = datetime.fromisoformat(entry_time.replace('Z', '+00:00'))
-    
+        try:
+            entry_time = datetime.fromisoformat(entry_time.replace("Z", "+00:00"))
+        except Exception:
+            entry_time = datetime.now()
+    elif not isinstance(entry_time, datetime):
+        entry_time = datetime.now()
+    entry_naive = entry_time.replace(tzinfo=None) if entry_time.tzinfo else entry_time
+
     # Get current price
     logging.info(f"{ticker}: Fetching current price...")
     stock = yf.Ticker(ticker)
@@ -388,14 +415,16 @@ def evaluate_exit(position):
     
     logging.info(f"{ticker}: Entry: ${entry_price:.2f}, Current: ${current_price:.2f}, P&L: {pnl_pct*100:.2f}%")
 
-    # LLM-first reasoning path for stock exits.
+    days_held = max(0, (datetime.now() - entry_naive).days)
+
+    # LLM-first reasoning path for stock exits (authoritative only for high-confidence EXIT).
     llm_decision = _get_llm_engine().evaluate_exit(
         {
             "ticker": ticker,
             "entry_price": entry_price,
             "current_price": float(current_price),
             "pnl_pct": float(pnl_pct * 100.0),
-            "days_held": (datetime.now() - entry_time.replace(tzinfo=None)).days,
+            "days_held": days_held,
             "qty": qty,
         }
     )
@@ -405,9 +434,14 @@ def evaluate_exit(position):
         if decision == "EXIT" and confidence >= 0.70:
             reason = f"LLM EXIT ({confidence:.2f}): {llm_decision.get('reasoning')}"
             return create_exit_decision(ticker, "SELL_ALL", reason, qty, current_price, pnl_pct)
-        reason = f"LLM HOLD/SKIP ({confidence:.2f}): {llm_decision.get('reasoning')}"
-        return create_hold_decision(ticker, reason, current_price, pnl_pct)
-    
+        # LLM HOLD/SKIP is advisory only — MUST NOT return here; deterministic rails below must run.
+        logging.info(
+            "%s: LLM exit advisory HOLD/SKIP (%.2f) — applying deterministic rails: %s",
+            ticker,
+            confidence,
+            (llm_decision.get("reasoning") or "")[:120],
+        )
+
     # Check 1: Stop Loss (-2%)
     if pnl_pct <= STOP_LOSS_PCT:
         reason = f"Stop loss triggered: {pnl_pct*100:.2f}% <= {STOP_LOSS_PCT*100:.2f}%"
@@ -416,9 +450,30 @@ def evaluate_exit(position):
             ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct, 
             stop_loss=True
         )
-    
-    # Check 2: Time Limit (3 days)
-    days_held = (datetime.now() - entry_time.replace(tzinfo=None)).days
+
+    # Check 2: Trailing stop (1% from peak after tier1; persisted in utils.exit_trailing_state)
+    tr = get_trailing_state(ticker)
+    if tiers_sold.get("tier1") and not tr.get("active"):
+        activate_after_tier1(ticker, float(current_price))
+        tr = get_trailing_state(ticker)
+    if tr.get("active") and float(tr.get("peak") or 0) > 0:
+        peak = float(tr["peak"])
+        if float(current_price) > peak:
+            update_peak(ticker, float(current_price))
+            peak = float(get_trailing_state(ticker).get("peak") or peak)
+        trail_frac = _trailing_stop_fraction()
+        dd = (float(current_price) - peak) / peak if peak else 0.0
+        if dd <= -trail_frac:
+            reason = (
+                f"Trailing stop: {dd*100:.2f}% from peak ${peak:.2f} "
+                f"(threshold -{trail_frac*100:.2f}%)"
+            )
+            logging.info("%s: %s", ticker, reason)
+            return create_exit_decision(
+                ticker, "SELL_ALL", reason, qty, current_price, pnl_pct
+            )
+
+    # Check 3: Time Limit (3 days)
     if days_held >= MAX_HOLD_DAYS:
         reason = f"Time limit reached: {days_held} days >= {MAX_HOLD_DAYS} days"
         logging.info(f"{ticker}: {reason}")
@@ -426,8 +481,8 @@ def evaluate_exit(position):
             ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct,
             time_limit=True
         )
-    
-    # Check 3: Negative News
+
+    # Check 4: Negative News
     news_check = check_negative_news(ticker)
     if news_check['has_negative_news']:
         reason = f"Negative news detected: {news_check['summary']}"
@@ -436,40 +491,29 @@ def evaluate_exit(position):
             ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct,
             negative_news=True
         )
-    
-    # Check 4: Tiered Take Profits
-    # Tier 3: +5% (sell remaining 20%)
-    if pnl_pct >= TAKE_PROFIT_T3_PCT and not tiers_sold['tier3']:
-        sell_qty = int(qty * TIER_3_SELL_PCT)
-        if sell_qty > 0:
-            reason = f"Take profit tier 3: {pnl_pct*100:.2f}% >= {TAKE_PROFIT_T3_PCT*100:.2f}%"
-            logging.info(f"{ticker}: {reason}")
-            return create_exit_decision(
-                ticker, 'SELL_20%', reason, sell_qty, current_price, pnl_pct,
-                tier='tier3'
-            )
-    
-    # Tier 2: +3% (sell 30%)
-    if pnl_pct >= TAKE_PROFIT_T2_PCT and not tiers_sold['tier2']:
-        sell_qty = int(qty * TIER_2_SELL_PCT)
-        if sell_qty > 0:
-            reason = f"Take profit tier 2: {pnl_pct*100:.2f}% >= {TAKE_PROFIT_T2_PCT*100:.2f}%"
-            logging.info(f"{ticker}: {reason}")
-            return create_exit_decision(
-                ticker, 'SELL_30%', reason, sell_qty, current_price, pnl_pct,
-                tier='tier2'
-            )
-    
-    # Tier 1: +1.5% (sell 50%)
-    if pnl_pct >= TAKE_PROFIT_T1_PCT and not tiers_sold['tier1']:
-        sell_qty = int(qty * TIER_1_SELL_PCT)
-        if sell_qty > 0:
-            reason = f"Take profit tier 1: {pnl_pct*100:.2f}% >= {TAKE_PROFIT_T1_PCT*100:.2f}%"
-            logging.info(f"{ticker}: {reason}")
-            return create_exit_decision(
-                ticker, 'SELL_50%', reason, sell_qty, current_price, pnl_pct,
-                tier='tier1'
-            )
+
+    # Check 5: Tiered take profits (balanced 4-tier ladder)
+    for tier_key, thresh, sell_frac, action in BALANCED_STOCK_TIERS:
+        if tiers_sold.get(tier_key) or pnl_pct < thresh:
+            continue
+        sell_qty = max(1, int(qty * sell_frac))
+        sell_qty = min(sell_qty, int(qty))
+        if sell_qty <= 0:
+            break
+        reason = (
+            f"Take profit {tier_key}: +{thresh*100:.2f}% threshold, sell {sell_frac*100:.0f}% "
+            f"(P&L {pnl_pct*100:.2f}%)"
+        )
+        logging.info("%s: %s", ticker, reason)
+        return create_exit_decision(
+            ticker,
+            action,
+            reason,
+            sell_qty,
+            current_price,
+            pnl_pct,
+            tier=tier_key,
+        )
     
     # No exit conditions met - HOLD
     reason = f"No exit conditions met (P&L: {pnl_pct*100:.2f}%, Days: {days_held})"
