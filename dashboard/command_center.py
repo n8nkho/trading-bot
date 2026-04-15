@@ -338,6 +338,29 @@ def _safe_float(x):
         return None
 
 
+def _position_market_value_usd(pos: dict) -> float:
+    """Approximate USD market value of one open position (stock: qty × mark; option: contracts × premium × 100)."""
+    if not isinstance(pos, dict):
+        return 0.0
+    t = str(pos.get("type") or "STOCK").upper()
+    if t == "OPTION":
+        qty = _safe_float(pos.get("qty")) or 0.0
+        if qty <= 0:
+            return 0.0
+        prem = _safe_float(pos.get("current_premium") or pos.get("mark") or pos.get("last_premium"))
+        if prem is None or prem <= 0:
+            prem = _safe_float(pos.get("entry_premium")) or 0.0
+        return max(0.0, qty * prem * 100.0)
+    qty = _safe_float(pos.get("qty") or pos.get("shares"))
+    if qty is None or qty <= 0:
+        return 0.0
+    px = _safe_float(pos.get("current_price"))
+    if px is not None and px > 0:
+        return qty * px
+    ep = _safe_float(pos.get("entry_price")) or 0.0
+    return qty * ep
+
+
 def _read_pnl_ledger_summary(path):
     """
     Read realized P&L from `pnl_ledger.jsonl` (authoritative sell ledger).
@@ -692,6 +715,7 @@ def get_trading_performance():
         "auto_execution_today": {},
         "timestamp": datetime.now().isoformat(),
         "policy_profile": get_profile_bundle().get("active_profile"),
+        "holdings_market_value_usd": 0.0,
     }
     # Positions: prefer Alpaca broker truth; fall back to positions.json; surface file/broker drift
     file_positions = _read_json(DATA_DIR / "positions.json", default=[])
@@ -799,6 +823,8 @@ def get_trading_performance():
     # Unrealized P&L from open positions
     unrealized_pnl = round(sum(float(p.get("pnl") or 0) for p in positions), 2)
     perf["unrealized_pnl"] = unrealized_pnl
+    holdings_mv = sum(_position_market_value_usd(p) for p in positions if isinstance(p, dict))
+    perf["holdings_market_value_usd"] = round(holdings_mv, 2)
     total = float(perf.get("realized_pnl") or perf.get("total_pnl") or 0) + unrealized_pnl
     perf["net_pnl"] = round(total, 2)
     perf["total_pnl"] = perf["net_pnl"]  # backward compat: total_pnl == net_pnl
