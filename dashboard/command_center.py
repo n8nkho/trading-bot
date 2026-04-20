@@ -361,6 +361,27 @@ def _position_market_value_usd(pos: dict) -> float:
     return qty * ep
 
 
+def _fetch_account_total_value_usd() -> tuple[float | None, str | None]:
+    """Fetch total account value from Alpaca account (prefer equity, then portfolio_value)."""
+    try:
+        key = (os.getenv("ALPACA_API_KEY") or "").strip()
+        secret = (os.getenv("ALPACA_SECRET_KEY") or "").strip()
+        if not key or not secret:
+            return None, "missing_alpaca_keys"
+        from alpaca.trading.client import TradingClient
+
+        client = TradingClient(key, secret, paper=is_alpaca_paper())
+        acc = client.get_account()
+        equity = _safe_float(getattr(acc, "equity", None))
+        portfolio_value = _safe_float(getattr(acc, "portfolio_value", None))
+        val = equity if (equity is not None and equity > 0) else portfolio_value
+        if val is None:
+            return None, "missing_equity_and_portfolio_value"
+        return float(val), None
+    except Exception as e:
+        return None, f"{type(e).__name__}:{e}"
+
+
 def _read_pnl_ledger_summary(path):
     """
     Read realized P&L from `pnl_ledger.jsonl` (authoritative sell ledger).
@@ -716,6 +737,9 @@ def get_trading_performance():
         "timestamp": datetime.now().isoformat(),
         "policy_profile": get_profile_bundle().get("active_profile"),
         "holdings_market_value_usd": 0.0,
+        "account_total_value_usd": None,
+        "account_total_value_source": None,
+        "account_total_value_error": None,
     }
     # Positions: prefer Alpaca broker truth; fall back to positions.json; surface file/broker drift
     file_positions = _read_json(DATA_DIR / "positions.json", default=[])
@@ -825,6 +849,15 @@ def get_trading_performance():
     perf["unrealized_pnl"] = unrealized_pnl
     holdings_mv = sum(_position_market_value_usd(p) for p in positions if isinstance(p, dict))
     perf["holdings_market_value_usd"] = round(holdings_mv, 2)
+    account_total, account_err = _fetch_account_total_value_usd()
+    if account_total is not None:
+        perf["account_total_value_usd"] = round(account_total, 2)
+        perf["account_total_value_source"] = "alpaca_account"
+        perf["account_total_value_error"] = None
+    else:
+        perf["account_total_value_usd"] = perf["holdings_market_value_usd"]
+        perf["account_total_value_source"] = "holdings_fallback"
+        perf["account_total_value_error"] = account_err
     total = float(perf.get("realized_pnl") or perf.get("total_pnl") or 0) + unrealized_pnl
     perf["net_pnl"] = round(total, 2)
     perf["total_pnl"] = perf["net_pnl"]  # backward compat: total_pnl == net_pnl

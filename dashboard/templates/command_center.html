@@ -857,8 +857,13 @@
       const mvStr = (mv != null && !Number.isNaN(Number(mv)))
         ? '$' + Number(mv).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
         : '—';
+      const accountTotal = data.account_total_value_usd;
+      const accountTotalStr = (accountTotal != null && !Number.isNaN(Number(accountTotal)))
+        ? '$' + Number(accountTotal).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        : '—';
       el.innerHTML = `
         <div class="perf-stat"><div class="label">Open positions</div><div class="num">${pos}</div></div>
+        <div class="perf-stat"><div class="label">Account total value</div><div class="num">${accountTotalStr}</div></div>
         <div class="perf-stat"><div class="label">Holdings market value</div><div class="num">${mvStr}</div></div>
         <div class="perf-stat"><div class="label">Win rate (30d)</div><div class="num">${wr}</div></div>
         <div class="perf-stat"><div class="label">Total P&L</div><div class="num ${(data.total_pnl || 0) >= 0 ? 'pos' : 'neg'}">${pnl}</div></div>
