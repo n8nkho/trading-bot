@@ -1439,6 +1439,182 @@ def _strict_mode_live(risk: dict) -> tuple[bool, str]:
     return False, "normal"
 
 
+def _build_stabilization_monitor(
+    *,
+    hs: dict,
+    risk: dict,
+    strict_now: bool,
+    strict_reason_now: str,
+    rollback: dict,
+    hedge_gate_passed,
+    drift_file_exists: bool,
+    drift_snapshot: dict,
+    drift_snapshot_updated_at: str | None,
+    drift_report_age_hours: float | None,
+) -> dict:
+    """
+    Operator-facing checklist for trading-system stabilization (no drift recompute).
+    Severities: ok, warn, fail — overall is worst of checklist.
+    """
+    items: list[dict] = []
+
+    def _worst(a: str, b: str) -> str:
+        order = ("ok", "warn", "fail")
+        return a if order.index(a) >= order.index(b) else b
+
+    halted = bool(hs.get("effective_halted"))
+    if halted:
+        th = hs.get("file") or {}
+        detail = f"env_halt={bool(hs.get('env_halt'))} file_active={bool(th.get('active'))}"
+        if th.get("reason"):
+            detail += f" reason={th.get('reason')}"
+        items.append(
+            {
+                "id": "kill_switch",
+                "label": "Kill switch / trading halt",
+                "severity": "fail",
+                "detail": detail,
+            }
+        )
+    else:
+        items.append(
+            {
+                "id": "kill_switch",
+                "label": "Kill switch / trading halt",
+                "severity": "ok",
+                "detail": "Not halted (pre-trade gate allows orders unless other blocks)",
+            }
+        )
+
+    drift_alert = bool(drift_snapshot.get("drift_alert"))
+    drift_reason = str(drift_snapshot.get("reason") or "—")
+    ratio = drift_snapshot.get("drift_ratio")
+    ratio_s = f"{ratio}" if ratio is not None else "n/a"
+    if drift_alert:
+        items.append(
+            {
+                "id": "drift",
+                "label": "Performance drift (last saved report)",
+                "severity": "warn",
+                "detail": f"drift_alert · {drift_reason} · ratio {ratio_s}",
+            }
+        )
+    elif not drift_file_exists:
+        items.append(
+            {
+                "id": "drift",
+                "label": "Performance drift (last saved report)",
+                "severity": "warn",
+                "detail": "No data/drift_report.json yet — run python3 agents/drift_detector.py",
+            }
+        )
+    elif drift_report_age_hours is not None and drift_report_age_hours > 36:
+        items.append(
+            {
+                "id": "drift",
+                "label": "Performance drift (last saved report)",
+                "severity": "warn",
+                "detail": f"Report stale (~{drift_report_age_hours:.0f}h old); refresh with drift job or /api/drift",
+            }
+        )
+    else:
+        items.append(
+            {
+                "id": "drift",
+                "label": "Performance drift (last saved report)",
+                "severity": "ok",
+                "detail": f"{drift_reason} · ratio {ratio_s} · updated {drift_snapshot_updated_at or '—'}",
+            }
+        )
+
+    if bool(risk.get("circuit_breaker_active")):
+        items.append(
+            {
+                "id": "circuit_breaker",
+                "label": "Risk circuit breaker",
+                "severity": "fail",
+                "detail": "Circuit breaker active — review risk_guardian state",
+            }
+        )
+    else:
+        items.append(
+            {
+                "id": "circuit_breaker",
+                "label": "Risk circuit breaker",
+                "severity": "ok",
+                "detail": "Not tripped",
+            }
+        )
+
+    if strict_now:
+        items.append(
+            {
+                "id": "strict_mode",
+                "label": "Screening strict mode",
+                "severity": "warn",
+                "detail": strict_reason_now,
+            }
+        )
+    else:
+        items.append(
+            {
+                "id": "strict_mode",
+                "label": "Screening strict mode",
+                "severity": "ok",
+                "detail": "normal",
+            }
+        )
+
+    forced = (rollback.get("forced_profile") or "").strip()
+    if forced:
+        items.append(
+            {
+                "id": "policy_rollback",
+                "label": "Forced policy rollback",
+                "severity": "warn",
+                "detail": f"{forced} until {rollback.get('forced_until') or '—'} ({rollback.get('forced_reason') or '—'})",
+            }
+        )
+    else:
+        items.append(
+            {
+                "id": "policy_rollback",
+                "label": "Forced policy rollback",
+                "severity": "ok",
+                "detail": "No active forced profile override",
+            }
+        )
+
+    if hedge_gate_passed is False:
+        items.append(
+            {
+                "id": "hedge_gate",
+                "label": "Latest screening hedge gate",
+                "severity": "warn",
+                "detail": "hedge_gate_passed=false on last screening snapshot",
+            }
+        )
+    else:
+        items.append(
+            {
+                "id": "hedge_gate",
+                "label": "Latest screening hedge gate",
+                "severity": "ok",
+                "detail": "PASS" if hedge_gate_passed is True else "N/A (no snapshot)",
+            }
+        )
+
+    overall = "ok"
+    for it in items:
+        overall = _worst(overall, it["severity"])
+
+    return {
+        "overall_severity": overall,
+        "checklist": items,
+        "note": "Drift row reads data/drift_report.json only (no re-analysis). Use dashboard drift or agents/drift_detector.py to refresh.",
+    }
+
+
 def get_safety_status():
     risk = {}
     try:
@@ -1491,6 +1667,33 @@ def get_safety_status():
     except Exception:
         pass
 
+    drift_path = DATA_DIR / "drift_report.json"
+    drift_file_exists = drift_path.exists()
+    drift_snapshot = (_read_json(drift_path, default={}) or {}) if drift_file_exists else {}
+    drift_snapshot_updated_at = None
+    drift_report_age_hours = None
+    try:
+        if drift_file_exists:
+            drift_snapshot_updated_at = datetime.fromtimestamp(drift_path.stat().st_mtime).isoformat()
+            drift_report_age_hours = (
+                datetime.now() - datetime.fromtimestamp(drift_path.stat().st_mtime)
+            ).total_seconds() / 3600.0
+    except Exception:
+        pass
+
+    stabilization = _build_stabilization_monitor(
+        hs=hs,
+        risk=risk,
+        strict_now=strict_now,
+        strict_reason_now=strict_reason_now,
+        rollback=rollback,
+        hedge_gate_passed=screening.get("hedge_gate_passed"),
+        drift_file_exists=drift_file_exists,
+        drift_snapshot=drift_snapshot,
+        drift_snapshot_updated_at=drift_snapshot_updated_at,
+        drift_report_age_hours=drift_report_age_hours,
+    )
+
     return {
         "timestamp": datetime.now().isoformat(),
         "policy_profile": policy.get("active_profile"),
@@ -1517,6 +1720,10 @@ def get_safety_status():
         "trading_halt_active": bool(hs.get("effective_halted")),
         "entry_window_end_et": entry_window_end_et,
         "entry_stabilization_factor": entry_stabilization_factor,
+        "drift_snapshot": drift_snapshot,
+        "drift_snapshot_updated_at": drift_snapshot_updated_at,
+        "drift_report_age_hours": drift_report_age_hours,
+        "stabilization": stabilization,
     }
 
 

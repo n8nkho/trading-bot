@@ -420,6 +420,11 @@
         <div id="safetyStatus" class="loading">Loading…</div>
       </div>
 
+      <div class="panel col-12">
+        <div class="panel-title">STABILIZATION MONITOR <span class="text-muted" style="font-size:0.65em;font-weight:400;">from /api/safety_status · drift uses last <code style="font-size:0.9em;">data/drift_report.json</code> only (no re-run)</span></div>
+        <div id="stabilizationMonitor" class="loading">Loading…</div>
+      </div>
+
       <div class="panel col-4">
         <div class="panel-title">BOT AUDIT (OBJECTIVES)</div>
         <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem;">
@@ -1130,9 +1135,45 @@
       }).join('');
     }
 
+    function renderStabilizationMonitor(data) {
+      const el = document.getElementById('stabilizationMonitor');
+      if (!el) return;
+      el.classList.remove('loading');
+      const stab = data && data.stabilization;
+      if (!stab || !stab.checklist) {
+        el.innerHTML = '<span class="text-muted">Stabilization data unavailable</span>';
+        return;
+      }
+      const esc = (s) => String(s == null ? '' : s).replace(/</g, '&lt;').replace(/&/g, '&amp;');
+      const sevStyle = (s) => {
+        if (s === 'fail') return 'color:var(--red);font-weight:600;';
+        if (s === 'warn') return 'color:var(--amber);font-weight:600;';
+        return 'color:var(--green);font-weight:600;';
+      };
+      const overall = stab.overall_severity || 'ok';
+      const head = '<div style="margin-bottom:0.5rem;font-size:12px;">Overall: <strong style="' + sevStyle(overall) + '">' + esc(overall).toUpperCase() + '</strong>'
+        + ' <span class="text-muted" style="font-weight:400;">(' + stab.checklist.length + ' checks)</span></div>';
+      const rows = stab.checklist.map(function (it) {
+        const lab = esc(it.label || '');
+        const det = esc(it.detail || '');
+        const sev = esc(it.severity || 'ok');
+        return '<div class="feed-line ' + (it.severity === 'fail' ? 'error' : it.severity === 'warn' ? 'warning' : 'info') + '" style="display:flex;flex-wrap:wrap;gap:0.35rem 0.75rem;align-items:baseline;">'
+          + '<span style="min-width:5.5rem;' + sevStyle(it.severity) + '">' + sev.toUpperCase() + '</span>'
+          + '<span style="font-weight:600;">' + lab + '</span>'
+          + '<span class="text-muted" style="font-size:11px;">' + det + '</span>'
+          + '</div>';
+      }).join('');
+      const note = stab.note ? '<div class="text-muted" style="font-size:11px;margin-top:0.5rem;line-height:1.4;">' + esc(stab.note) + '</div>' : '';
+      el.innerHTML = head + rows + note;
+    }
+
     function renderSafetyStatus(data) {
       const el = document.getElementById('safetyStatus');
-      if (!el || !data) return;
+      if (!el) return;
+      if (!data) {
+        renderStabilizationMonitor(null);
+        return;
+      }
       const strip = document.getElementById('haltStrip');
       if (strip) {
         const on = data.trading_halt_active === true;
@@ -1173,6 +1214,7 @@
         <div>Last Screening Finish: <strong>${screenTs}</strong></div>
         <div>Cron Heartbeat: <strong>${hb}</strong></div>
       `;
+      renderStabilizationMonitor(data);
     }
 
     function renderHeadlineEventStatus(data) {
