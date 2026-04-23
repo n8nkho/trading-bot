@@ -92,10 +92,31 @@ def get_effective_trading_profile_name() -> str:
     return str(payload.get("active_profile") or "balanced").strip().lower()
 
 
+def _forced_rollback_still_active(existing: dict, *, target: str) -> bool:
+    """True if drift rollback for `target` is already in force and not past forced_until."""
+    forced = (existing.get("forced_profile") or "").strip().lower()
+    reason = (existing.get("forced_reason") or "").strip().lower()
+    if forced != (target or "").strip().lower() or reason != "drift_alert":
+        return False
+    until = existing.get("forced_until")
+    if not until:
+        return True
+    try:
+        s = str(until).replace("Z", "+00:00")
+        exp = datetime.fromisoformat(s)
+        exp_naive = exp.replace(tzinfo=None) if exp.tzinfo else exp
+        return datetime.now() <= exp_naive
+    except Exception:
+        return True
+
+
 def maybe_trigger_rollback_on_drift(drift_report: dict) -> dict | None:
     """
     If drift_alert and guardrails.auto_rollback_on_drift_alert, force safer profile.
     Returns action dict if rollback applied, else None.
+
+    Idempotent: if the same drift rollback is already active, does not rewrite state
+    or append trust events (avoids spam when /api/drift runs on every dashboard refresh).
     """
     guard = get_guardrails()
     if not guard.get("auto_rollback_on_drift_alert", True):
@@ -105,6 +126,10 @@ def maybe_trigger_rollback_on_drift(drift_report: dict) -> dict | None:
 
     target = (guard.get("rollback_target_profile") or "capital_preservation").strip().lower()
     hours = int(guard.get("rollback_duration_hours") or 168)
+
+    existing = _load_rollback_state()
+    if _forced_rollback_still_active(existing, target=target):
+        return None
 
     state = {
         "forced_profile": target,
