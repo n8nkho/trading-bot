@@ -31,6 +31,8 @@ def normalize_alpaca_position(pos: Any) -> dict[str, Any]:
     if u_pnl is None:
         u_pnl = 0.0
     basis = _alpaca_float(getattr(pos, "cost_basis", None)) or 0.0
+    # Signed for long/short; dashboard uses abs for gross exposure when summing holdings value.
+    mkt_val = _alpaca_float(getattr(pos, "market_value", None))
     # Alpaca API: unrealized_plpc is a ratio (0.20 = 20%); prefer over recomputing from basis.
     plpc_ratio = _alpaca_float(getattr(pos, "unrealized_plpc", None))
     if plpc_ratio is not None:
@@ -44,6 +46,7 @@ def normalize_alpaca_position(pos: Any) -> dict[str, Any]:
         "qty": qty,
         "entry_price": entry,
         "current_price": cur,
+        "market_value": mkt_val,
         "pnl": round(u_pnl, 4),
         "pnl_pct": round(pct, 4) if pct is not None else None,
         "source": "alpaca_broker",

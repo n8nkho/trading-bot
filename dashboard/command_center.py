@@ -339,26 +339,31 @@ def _safe_float(x):
 
 
 def _position_market_value_usd(pos: dict) -> float:
-    """Approximate USD market value of one open position (stock: qty × mark; option: contracts × premium × 100)."""
+    """Gross USD market exposure per leg (long or short). Uses broker market_value when present."""
     if not isinstance(pos, dict):
         return 0.0
     t = str(pos.get("type") or "STOCK").upper()
     if t == "OPTION":
-        qty = _safe_float(pos.get("qty")) or 0.0
+        qty = abs(_safe_float(pos.get("qty")) or 0.0)
         if qty <= 0:
             return 0.0
         prem = _safe_float(pos.get("current_premium") or pos.get("mark") or pos.get("last_premium"))
         if prem is None or prem <= 0:
             prem = _safe_float(pos.get("entry_premium")) or 0.0
-        return max(0.0, qty * prem * 100.0)
+        return qty * prem * 100.0
+    # Prefer Alpaca-reported market value (handles shorts); else |qty| × mark.
+    mv = _safe_float(pos.get("market_value"))
+    if mv is not None:
+        return abs(mv)
     qty = _safe_float(pos.get("qty") or pos.get("shares"))
-    if qty is None or qty <= 0:
+    if qty is None or qty == 0:
         return 0.0
+    qty_abs = abs(qty)
     px = _safe_float(pos.get("current_price"))
     if px is not None and px > 0:
-        return qty * px
+        return qty_abs * px
     ep = _safe_float(pos.get("entry_price")) or 0.0
-    return qty * ep
+    return qty_abs * ep
 
 
 def _fetch_account_total_value_usd() -> tuple[float | None, str | None]:

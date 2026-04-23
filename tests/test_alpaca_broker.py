@@ -51,3 +51,19 @@ def test_normalize_plpc_fallback_when_missing():
     )
     d = normalize_alpaca_position(pos)
     assert d["pnl_pct"] == 10.0
+
+
+def test_normalize_includes_market_value_and_negative_qty():
+    pos = SimpleNamespace(
+        symbol="EEM",
+        qty="-12",
+        avg_entry_price="62.05",
+        current_price="62.79",
+        cost_basis="-744.6",
+        unrealized_pl="-8.89",
+        unrealized_plpc="-0.0119",
+        market_value="-753.48",
+    )
+    d = normalize_alpaca_position(pos)
+    assert d["qty"] == -12.0
+    assert d["market_value"] == -753.48
