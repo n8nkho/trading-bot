@@ -43,7 +43,11 @@ def get_state(ticker: str) -> dict[str, Any]:
 
 
 def update_peak(ticker: str, current_price: float) -> None:
-    """Raise peak to max(peak, current_price) while trailing is active."""
+    """
+    Update trailing reference while active.
+    Long: raise peak to max(peak, current_price).
+    Short: lower trough stored in `peak` to min(peak, current_price) — favorable move is price down.
+    """
     sym = str(ticker or "").strip().upper()
     if not sym:
         return
@@ -51,16 +55,23 @@ def update_peak(ticker: str, current_price: float) -> None:
     row = dict(data.get(sym) or {})
     if not row.get("active"):
         return
-    peak = float(row.get("peak") or 0.0)
+    ref = float(row.get("peak") or 0.0)
     cp = float(current_price)
-    if cp > peak:
-        row["peak"] = cp
-        data[sym] = row
-        _save(data)
+    is_short = bool(row.get("is_short"))
+    if is_short:
+        if ref <= 0 or cp < ref:
+            row["peak"] = cp
+            data[sym] = row
+            _save(data)
+    else:
+        if cp > ref:
+            row["peak"] = cp
+            data[sym] = row
+            _save(data)
 
 
-def activate_after_tier1(ticker: str, fill_price: float) -> None:
-    """Call after first take-profit tier1 partial sell — start trailing from fill price."""
+def activate_after_tier1(ticker: str, fill_price: float, *, is_short: bool = False) -> None:
+    """After first tier1 trim: start trailing (long: peak; short: trough in `peak` field)."""
     sym = str(ticker or "").strip().upper()
     if not sym:
         return
@@ -69,10 +80,16 @@ def activate_after_tier1(ticker: str, fill_price: float) -> None:
     data[sym] = {
         "active": True,
         "peak": fp,
+        "is_short": bool(is_short),
         "activated_at": datetime.now().isoformat(),
     }
     _save(data)
-    logger.info("Trailing stop activated for %s peak=%.4f", sym, fp)
+    logger.info(
+        "Trailing stop activated for %s ref=%.4f is_short=%s",
+        sym,
+        fp,
+        bool(is_short),
+    )
 
 
 def clear(ticker: str) -> None:

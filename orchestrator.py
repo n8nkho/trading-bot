@@ -1643,9 +1643,18 @@ async def monitor_positions_async():
             
             if sell_qty <= 0:
                 return None
-            
-            # Execute sell order
-            order_result = await asyncio.to_thread(execute_sell_order, ticker, sell_qty)
+
+            is_short = bool(signal.get("is_short"))
+            cover_qty = int(abs(float(sell_qty)))
+            mark_px = float(signal.get("current_price") or 0) or 0.01
+
+            # Execute exit: long = SELL shares; short = BUY to cover
+            if is_short:
+                order_result = await asyncio.to_thread(
+                    execute_buy_order, ticker, cover_qty, mark_px
+                )
+            else:
+                order_result = await asyncio.to_thread(execute_sell_order, ticker, cover_qty)
             order_result = await asyncio.to_thread(_refresh_order_result, order_result)
             
             if order_result['success'] and _order_is_filled(order_result):
@@ -1717,7 +1726,10 @@ async def monitor_positions_async():
                         if derived is None:
                             continue
                         entry_price = derived
-                    pnl_dollars = (filled_price - entry_price) * sell_qty
+                    if bool(signal.get("is_short")):
+                        pnl_dollars = (entry_price - filled_price) * sell_qty
+                    else:
+                        pnl_dollars = (filled_price - entry_price) * sell_qty
 
                 update_consecutive_losses({'pnl': pnl_dollars})
 
@@ -1780,7 +1792,10 @@ async def monitor_positions_async():
                                     if derived is None:
                                         continue
                                     entry_price = derived
-                                pnl_dollars = (filled_price - entry_price) * sell_qty
+                                if bool(signal.get("is_short")):
+                                    pnl_dollars = (entry_price - filled_price) * sell_qty
+                                else:
+                                    pnl_dollars = (filled_price - entry_price) * sell_qty
 
                             if _append_pnl_ledger_once({
                                 'timestamp': datetime.now().isoformat(),
@@ -2018,9 +2033,16 @@ def update_position_quantity(ticker, qty_sold, tier=None, filled_price=None):
         # Update position
         for pos in positions:
             if pos['ticker'] == ticker:
-                # Handle both 'shares' and 'qty' keys
+                # Handle both 'shares' and 'qty' keys (shorts are negative qty; cover adds back)
                 old_qty = pos.get('shares') or pos.get('qty', 0)
-                new_qty = old_qty - qty_sold
+                try:
+                    oq = float(old_qty)
+                except (TypeError, ValueError):
+                    oq = 0.0
+                if oq < 0:
+                    new_qty = oq + float(qty_sold)
+                else:
+                    new_qty = oq - float(qty_sold)
                 
                 # Update both keys if they exist
                 if 'shares' in pos:
@@ -2044,7 +2066,9 @@ def update_position_quantity(ticker, qty_sold, tier=None, filled_price=None):
                     if tier == 'tier1' and filled_price is not None:
                         from utils.exit_trailing_state import activate_after_tier1
 
-                        activate_after_tier1(ticker, float(filled_price))
+                        activate_after_tier1(
+                            ticker, float(filled_price), is_short=(oq < 0)
+                        )
                 
                 logger.info(f"Updated position: {ticker} - {old_qty} -> {new_qty} shares")
                 break

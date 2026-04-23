@@ -384,9 +384,20 @@ def evaluate_exit(position):
         Decision dict with action, reason, sell_qty, current_price, pnl_pct
     """
     ticker = position['ticker']
-    entry_price = position['entry_price']
-    # Handle both 'qty' and 'shares' keys
-    qty = position.get('qty') or position.get('shares', 0)
+    entry_price = float(position['entry_price'])
+    # Handle both 'qty' and 'shares' keys (Alpaca shorts are negative qty)
+    try:
+        qty_raw = float(
+            position.get('qty') if position.get('qty') is not None else position.get('shares', 0)
+        )
+    except (TypeError, ValueError):
+        qty_raw = 0.0
+    is_short = qty_raw < 0
+    qty_abs = int(abs(qty_raw))
+    if qty_abs <= 0:
+        logging.warning("%s: zero position qty — HOLD", ticker)
+        return create_hold_decision(ticker, "Zero position size", None, None)
+    qty = qty_abs
     # Handle both 'entry_time' and 'entry_date' keys
     entry_time = position.get('entry_time') or position.get('entry_date')
     tiers_sold = _normalize_stock_tiers_sold(position)
@@ -411,9 +422,19 @@ def evaluate_exit(position):
         return create_hold_decision(ticker, "No current price data available", None, None)
     
     current_price = current_data['Close'].iloc[-1]
-    pnl_pct = (current_price - entry_price) / entry_price
-    
-    logging.info(f"{ticker}: Entry: ${entry_price:.2f}, Current: ${current_price:.2f}, P&L: {pnl_pct*100:.2f}%")
+    if is_short:
+        pnl_pct = (entry_price - float(current_price)) / entry_price if entry_price else 0.0
+    else:
+        pnl_pct = (float(current_price) - entry_price) / entry_price if entry_price else 0.0
+
+    logging.info(
+        "%s: Entry: $%.2f, Current: $%.2f, P&L: %.2f%% (%s)",
+        ticker,
+        entry_price,
+        float(current_price),
+        pnl_pct * 100.0,
+        "short" if is_short else "long",
+    )
 
     days_held = max(0, (datetime.now() - entry_naive).days)
 
@@ -433,7 +454,9 @@ def evaluate_exit(position):
         confidence = float(llm_decision.get("confidence") or 0.0)
         if decision == "EXIT" and confidence >= 0.70:
             reason = f"LLM EXIT ({confidence:.2f}): {llm_decision.get('reasoning')}"
-            return create_exit_decision(ticker, "SELL_ALL", reason, qty, current_price, pnl_pct)
+            return create_exit_decision(
+                ticker, "SELL_ALL", reason, qty, current_price, pnl_pct, is_short=is_short
+            )
         # LLM HOLD/SKIP is advisory only — MUST NOT return here; deterministic rails below must run.
         logging.info(
             "%s: LLM exit advisory HOLD/SKIP (%.2f) — applying deterministic rails: %s",
@@ -447,31 +470,48 @@ def evaluate_exit(position):
         reason = f"Stop loss triggered: {pnl_pct*100:.2f}% <= {STOP_LOSS_PCT*100:.2f}%"
         logging.warning(f"{ticker}: {reason}")
         return create_exit_decision(
-            ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct, 
-            stop_loss=True
+            ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct,
+            stop_loss=True, is_short=is_short,
         )
 
     # Check 2: Trailing stop (1% from peak after tier1; persisted in utils.exit_trailing_state)
     tr = get_trailing_state(ticker)
     if tiers_sold.get("tier1") and not tr.get("active"):
-        activate_after_tier1(ticker, float(current_price))
+        activate_after_tier1(ticker, float(current_price), is_short=is_short)
         tr = get_trailing_state(ticker)
     if tr.get("active") and float(tr.get("peak") or 0) > 0:
-        peak = float(tr["peak"])
-        if float(current_price) > peak:
-            update_peak(ticker, float(current_price))
-            peak = float(get_trailing_state(ticker).get("peak") or peak)
+        ref = float(tr["peak"])
+        tr_short = bool(tr["is_short"]) if "is_short" in tr else is_short
+        cp = float(current_price)
         trail_frac = _trailing_stop_fraction()
-        dd = (float(current_price) - peak) / peak if peak else 0.0
-        if dd <= -trail_frac:
-            reason = (
-                f"Trailing stop: {dd*100:.2f}% from peak ${peak:.2f} "
-                f"(threshold -{trail_frac*100:.2f}%)"
-            )
-            logging.info("%s: %s", ticker, reason)
-            return create_exit_decision(
-                ticker, "SELL_ALL", reason, qty, current_price, pnl_pct
-            )
+        if tr_short:
+            if cp < ref:
+                update_peak(ticker, cp)
+                ref = float(get_trailing_state(ticker).get("peak") or ref)
+            rally = (cp - ref) / ref if ref else 0.0
+            if rally >= trail_frac:
+                reason = (
+                    f"Trailing stop (short): price +{rally*100:.2f}% from trough ${ref:.2f} "
+                    f"(threshold +{trail_frac*100:.2f}%)"
+                )
+                logging.info("%s: %s", ticker, reason)
+                return create_exit_decision(
+                    ticker, "SELL_ALL", reason, qty, current_price, pnl_pct, is_short=True
+                )
+        else:
+            if cp > ref:
+                update_peak(ticker, cp)
+                ref = float(get_trailing_state(ticker).get("peak") or ref)
+            dd = (cp - ref) / ref if ref else 0.0
+            if dd <= -trail_frac:
+                reason = (
+                    f"Trailing stop: {dd*100:.2f}% from peak ${ref:.2f} "
+                    f"(threshold -{trail_frac*100:.2f}%)"
+                )
+                logging.info("%s: %s", ticker, reason)
+                return create_exit_decision(
+                    ticker, "SELL_ALL", reason, qty, current_price, pnl_pct, is_short=False
+                )
 
     # Check 3: Time Limit (3 days)
     if days_held >= MAX_HOLD_DAYS:
@@ -479,7 +519,7 @@ def evaluate_exit(position):
         logging.info(f"{ticker}: {reason}")
         return create_exit_decision(
             ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct,
-            time_limit=True
+            time_limit=True, is_short=is_short,
         )
 
     # Check 4: Negative News
@@ -489,7 +529,7 @@ def evaluate_exit(position):
         logging.warning(f"{ticker}: {reason}")
         return create_exit_decision(
             ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct,
-            negative_news=True
+            negative_news=True, is_short=is_short,
         )
 
     # Check 5: Tiered take profits (balanced 4-tier ladder)
@@ -497,7 +537,7 @@ def evaluate_exit(position):
         if tiers_sold.get(tier_key) or pnl_pct < thresh:
             continue
         sell_qty = max(1, int(qty * sell_frac))
-        sell_qty = min(sell_qty, int(qty))
+        sell_qty = min(sell_qty, qty)
         if sell_qty <= 0:
             break
         reason = (
@@ -513,6 +553,7 @@ def evaluate_exit(position):
             current_price,
             pnl_pct,
             tier=tier_key,
+            is_short=is_short,
         )
     
     # No exit conditions met - HOLD
@@ -603,8 +644,9 @@ Consider neutral/positive: normal market moves, analyst upgrades, product launch
         return {'has_negative_news': False, 'summary': f'Error analyzing news: {str(e)}'}
 
 def create_exit_decision(ticker, action, reason, sell_qty, current_price, pnl_pct, 
-                        stop_loss=False, time_limit=False, negative_news=False, tier=None):
-    """Create an exit decision dict"""
+                        stop_loss=False, time_limit=False, negative_news=False, tier=None,
+                        is_short: bool = False):
+    """Create an exit decision dict. is_short=True means cover with BUY (positive sell_qty = shares)."""
     return {
         'ticker': ticker,
         'action': action,
@@ -616,6 +658,7 @@ def create_exit_decision(ticker, action, reason, sell_qty, current_price, pnl_pc
         'time_limit': time_limit,
         'negative_news': negative_news,
         'tier': tier,
+        'is_short': bool(is_short),
         'timestamp': datetime.now().isoformat()
     }
 
