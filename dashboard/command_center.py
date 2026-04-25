@@ -1803,6 +1803,9 @@ def _build_go_live_scorecard(*, hs: dict, risk: dict, rollback: dict, perf: dict
     This is intentionally conservative: a single failed hard gate keeps readiness red.
     """
     checks: list[dict] = []
+    sev_rank = {"ok": 0, "warn": 1, "fail": 2}
+    def _worst_local(a: str, b: str) -> str:
+        return a if sev_rank.get(a, 0) >= sev_rank.get(b, 0) else b
 
     # 1) Safety controls must be clean before live deployment.
     halted = bool((hs or {}).get("effective_halted"))
@@ -1842,10 +1845,11 @@ def _build_go_live_scorecard(*, hs: dict, risk: dict, rollback: dict, perf: dict
     )
 
     # 3) Trade sample size and realized paper performance.
-    pnl_summary = _read_pnl_ledger_summary(days=30)
+    pnl_summary = _read_pnl_ledger_summary(DATA_DIR / "pnl_ledger.jsonl")
     fills_30d = int(pnl_summary.get("count") or 0)
     realized_30d = float(pnl_summary.get("realized_pnl") or 0.0)
-    win_rate = pnl_summary.get("win_rate")
+    wins_30d = int(pnl_summary.get("wins") or 0)
+    win_rate = round((100.0 * wins_30d / fills_30d), 2) if fills_30d > 0 else None
     if fills_30d >= 30 and realized_30d > 0:
         perf_sev = "ok"
     elif fills_30d >= 15 and realized_30d >= 0:
@@ -1901,7 +1905,7 @@ def _build_go_live_scorecard(*, hs: dict, risk: dict, rollback: dict, perf: dict
     overall = "ok"
     hard_gate_failed = False
     for c in checks:
-        overall = _worst(overall, c.get("severity") or "ok")
+        overall = _worst_local(overall, c.get("severity") or "ok")
         if c.get("hard_gate") and c.get("severity") == "fail":
             hard_gate_failed = True
     if hard_gate_failed:
