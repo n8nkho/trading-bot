@@ -1676,6 +1676,14 @@
         const raw = String(txt || '');
         const normalized = normalizedFeedText(raw);
         if (!normalized) return 'ops_autofix activity';
+        // Suppress noisy JSON fragment lines from pretty-printed reports.
+        if (
+          normalized === '{' ||
+          normalized === '}' ||
+          /^"[^"]+"\s*:\s*.*$/.test(normalized)
+        ) {
+          return '';
+        }
         const dryRun = /\bdry_run[:=]\s*true\b/i.test(normalized) ? 'dry-run' : 'apply';
         const rec = normalized.match(/\breconciled_count[:=]\s*(\d+)/i);
         const cand = normalized.match(/\bcandidates_count[:=]\s*(\d+)/i);
@@ -1695,6 +1703,9 @@
         const agent = String(f.agent || '');
         const text = String(f.text || '');
         const displayText = agent === 'Ops AutoFix' ? summarizeOpsAutofix(text) : text;
+        if (agent === 'Ops AutoFix' && !displayText) {
+          continue;
+        }
         if (agent === 'Cron Heartbeat') {
           heartbeatCount += 1;
           // Keep feed useful: retain only the most recent heartbeat lines.
