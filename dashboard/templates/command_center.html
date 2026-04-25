@@ -1655,6 +1655,7 @@
       const src = data.items.slice(-120).reverse();
       const kept = [];
       const lastSeenByKey = new Map();
+      let heartbeatCount = 0;
       const parseLineEpoch = (txt) => {
         // Example: "2026-04-25 11:21:43,033 - ..."; returns null if no timestamp found.
         const s = String(txt || '');
@@ -1673,6 +1674,11 @@
       for (const f of src) {
         const agent = String(f.agent || '');
         const text = String(f.text || '');
+        if (agent === 'Cron Heartbeat') {
+          heartbeatCount += 1;
+          // Keep feed useful: retain only the most recent heartbeat lines.
+          if (heartbeatCount > 8) continue;
+        }
         const key = `${agent}||${normalizedFeedText(text)}`;
         const ts = parseLineEpoch(text);
         const prev = lastSeenByKey.get(key);
