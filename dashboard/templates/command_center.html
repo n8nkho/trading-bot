@@ -1261,6 +1261,15 @@
       };
       const overall = esc(card.overall_severity || 'warn').toUpperCase();
       const recommendation = esc(card.recommendation || '—');
+      const attention = card.checks.filter(function (it) {
+        return it && (it.severity === 'fail' || it.severity === 'warn');
+      });
+      const attentionLine = attention.length
+        ? '<div class="text-muted" style="margin:0.15rem 0 0.6rem 0;font-size:11px;">Action focus: '
+          + attention.slice(0, 4).map(function (it) { return esc(it.label || 'check'); }).join(' · ')
+          + (attention.length > 4 ? ' · +' + (attention.length - 4) + ' more' : '')
+          + '</div>'
+        : '<div class="text-muted" style="margin:0.15rem 0 0.6rem 0;font-size:11px;">Action focus: no blocked checks.</div>';
       const head = '<div style="margin-bottom:0.5rem;font-size:12px;">Overall readiness: <strong style="' + sevStyle(card.overall_severity) + '">' + overall + '</strong>'
         + '<span class="text-muted" style="margin-left:0.6rem;">' + recommendation + '</span></div>';
       const rows = card.checks.map(function (it) {
@@ -1281,7 +1290,7 @@
         + 'daily loss stop <strong>' + esc(ex.starter_daily_loss_stop_pct ?? '0.5') + '%</strong>'
         + '</div>';
       const note = card.note ? '<div class="text-muted" style="font-size:11px;margin-top:0.5rem;">' + esc(card.note) + '</div>' : '';
-      el.innerHTML = head + rows + plan + note;
+      el.innerHTML = head + attentionLine + rows + plan + note;
     }
 
     function renderHeadlineEventStatus(data) {
