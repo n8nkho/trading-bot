@@ -282,6 +282,16 @@ def _extend_agent_logs_from_modules() -> None:
 
 _extend_agent_logs_from_modules()
 
+# Defensive canonicalization: keep one stable row per logical agent id.
+# This prevents duplicate rows if any alias key is introduced by module scans.
+for _alias, _canonical in {
+    "ops_autofix_agent": "ops_autofix",
+}.items():
+    if _alias in AGENT_LOGS:
+        if _canonical not in AGENT_LOGS:
+            AGENT_LOGS[_canonical] = AGENT_LOGS[_alias]
+        AGENT_LOGS.pop(_alias, None)
+
 
 def _validate_system():
     """Quick validation: import key modules + check for stale agents. Returns (unresolved_errors, unresolved_warnings, errors, warnings)."""
