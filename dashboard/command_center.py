@@ -39,7 +39,11 @@ from utils.trust_ledger import append_trust_event, enrich_trust_ledger_items, re
 from utils.operator_halt import get_halt_state, set_trading_halt
 from utils.alerts import send_operator_alert
 from utils.simple_daily_backtest import read_backtest_snapshot, run_daily_momentum_backtest
-from utils.run_registry import summarize_screening_runs
+from utils.run_registry import (
+    summarize_screening_runs,
+    read_recent_operational_events,
+    log_screening_failed,
+)
 from agents.drift_detector import analyze_drift
 from utils.alpaca_env import is_alpaca_paper
 
@@ -3066,10 +3070,37 @@ def api_trust_ledger():
 @app.route("/api/operator_runs")
 def api_operator_runs():
     """Canonical screening run rows (operational_runs.jsonl) for operator UX."""
+    reconciled = 0
+    try:
+        now = datetime.now()
+        cutoff = now - timedelta(hours=2)
+        runs = summarize_screening_runs(read_recent_operational_events(5000))
+        for row in runs:
+            if row.get("terminal") in {"completed", "failed"} or row.get("finished_at"):
+                continue
+            rid = row.get("run_id")
+            started_at = row.get("started_at")
+            if not rid or not started_at:
+                continue
+            try:
+                started = datetime.fromisoformat(str(started_at))
+            except Exception:
+                continue
+            if started <= cutoff:
+                log_screening_failed(
+                    rid,
+                    "stale_in_progress_reconciled",
+                    f"Auto-reconciled by /api/operator_runs at {now.isoformat()} after missing terminal event.",
+                )
+                reconciled += 1
+    except Exception:
+        reconciled = 0
+
     return jsonify(
         {
             "timestamp": datetime.now().isoformat(),
             "runs": summarize_screening_runs(),
+            "reconciled_stale_runs": reconciled,
         }
     )
 
