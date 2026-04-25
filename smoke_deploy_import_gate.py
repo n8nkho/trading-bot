@@ -73,6 +73,13 @@ def main() -> int:
         "agents.llama_watchdog",
         "agents.intraday_sniper",
         "agents.spy_intraday_swing",
+        "agents.critique_loop",
+        "agents.reflection_agent",
+        "agents.briefing_agent",
+        "utils.atomic_json",
+        "utils.llm_router",
+        "utils.fortress_logger",
+        "utils.trade_history",
         "agents.bot_audit_agent",
         # Fortress / hedging chain
         "agents.fortress_orchestrator",

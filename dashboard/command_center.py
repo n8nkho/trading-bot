@@ -27,6 +27,7 @@ try:
     from dotenv import load_dotenv
 
     load_dotenv(_ROOT / ".env", override=False)
+    load_dotenv(_ROOT / ".env.fortress", override=False)
 except Exception:
     pass
 
@@ -156,6 +157,11 @@ AGENT_LOGS = {
     "llama_watchdog": {"log": LOGS_DIR / "llama_watchdog.log", "name": "Llama Watchdog", "max_age_hours": 2},
     "error_detective": {"log": LOGS_DIR / "error_detective.log", "name": "Error Detective", "max_age_hours": 25},
     "main_loop": {"log": LOGS_DIR / "main_loop.log", "name": "Main Loop", "max_age_hours": 1},
+    # Fortress AI pipeline (logs match utils.fortress_logger / agents)
+    "critique_loop": {"log": LOGS_DIR / "critique.log", "name": "Critique Loop (DeepSeek + xAI)", "max_age_hours": 26},
+    "reflection_agent": {"log": LOGS_DIR / "reflection.log", "name": "Reflection Agent", "max_age_hours": 30},
+    "briefing_agent": {"log": LOGS_DIR / "briefing.log", "name": "Morning Briefing", "max_age_hours": 30},
+    "alerts": {"log": LOGS_DIR / "alerts.log", "name": "Fortress Alerts", "max_age_hours": 26},
 }
 
 # Core execution path expected to stay fresh for BOT objectives.
@@ -178,6 +184,10 @@ OPTIONAL_AGENT_IDS = {
     "orchestrator",
     "main_loop",
     "agent_manager",
+    "critique_loop",
+    "reflection_agent",
+    "briefing_agent",
+    "alerts",
 }
 
 # Legacy/no-op rows to keep out of primary activity unless explicitly overridden.
@@ -199,6 +209,10 @@ ALWAYS_SHOW_NONCORE_IDS = {
     "walk_forward_validator",
     "intelligence_brief_generator",
     "recursive_evolution",
+    "critique_loop",
+    "reflection_agent",
+    "briefing_agent",
+    "alerts",
 }
 
 # Extend agent activity to include *all* agent modules in `agents/`.
@@ -221,6 +235,9 @@ def _extend_agent_logs_from_modules() -> None:
         "meta_architect": ("meta_architect.log", "Meta Architect"),
         "vision_analyst": ("grok.log", "Vision Analyst"),
         "document_analyst": ("grok.log", "Document Analyst"),
+        "critique_loop": ("critique.log", "Critique Loop"),
+        "reflection_agent": ("reflection.log", "Reflection Agent"),
+        "briefing_agent": ("briefing.log", "Morning Briefing"),
     }
 
     # Hedging/fortress-related modules tend to emit into fortress orchestration stdout/stderr.
@@ -251,6 +268,9 @@ def _extend_agent_logs_from_modules() -> None:
             # vision/document share grok.log but still show as dedicated modules.
             "vision_analyst": "vision_analyst",
             "document_analyst": "document_analyst",
+            "critique_loop": "critique_loop",
+            "reflection_agent": "reflection_agent",
+            "briefing_agent": "briefing_agent",
         }
         agent_id = id_map.get(stem, stem)
 
@@ -317,6 +337,11 @@ def _validate_system():
         from agents.risk_guardian import get_risk_status
     except Exception as e:
         errors.append(f"risk_guardian: {type(e).__name__}: {e}")
+    for mod in ("critique_loop", "reflection_agent", "briefing_agent"):
+        try:
+            __import__(f"agents.{mod}", fromlist=["*"])
+        except Exception as e:
+            warnings.append(f"{mod}: {type(e).__name__}: {e}")
     # Stale agents = warnings (attempt to resolve; de-prioritize during trading hours)
     activity = get_agent_activity()
     for a in activity.get("agents", []):
@@ -749,6 +774,10 @@ def get_system_health():
     health["data_files"]["positions"] = (DATA_DIR / "positions.json").exists()
     health["data_files"]["decisions"] = (DATA_DIR / "decisions_log.jsonl").exists()
     health["data_files"]["watchlist"] = (CONFIG_DIR / "watchlist.json").exists()
+    health["data_files"]["trade_history"] = (DATA_DIR / "trade_history.json").exists()
+    health["data_files"]["reflection_log"] = (DATA_DIR / "reflection_log.json").exists()
+    health["data_files"]["daily_risk_params"] = (DATA_DIR / "daily_risk_params.json").exists()
+    health["data_files"]["env_fortress"] = (_ROOT / ".env.fortress").exists()
 
     # Unresolved errors/warnings (from quick validation - current code only)
     has_err, has_warn, err_list, warn_list = _validate_system()
@@ -2655,6 +2684,9 @@ def get_recommendations():
             "fortress": "Scheduled daily at 00:00 ET (orchestrator.py fortress).",
             "sync": "Scheduled every 5 minutes during market hours (sync_alpaca.py).",
             "cron_heartbeat": "Scheduled every 5 minutes (cron heartbeat).",
+            "reflection_agent": "Typical: 17:00 ET Mon–Fri: python -m agents.reflection_agent (see deploy/README.md).",
+            "briefing_agent": "Typical: 06:00 ET Mon–Fri: python -m agents.briefing_agent (see deploy/README.md).",
+            "critique_loop": "Runs inside orchestrator when FORTRESS_CRITIQUE_LOOP_ENABLED=1; logs/critique.log.",
         }
         stale_added = 0
 
@@ -2677,6 +2709,12 @@ def get_recommendations():
                 continue
             if agent_id == "cron_heartbeat" and "cron_heartbeat.log" not in cron_out:
                 continue
+            if agent_id == "reflection_agent" and "agents.reflection_agent" not in cron_out:
+                continue
+            if agent_id == "briefing_agent" and "agents.briefing_agent" not in cron_out:
+                continue
+            if agent_id == "critique_loop":
+                continue
 
             if stale_added >= 5:
                 continue
@@ -2684,7 +2722,7 @@ def get_recommendations():
             recs["items"].append({
                 "type": "agent", "severity": "medium",
                 "title": f"{a.get('name')} has not run recently",
-                "body": f"Last run: {last_run or 'N/A'}",
+                "body": f"Last run: {a.get('last_run') or 'N/A'}",
                 "action": schedule_hints.get(agent_id) or f"Check cron or run {agent_id} manually.",
             })
             stale_added += 1
@@ -3638,6 +3676,7 @@ def api_feed():
     all_logs = dict(AGENT_LOGS)
     all_logs["fortress_dashboard"] = {"log": LOGS_DIR / "fortress_dashboard.log", "name": "Fortress"}
     all_logs["cron"] = {"log": LOGS_DIR / "cron.log", "name": "Cron"}
+    all_logs["alerts_feed"] = {"log": LOGS_DIR / "alerts.log", "name": "Fortress Alerts"}
 
     # Sort logs by modification time (most recently updated first)
     log_items = []

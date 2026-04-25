@@ -757,7 +757,10 @@
         items.push({ label: 'Circuit', value: 'Tripped', cls: 'err' });
       }
       if (data.data_files) {
-        items.push({ label: 'Data', value: [data.data_files.positions, data.data_files.decisions].filter(Boolean).length + ' files', cls: 'ok' });
+        const df = data.data_files;
+        const keys = ['positions', 'decisions', 'watchlist', 'trade_history', 'reflection_log', 'daily_risk_params', 'env_fortress'];
+        const n = keys.filter(function (k) { return df[k]; }).length;
+        items.push({ label: 'Data', value: n + '/' + keys.length + ' core paths', cls: n >= 5 ? 'ok' : 'warn' });
       }
       if (data.unresolved_errors && data.validation_errors && data.validation_errors.length) {
         items.push({ label: 'Validation', value: data.validation_errors.length + ' errors', cls: 'err' });

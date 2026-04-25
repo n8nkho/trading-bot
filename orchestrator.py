@@ -30,7 +30,7 @@ from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, GetOr
 from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 
 # Import agents
-from agents.screener_agent import run_screener
+from agents.screener_agent import run_screener, RecursiveScreener
 from agents.entry_agent import evaluate_entry
 from agents.exit_monitor import monitor_positions as monitor_exit_conditions, record_llm_outcome_after_sell_all_fill
 from agents.risk_guardian import check_risk_limits, get_risk_limits, get_risk_status, update_consecutive_losses
@@ -98,6 +98,89 @@ def _order_is_filled(order_result: dict) -> bool:
     filled_price = order_result.get("filled_price")
     status_filled = status == "filled" or status.endswith(".filled")
     return status_filled and filled_price is not None
+
+
+def _critique_loop_enabled() -> bool:
+    return os.environ.get("FORTRESS_CRITIQUE_LOOP_ENABLED", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _entry_signal_dict_for_critique(decision: dict) -> dict:
+    return {
+        "symbol": decision.get("ticker"),
+        "direction": "BUY",
+        "confidence": float(decision.get("confidence", 0.5) or 0.5),
+        "reason": decision.get("reasoning") or decision.get("reason") or "",
+    }
+
+
+def _entry_trade_dict_for_critique(decision: dict) -> dict:
+    tt = decision.get("trade_type") or decision.get("type") or "STOCK"
+    if tt == "OPTION" or decision.get("type") == "OPTION":
+        return {
+            "symbol": decision.get("ticker"),
+            "side": "buy",
+            "kind": "option",
+            "contracts": decision.get("contracts"),
+            "strike": decision.get("strike"),
+            "expiration": decision.get("expiration"),
+            "entry_price": decision.get("entry_price"),
+            "position_size_usd": decision.get("position_size"),
+        }
+    return {
+        "symbol": decision.get("ticker"),
+        "side": "buy",
+        "kind": "stock",
+        "shares": decision.get("shares"),
+        "entry_price": decision.get("entry_price"),
+        "position_size_usd": decision.get("position_size"),
+    }
+
+
+def _append_trade_history_row(signal: dict, pos: dict | None) -> None:
+    """Append one closed trade for reflection agent (SELL_ALL fills only)."""
+    try:
+        if str(signal.get("action") or "") != "SELL_ALL" or not pos:
+            return
+        filled_price = signal.get("filled_price")
+        sell_qty = signal.get("sell_qty")
+        if filled_price is None or sell_qty is None or float(sell_qty) <= 0:
+            return
+        filled_price = float(filled_price)
+        sell_qty = float(sell_qty)
+        trade_type = (pos or {}).get("type", "STOCK")
+        if trade_type == "OPTION":
+            entry_price = float((pos or {}).get("entry_premium") or 0)
+            pnl_dollars = (filled_price - entry_price) * sell_qty * 100.0
+        else:
+            entry_price = float((pos or {}).get("entry_price") or 0)
+            if bool(signal.get("is_short")):
+                pnl_dollars = (entry_price - filled_price) * sell_qty
+            else:
+                pnl_dollars = (filled_price - entry_price) * sell_qty
+        frac_pnl = float(signal.get("pnl_pct") or 0.0)
+        from utils.trade_history import append_closed_trade
+
+        append_closed_trade(
+            {
+                "closed_at": datetime.now(timezone.utc).isoformat(),
+                "ticker": pos.get("ticker"),
+                "underlying_ticker": pos.get("underlying_ticker"),
+                "instrument_type": trade_type,
+                "signal_id": pos.get("signal_id"),
+                "critique_verdict": pos.get("critique_verdict"),
+                "critique_human_line": pos.get("critique_human_line"),
+                "pnl_dollars": round(pnl_dollars, 4),
+                "pnl_pct_fraction": frac_pnl,
+                "exit_reason": str(signal.get("reason") or ""),
+            }
+        )
+    except Exception as e:
+        logger.warning("trade_history append failed: %s: %s", type(e).__name__, e)
 
 
 def _load_latest_fortress_report(max_age_hours=None):
@@ -819,6 +902,44 @@ async def submit_approved_screening_trade(trade, candidates, current_params):
     Submit one approved entry from daily screening (stock or option) and persist position if filled.
     Used for autonomous execution and for ``execute_pending`` (human-in-the-loop flush).
     """
+    if _critique_loop_enabled() and not trade.get("critique_verdict"):
+        from agents.critique_loop import evaluate_with_critique
+
+        cs = _entry_signal_dict_for_critique(trade)
+        ct = _entry_trade_dict_for_critique(trade)
+        try:
+            crit = await asyncio.to_thread(evaluate_with_critique, cs, ct)
+        except Exception as e:
+            logger.warning(
+                "%s: submit-time critique failed: %s; submitting without new critique",
+                trade.get("ticker"),
+                e,
+            )
+            crit = None
+        if crit is not None:
+            trade["critique_verdict"] = crit["verdict"]
+            trade["critique_pass1"] = crit["pass1"]
+            trade["critique_pass2"] = crit["pass2"]
+            trade["critique_human_line"] = crit["human_line"]
+            if not crit["proceed"]:
+                trade["executed"] = False
+                trade["execution_error"] = "critique_reject_on_submit"
+                return ("failure", trade)
+            mult = float(crit["size_multiplier"])
+            if mult < 1.0:
+                if trade.get("trade_type") == "OPTION" or trade.get("type") == "OPTION":
+                    c0 = int(trade.get("contracts") or 0)
+                    if c0 > 0:
+                        trade["contracts"] = max(1, int(c0 * mult))
+                        trade["position_size"] = (
+                            trade["contracts"] * float(trade.get("entry_price") or 0) * 100
+                        )
+                else:
+                    sh0 = int(trade.get("shares") or 0)
+                    if sh0 > 0:
+                        trade["shares"] = max(1, int(sh0 * mult))
+                        trade["position_size"] = trade["shares"] * float(trade.get("entry_price") or 0)
+
     option_symbol = None
     if trade.get("trade_type") == "OPTION" or trade.get("type") == "OPTION":
         ticker = trade["ticker"]
@@ -940,6 +1061,8 @@ async def submit_approved_screening_trade(trade, candidates, current_params):
                     "tiers_sold": {"tier1": False, "tier2": False, "tier3": False, "tier4": False},
                     "signal_id": trade.get("signal_id"),
                     "llm_decision_id": trade.get("llm_decision_id"),
+                    "critique_verdict": trade.get("critique_verdict"),
+                    "critique_human_line": trade.get("critique_human_line"),
                 },
             )
         else:
@@ -957,6 +1080,8 @@ async def submit_approved_screening_trade(trade, candidates, current_params):
                     "tiers_sold": {"tier1": False, "tier2": False, "tier3": False, "tier4": False},
                     "signal_id": trade.get("signal_id"),
                     "llm_decision_id": trade.get("llm_decision_id"),
+                    "critique_verdict": trade.get("critique_verdict"),
+                    "critique_human_line": trade.get("critique_human_line"),
                 },
             )
 
@@ -1029,7 +1154,12 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         # Step 1: Run screener
         logger.info("Step 1: Running stock screener...")
         candidates = run_screener()
-        logger.info(f"Screener found {len(candidates)} candidates")
+        logger.info(f"Screener found {len(candidates)} raw candidates")
+        candidates = RecursiveScreener(data_dir=DATA_DIR).screen_candidates(
+            candidates,
+            portfolio_nav=float(portfolio_value) if portfolio_value else None,
+        )
+        logger.info(f"After RecursiveScreener: {len(candidates)} candidates")
 
         # Screenshot-style screening telemetry (universe size + filter rejection counts).
         # Stored by `agents.screener_agent.run_screener()` for the dashboard.
@@ -1442,6 +1572,60 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
                         decision['risk_adjusted'] = False
                     
                     decision['risk_check'] = risk_check
+                    if _critique_loop_enabled():
+                        from agents.critique_loop import evaluate_with_critique
+
+                        crit_signal = _entry_signal_dict_for_critique(decision)
+                        crit_trade = _entry_trade_dict_for_critique(decision)
+                        try:
+                            crit = await asyncio.to_thread(
+                                evaluate_with_critique,
+                                crit_signal,
+                                crit_trade,
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "%s: critique loop failed (%s); proceeding without critique",
+                                ticker,
+                                e,
+                            )
+                            crit = None
+                        if crit is not None:
+                            decision["critique_verdict"] = crit["verdict"]
+                            decision["critique_pass1"] = crit["pass1"]
+                            decision["critique_pass2"] = crit["pass2"]
+                            decision["critique_human_line"] = crit["human_line"]
+                            if not crit["proceed"]:
+                                rejected_trades.append(
+                                    {
+                                        "ticker": ticker,
+                                        "reason": f"CRITIQUE_REJECT: {crit['pass2'].get('critique', '')}",
+                                        "original_decision": decision,
+                                        "reject_stage": "critique_loop",
+                                    }
+                                )
+                                continue
+                            mult = float(crit["size_multiplier"])
+                            if mult < 1.0:
+                                if trade_type == "OPTION":
+                                    c0 = int(decision.get("contracts") or 0)
+                                    if c0 > 0:
+                                        decision["contracts"] = max(1, int(c0 * mult))
+                                        decision["position_size"] = (
+                                            decision["contracts"]
+                                            * float(decision.get("entry_price") or 0)
+                                            * 100
+                                        )
+                                else:
+                                    sh0 = int(decision.get("shares") or 0)
+                                    if sh0 > 0:
+                                        decision["shares"] = max(1, int(sh0 * mult))
+                                        decision["position_size"] = decision["shares"] * float(
+                                            decision.get("entry_price") or 0
+                                        )
+                                decision["critique_size_adjusted"] = True
+                            else:
+                                decision["critique_size_adjusted"] = False
                     approved_trades.append(decision)
                     
                     # Track decision for performance analysis
@@ -1699,6 +1883,7 @@ def run_daily_screening(portfolio_value=PORTFOLIO_VALUE):
 def _record_closed_trade_and_llm_learning(signal: dict, pos: dict | None) -> None:
     """Full exit: update decisions_log outcome + LLM decision tracker + optional lesson (async thread)."""
     record_llm_outcome_after_sell_all_fill(signal, pos)
+    _append_trade_history_row(signal, pos)
 
 
 async def monitor_positions_async():
@@ -2536,6 +2721,10 @@ def run_multi_timeframe_framework(portfolio_value: float) -> dict:
     """
     cfg = load_strategy_allocation_config()
     candidates = run_screener()
+    candidates = RecursiveScreener(data_dir=DATA_DIR).screen_candidates(
+        candidates,
+        portfolio_nav=float(portfolio_value) if portfolio_value else None,
+    )
     report, _meta = _load_latest_fortress_report(max_age_hours=FORTRESS_REPORT_MAX_AGE_HOURS)
     regime = "MIXED"
     vix = None

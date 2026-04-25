@@ -1,11 +1,16 @@
 import os
 import json
+import re
 import time
 import logging
 import traceback
+import math
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any
+
 import yfinance as yf
 from utils.local_llm import analyze_stock_drop
 from agents.vision_analyst import analyze_chart_patterns, pattern_to_signal
@@ -600,6 +605,598 @@ def get_news_headlines(ticker, limit):
     except Exception as e:
         logging.warning(f"Could not fetch news for {ticker}: {type(e).__name__}: {str(e)}")
         return []
+
+
+# --- Recursive multi-layer screener (upstream of critique loop) ---
+
+_RECURSIVE_LOG_PATH = Path("logs") / "screener.log"
+
+
+def _recursive_screener_enabled() -> bool:
+    return os.environ.get("FORTRESS_RECURSIVE_SCREENER_ENABLED", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _recursive_llm_dry_run() -> bool:
+    return os.environ.get("FORTRESS_RECURSIVE_SCREENER_LLM_DRY_RUN", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _et_timestamp_str() -> str:
+    return datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+def _recursive_screener_log(line: str) -> None:
+    """Append human-readable recursive-screener lines to logs/screener.log."""
+    try:
+        _RECURSIVE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        stamped = f"[{_et_timestamp_str()}] {line}"
+        with open(_RECURSIVE_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(stamped + "\n")
+    except Exception:
+        pass
+
+
+def _parse_json_llm(text: str) -> dict[str, Any] | None:
+    if not text or not str(text).strip():
+        return None
+    t = str(text).strip()
+    if "```" in t:
+        m = re.search(r"```(?:json)?\s*([\s\S]*?)```", t, re.I)
+        if m:
+            t = m.group(1).strip()
+    try:
+        obj = json.loads(t)
+        return obj if isinstance(obj, dict) else None
+    except json.JSONDecodeError:
+        pass
+    for m in re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", t):
+        try:
+            obj = json.loads(m.group(0))
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def _load_positions_list(data_dir: Path) -> list[dict]:
+    p = data_dir / "positions.json"
+    try:
+        if not p.exists():
+            return []
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            raw = raw.get("positions", [])
+        return raw if isinstance(raw, list) else []
+    except Exception:
+        return []
+
+
+def _read_daily_risk_params(data_dir: Path) -> dict[str, Any]:
+    path = data_dir / "daily_risk_params.json"
+    try:
+        if not path.exists():
+            return {}
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        return doc if isinstance(doc, dict) else {}
+    except Exception:
+        return {}
+
+
+def _today_realized_pnl_usd(data_dir: Path) -> float:
+    path = data_dir / "pnl_ledger.jsonl"
+    if not path.exists():
+        return 0.0
+    today = datetime.now().date()
+    total = 0.0
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            ts = str(row.get("timestamp") or "")
+            if len(ts) >= 10:
+                try:
+                    d = datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
+                except ValueError:
+                    continue
+                if d != today:
+                    continue
+            try:
+                total += float(row.get("pnl") or 0.0)
+            except (TypeError, ValueError):
+                pass
+    except Exception:
+        return 0.0
+    return total
+
+
+def _rth_bad_window_et() -> bool:
+    """First 15m after 9:30 or last 15m before 16:00 US/Eastern."""
+    now = datetime.now(ZoneInfo("America/New_York"))
+    if now.weekday() >= 5:
+        return False
+    t = now.time()
+    open_m = datetime.strptime("09:30", "%H:%M").time()
+    bad_early = datetime.strptime("09:45", "%H:%M").time()
+    bad_late_start = datetime.strptime("15:45", "%H:%M").time()
+    close_m = datetime.strptime("16:00", "%H:%M").time()
+    return (open_m <= t < bad_early) or (bad_late_start <= t < close_m)
+
+
+def _earnings_within_days(ticker: str, days: int = 2) -> tuple[bool, str]:
+    try:
+        tk = yf.Ticker(ticker)
+        cal = getattr(tk, "calendar", None)
+        if cal is not None and hasattr(cal, "empty") and not cal.empty:
+            # yfinance calendar index sometimes holds next earnings date
+            pass
+        ed = getattr(tk, "earnings_dates", None)
+        if ed is not None and hasattr(ed, "empty") and not ed.empty:
+            next_idx = ed.index.min()
+            if hasattr(next_idx, "to_pydatetime"):
+                nd = next_idx.to_pydatetime().date()
+            else:
+                nd = next_idx.date() if hasattr(next_idx, "date") else None
+            if nd:
+                delta = (nd - datetime.now().date()).days
+                if 0 <= delta <= days:
+                    return True, f"earnings in {delta}d"
+    except Exception:
+        pass
+    return False, ""
+
+
+class RecursiveScreener:
+    """
+    Layered filter: hard rules → technical score → recursive LLM → portfolio context.
+    Disabled unless FORTRESS_RECURSIVE_SCREENER_ENABLED=1 (passthrough).
+    """
+
+    def __init__(
+        self,
+        *,
+        min_layer2_score: float = 65.0,
+        data_dir: Path | None = None,
+    ) -> None:
+        self.min_layer2_score = float(min_layer2_score)
+        self.data_dir = data_dir or DATA_DIR
+        self._router = None
+
+    def _router_lazy(self):
+        if self._router is None:
+            from utils.llm_router import LLMRouter
+
+            self._router = LLMRouter()
+        return self._router
+
+    def screen_candidates(
+        self,
+        candidates: list[dict],
+        *,
+        portfolio_nav: float | None = None,
+    ) -> list[dict]:
+        if not _recursive_screener_enabled():
+            return list(candidates)
+
+        if not candidates:
+            _recursive_screener_log("RecursiveScreener | no input candidates")
+            return []
+
+        rp = _read_daily_risk_params(self.data_dir)
+        max_concurrent = int(rp.get("max_concurrent_positions") or rp.get("max_new_positions") or 5)
+        max_concurrent = max(1, min(5, max_concurrent))
+        max_per_sector = int(rp.get("max_positions_per_sector") or 2)
+        max_corr = float(rp.get("max_basket_correlation") or 0.85)
+        daily_pnl_halt_pct = float(rp.get("halt_new_entries_daily_pnl_pct") or -0.02)
+        vix_max = rp.get("vix_max_for_new_entries")
+        try:
+            vix_max_f = float(vix_max) if vix_max is not None else None
+        except (TypeError, ValueError):
+            vix_max_f = None
+
+        nav = float(portfolio_nav) if portfolio_nav and portfolio_nav > 0 else 100_000.0
+        today_pnl = _today_realized_pnl_usd(self.data_dir)
+        daily_pnl_frac = today_pnl / nav
+        if daily_pnl_frac < daily_pnl_halt_pct:
+            _recursive_screener_log(
+                f"GLOBAL | L4: HALT new entries — daily realized P&L {daily_pnl_frac*100:.2f}% "
+                f"vs floor {daily_pnl_halt_pct*100:.2f}% (nav≈${nav:,.0f})"
+            )
+            return []
+
+        if vix_max_f is not None:
+            try:
+                vix = float(yf.Ticker("^VIX").history(period="5d")["Close"].iloc[-1])
+                if vix > vix_max_f:
+                    _recursive_screener_log(
+                        f"GLOBAL | L4: HALT — VIX {vix:.1f} > limit {vix_max_f:.1f} (daily_risk_params)"
+                    )
+                    return []
+            except Exception:
+                pass
+
+        open_positions = _load_positions_list(self.data_dir)
+        approved: list[dict] = []
+
+        for cand in candidates:
+            if not isinstance(cand, dict):
+                continue
+            sym = str(cand.get("ticker") or "").strip().upper()
+            if not sym:
+                continue
+
+            l1_ok, l1_reason = self._layer1_hard_filters(sym, cand)
+            if not l1_ok:
+                _recursive_screener_log(
+                    f"{sym} | L1: FAIL | REJECTED at L1 — {l1_reason}"
+                )
+                continue
+
+            tech, card = self.score_technical(cand)
+            if tech < self.min_layer2_score:
+                hints = []
+                if float(card.get("volume_score") or 0) < 45:
+                    hints.append("weak volume")
+                if float(card.get("trend_score") or 0) < 45:
+                    hints.append("poor trend alignment")
+                if float(card.get("rsi_macd_score") or 0) < 45:
+                    hints.append("weak momentum")
+                if float(card.get("tod_score") or 100) < 50:
+                    hints.append("poor time-of-day score")
+                hint_str = ", ".join(hints) if hints else str(card.get("l2_detail") or "below threshold")
+                _recursive_screener_log(
+                    f"{sym} | L1: PASS | L2: {tech:.0f}/100 | REJECTED at L2 — {hint_str}"
+                )
+                continue
+
+            l3 = self.run_llm_filter(cand)
+            if not l3.get("pass"):
+                l3_reason = l3.get("fail_log") or str(l3.get("reason") or "LLM FAIL")
+                _recursive_screener_log(
+                    f"{sym} | L1: PASS | L2: {tech:.0f}/100 | L3: FAIL — {l3_reason}"
+                )
+                continue
+
+            conv = l3.get("final_conviction", "?")
+            l4_ok, l4_reason = self.check_portfolio_context(
+                cand,
+                open_positions,
+                max_concurrent=max_concurrent,
+                max_per_sector=max_per_sector,
+                max_correlation=max_corr,
+            )
+            if not l4_ok:
+                _recursive_screener_log(
+                    f"{sym} | L1: PASS | L2: {tech:.0f}/100 | L3: PASS (conviction {conv}/10) "
+                    f"| L4: FAIL — {l4_reason}"
+                )
+                continue
+
+            out = dict(cand)
+            out["recursive_screener"] = {
+                "layer1": "PASS",
+                "layer2_score": round(tech, 2),
+                "layer2_card": card,
+                "layer3": l3,
+                "layer4": "PASS",
+            }
+            approved.append(out)
+            _recursive_screener_log(
+                f"{sym} | L1: PASS | L2: {tech:.0f}/100 | L3: PASS (conviction {conv}/10) "
+                f"| L4: PASS | → forwarded to critique loop"
+            )
+
+        approved.sort(
+            key=lambda x: float((x.get("recursive_screener") or {}).get("layer2_score") or 0),
+            reverse=True,
+        )
+        return approved
+
+    def _layer1_hard_filters(self, ticker: str, cand: dict) -> tuple[bool, str]:
+        px = float(cand.get("current_price") or 0)
+        if px < 3.0:
+            return False, f"price ${px:.2f} below $3 min"
+        if px > 2500.0:
+            return False, f"price ${px:.2f} above sanity max"
+
+        try:
+            hist = yf.Ticker(ticker).history(period="5d")
+            if hist is None or hist.empty:
+                return False, "no recent OHLCV"
+            last_vol = float(hist["Volume"].iloc[-1])
+            if last_vol < 50_000:
+                return False, f"volume {last_vol:.0f} below 50k"
+            spread_proxy = float(
+                (hist["High"].iloc[-1] - hist["Low"].iloc[-1]) / max(hist["Close"].iloc[-1], 1e-9)
+            )
+            if spread_proxy > 0.12:
+                return False, f"wide range {spread_proxy*100:.1f}% of close (halt/spread risk)"
+        except Exception as e:
+            return False, f"market data error: {e}"
+
+        near_earn, er = _earnings_within_days(ticker, days=2)
+        if near_earn:
+            return False, er or "earnings proximity"
+
+        return True, ""
+
+    def score_technical(self, candidate: dict) -> tuple[float, dict[str, Any]]:
+        """
+        Weighted 0–100: trend/EMA 25%, volume 20%, RSI+MACD 20%, sector vs SPY 15%,
+        ATR profile 10%, time-of-day 10% (already hard-gated in L1 when bad window).
+        """
+        ticker = str(candidate.get("ticker") or "").strip().upper()
+        card: dict[str, Any] = {"ticker": ticker}
+        try:
+            hist = yf.Ticker(ticker).history(period="3mo", interval="1d")
+            spy = yf.Ticker("SPY").history(period="3mo", interval="1d")
+            if hist is None or hist.empty or len(hist) < 55:
+                return 0.0, {**card, "l2_detail": "insufficient history for EMA/MACD"}
+
+            close = hist["Close"]
+            vol = hist["Volume"]
+            ema20 = close.ewm(span=20, adjust=False).mean()
+            ema50 = close.ewm(span=50, adjust=False).mean()
+            last = float(close.iloc[-1])
+            e20 = float(ema20.iloc[-1])
+            e50 = float(ema50.iloc[-1])
+            if last >= e20 >= e50:
+                trend_score = 100.0
+            elif last >= e20:
+                trend_score = 70.0
+            elif last >= e50:
+                trend_score = 45.0
+            else:
+                trend_score = 25.0
+
+            ma10 = vol.rolling(10).mean()
+            vr = float(vol.iloc[-1] / max(ma10.iloc[-1], 1.0))
+            vol_score = max(0.0, min(100.0, (vr - 0.6) / 1.4 * 100.0))
+
+            rsi_series = calculate_rsi(close, 14)
+            rsi_last = float(rsi_series.iloc[-1]) if hasattr(rsi_series, "iloc") else float(rsi_series)
+            rsi_score = max(0.0, min(100.0, (55.0 - rsi_last) / 30.0 * 100.0))
+
+            ema12 = close.ewm(span=12, adjust=False).mean()
+            ema26 = close.ewm(span=26, adjust=False).mean()
+            macd_line = ema12 - ema26
+            sig = macd_line.ewm(span=9, adjust=False).mean()
+            macd_bull = float(macd_line.iloc[-1]) > float(sig.iloc[-1])
+            macd_score = 80.0 if macd_bull else 35.0
+            combo_rsi_macd = 0.5 * rsi_score + 0.5 * macd_score
+
+            ret_stock = float(close.iloc[-1] / max(close.iloc[-6], 1e-9) - 1.0)
+            ret_spy = 0.0
+            if spy is not None and not spy.empty and len(spy["Close"]) > 6:
+                sc = spy["Close"]
+                ret_spy = float(sc.iloc[-1] / max(sc.iloc[-6], 1e-9) - 1.0)
+            rel = (ret_stock - ret_spy) * 100.0
+            sector_score = max(0.0, min(100.0, 50.0 + rel * 8.0))
+
+            tr = hist["High"] - hist["Low"]
+            atr_pct = float(tr.rolling(14).mean().iloc[-1] / max(last, 1e-9))
+            if 0.01 <= atr_pct <= 0.04:
+                atr_score = 100.0
+            elif atr_pct < 0.01:
+                atr_score = 40.0
+            else:
+                atr_score = max(20.0, 100.0 - (atr_pct - 0.04) * 800.0)
+
+            tod_score = 0.0 if _rth_bad_window_et() else 100.0
+
+            total = (
+                0.25 * trend_score
+                + 0.20 * vol_score
+                + 0.20 * combo_rsi_macd
+                + 0.15 * sector_score
+                + 0.10 * atr_score
+                + 0.10 * tod_score
+            )
+            card.update(
+                {
+                    "trend_score": round(trend_score, 1),
+                    "volume_score": round(vol_score, 1),
+                    "rsi_macd_score": round(combo_rsi_macd, 1),
+                    "rel_spy_score": round(sector_score, 1),
+                    "atr_score": round(atr_score, 1),
+                    "tod_score": round(tod_score, 1),
+                    "rsi": round(rsi_last, 2),
+                    "volume_ratio_proxy": round(vr, 2),
+                    "l2_detail": "composite technical",
+                }
+            )
+            return total, card
+        except Exception as e:
+            return 0.0, {**card, "l2_detail": str(e)}
+
+    def run_llm_filter(self, candidate: dict) -> dict[str, Any]:
+        """Three-iteration loop: DeepSeek → xAI → DeepSeek; PASS/FAIL."""
+        ticker = str(candidate.get("ticker") or "").strip().upper()
+        if _recursive_llm_dry_run():
+            return {
+                "pass": True,
+                "reason": "dry_run",
+                "final_conviction": 7,
+                "iter1": {},
+                "iter2": {},
+                "iter3": {},
+            }
+
+        headlines = candidate.get("news") or []
+        if not isinstance(headlines, list):
+            headlines = []
+        news_blob = json.dumps(headlines[:8], default=str)
+        base = json.dumps(
+            {
+                "ticker": ticker,
+                "current_price": candidate.get("current_price"),
+                "rsi": candidate.get("rsi"),
+                "volume_ratio": candidate.get("volume_ratio"),
+                "drop_pct": candidate.get("drop_pct"),
+            },
+            default=str,
+        )
+        r = self._router_lazy()
+
+        def _api_fail(msg: str) -> dict[str, Any]:
+            return {
+                "pass": False,
+                "reason": msg,
+                "fail_log": msg,
+                "final_conviction": 0,
+                "iter1": {},
+                "iter2": {},
+                "iter3": {},
+            }
+
+        p1 = (
+            "You are a disciplined equity analyst. Given the candidate snapshot and news titles, "
+            "output ONLY valid JSON (no markdown):\n"
+            '{"narrative": "string", "conviction": <1-10 integer>}\n\n'
+            f"DATA: {base}\nNEWS: {news_blob}"
+        )
+        raw1 = r.call_deepseek(p1)
+        if str(raw1 or "").strip().startswith("Error:"):
+            return _api_fail(raw1.strip()[:200])
+        o1 = _parse_json_llm(raw1 or "") or {"narrative": "parse_fail", "conviction": 5}
+        c1 = int(o1.get("conviction") or 5)
+        c1 = max(1, min(10, c1))
+
+        p2 = (
+            "You are a skeptical fact-checker. Cross-check the narrative vs news. "
+            "Output ONLY valid JSON:\n"
+            '{"stance": "support" or "contradict", "notes": "string"}\n\n'
+            f"NARRATIVE: {json.dumps(o1, default=str)}\nNEWS: {news_blob}"
+        )
+        raw2 = r.call_xai(p2)
+        if str(raw2 or "").strip().startswith("Error:"):
+            return _api_fail(raw2.strip()[:200])
+        o2 = _parse_json_llm(raw2 or "") or {"stance": "support", "notes": ""}
+        stance = str(o2.get("stance", "support")).lower()
+
+        p3 = (
+            "Final gate: adjust conviction given the contradiction check. "
+            "Output ONLY valid JSON:\n"
+            '{"final_conviction": <1-10>, "verdict": "PASS" or "FAIL"}\n\n'
+            f"ITER1: {json.dumps(o1, default=str)}\nITER2: {json.dumps(o2, default=str)}"
+        )
+        raw3 = r.call_deepseek(p3)
+        if str(raw3 or "").strip().startswith("Error:"):
+            return _api_fail(raw3.strip()[:200])
+        o3 = _parse_json_llm(raw3 or "") or {"final_conviction": c1, "verdict": "FAIL"}
+        fc = int(o3.get("final_conviction") or c1)
+        fc = max(1, min(10, fc))
+        verdict = str(o3.get("verdict", "FAIL")).upper()
+        if stance == "contradict" and verdict == "PASS" and fc < 8:
+            verdict = "FAIL"
+        ok = verdict == "PASS" and fc >= 6
+        notes2 = str(o2.get("notes") or "")[:160]
+        fail_log = ""
+        if not ok:
+            if stance == "contradict":
+                fail_log = f"news contradicts technical setup — {notes2 or 'contradict stance'}"
+            else:
+                fail_log = f"verdict={verdict}, conviction={fc}/10"
+        return {
+            "pass": ok,
+            "reason": o3 if not ok else "ok",
+            "fail_log": fail_log,
+            "final_conviction": fc,
+            "iter1": o1,
+            "iter2": o2,
+            "iter3": o3,
+        }
+
+    def check_portfolio_context(
+        self,
+        candidate: dict,
+        open_positions: list[dict],
+        *,
+        max_concurrent: int = 5,
+        max_per_sector: int = 2,
+        max_correlation: float = 0.85,
+    ) -> tuple[bool, str]:
+        if len(open_positions) >= max_concurrent:
+            return False, f"max concurrent positions ({max_concurrent})"
+
+        sym = str(candidate.get("ticker") or "").strip().upper()
+
+        def _pos_underlying_key(p: dict) -> str:
+            if str(p.get("type", "")).upper() == "OPTION":
+                return str(p.get("underlying_ticker") or "").strip().upper()
+            return str(p.get("ticker") or "").strip().upper()
+
+        if any(_pos_underlying_key(p) == sym for p in open_positions if isinstance(p, dict)):
+            return False, "already hold same ticker / underlying"
+
+        sector = None
+        try:
+            info = yf.Ticker(sym).info or {}
+            sector = str(info.get("sector") or info.get("industry") or "Unknown")
+        except Exception:
+            sector = "Unknown"
+
+        def _pos_sector(p: dict) -> str:
+            t = str(p.get("ticker") or "")
+            if p.get("type") == "OPTION":
+                u = str(p.get("underlying_ticker") or "")
+                if u:
+                    t = u
+            try:
+                inf = yf.Ticker(t).info or {}
+                return str(inf.get("sector") or inf.get("industry") or "Unknown")
+            except Exception:
+                return "Unknown"
+
+        same_sector = 0
+        for p in open_positions:
+            if not isinstance(p, dict):
+                continue
+            ps = _pos_sector(p)
+            if ps != "Unknown" and sector != "Unknown" and ps == sector:
+                same_sector += 1
+        if same_sector >= max_per_sector:
+            return False, f"sector concentration {sector} ({same_sector}≥{max_per_sector})"
+
+        if not open_positions:
+            return True, ""
+
+        try:
+            h = yf.Ticker(sym).history(period="30d", interval="1d")["Close"].pct_change().dropna()
+            if h.empty or len(h) < 5:
+                return True, ""
+            for p in open_positions:
+                if not isinstance(p, dict):
+                    continue
+                other = str(p.get("ticker") or "")
+                if not other:
+                    continue
+                ho = yf.Ticker(other).history(period="30d", interval="1d")["Close"].pct_change().dropna()
+                joined = h.align(ho, join="inner")
+                a, b = joined[0].dropna(), joined[1].dropna()
+                m = min(len(a), len(b))
+                if m < 5:
+                    continue
+                a, b = a.iloc[-m:], b.iloc[-m:]
+                corr = float(a.corr(b))
+                if not math.isnan(corr) and corr > max_correlation:
+                    return False, f"high correlation {corr:.2f} vs open {other}"
+        except Exception as e:
+            logging.warning("RecursiveScreener correlation skip %s: %s", sym, e)
+
+        return True, ""
+
 
 if __name__ == "__main__":
     start_time = time.time()

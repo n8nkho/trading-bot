@@ -9,6 +9,15 @@
 # PATH=/usr/local/bin:/usr/bin:/bin
 # REPO=/home/ubuntu/trading-bot
 #
+# Fortress AI agents (UTC internally; use TZ=America/New_York for ET wall times):
+# Reflection (~5 PM ET Mon–Fri): append data/reflection_log.json when FORTRESS_REFLECTION_ALLOW_WRITES=1
+# 0 17 * * 1-5 TZ=America/New_York cd $REPO && ./venv/bin/python3 agents/reflection_agent.py >> $REPO/logs/reflection.log 2>&1
+#
+# Pre-market briefing (~6 AM ET Mon–Fri): logs/briefing_YYYYMMDD.log; optional data/daily_risk_params.json
+# 0 6 * * 1-5 TZ=America/New_York cd $REPO && ./venv/bin/python3 agents/briefing_agent.py >> $REPO/logs/briefing_scheduled.log 2>&1
+#
+# Entry critique loop runs inside orchestrator when FORTRESS_CRITIQUE_LOOP_ENABLED=1 (no separate cron).
+#
 # Recovery after downtime (manual or extra cron slot):
 #   $REPO/scripts/cron_run.sh ops_recovery >> $REPO/logs/orchestrator.log 2>&1
 #
