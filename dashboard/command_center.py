@@ -715,6 +715,7 @@ def get_agent_activity():
     agents = []
     now = datetime.now()
     market_open = _is_market_hours()
+    off_hours_fresh_grace_h = float(os.getenv("FORTRESS_OFF_HOURS_FRESH_GRACE_HOURS", "72"))
     for key, cfg in AGENT_LOGS.items():
         log_path = cfg["log"]
         max_h = cfg["max_age_hours"]
@@ -753,8 +754,28 @@ def get_agent_activity():
             # Reclassify stale state so optional/extended rows stay informational.
             is_required = key in REQUIRED_AGENT_IDS
             active_hours_required = key in {"screener", "monitor", "sniper", "sync"}
-            stale_actionable = is_required and (market_open if active_hours_required else True)
-            ui_status = "stale" if stale_actionable else "idle"
+            if (
+                (not market_open)
+                and active_hours_required
+                and last_run is not None
+            ):
+                try:
+                    last_dt = datetime.fromisoformat(str(last_run))
+                    age_h = (now - last_dt).total_seconds() / 3600.0
+                    if age_h <= off_hours_fresh_grace_h:
+                        # Show as fresh off-hours if it ran recently enough.
+                        status = "fresh"
+                        ui_status = "fresh"
+                        stale_actionable = False
+                    else:
+                        stale_actionable = False
+                        ui_status = "idle"
+                except Exception:
+                    stale_actionable = False
+                    ui_status = "idle"
+            else:
+                stale_actionable = is_required and (market_open if active_hours_required else True)
+                ui_status = "stale" if stale_actionable else "idle"
         agents.append({
             "id": key,
             "name": cfg["name"],
