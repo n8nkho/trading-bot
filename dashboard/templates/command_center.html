@@ -1285,6 +1285,37 @@
           + '</div>';
       }).join('');
       const ex = card.exposure_plan || {};
+      const phase = card.phase_rollout || {};
+      const phaseBadge = function (s) {
+        const v = String(s || 'warn').toLowerCase();
+        const cls = v === 'ok' ? 'color:var(--green);' : (v === 'fail' ? 'color:var(--red);' : 'color:var(--amber);');
+        return '<span style="' + cls + 'font-weight:600;">' + esc(v.toUpperCase()) + '</span>';
+      };
+      const nextToggleHint = function (phaseKey, status) {
+        const st = String(status || 'warn').toLowerCase();
+        if (phaseKey === 'p1') {
+          if (st === 'ok') return 'Next: paper-enforce <code>FORTRESS_DRAWDOWN_GUARD_ENFORCE=1</code> and (optionally) <code>FORTRESS_ENABLE_CORRELATION_GUARD=1</code>.';
+          if (st === 'fail') return 'Fix now: keep observe mode, review runtime guardrail reason, then set conservative thresholds before enabling enforce.';
+          return 'Observe: keep <code>FORTRESS_DRAWDOWN_GUARD_ENFORCE=0</code>; tune thresholds via <code>FORTRESS_MAX_DRAWDOWN_FROM_PEAK</code>/<code>FORTRESS_MAX_DAILY_LOSS</code>.';
+        }
+        if (phaseKey === 'p2') {
+          if (st === 'ok') return 'Next: enable paper enforcement <code>FORTRESS_VELOCITY_GUARD_ENFORCE=1</code>; keep short-squeeze guard on.';
+          if (st === 'fail') return 'Fix now: review fast-move events and open risk before enabling velocity enforcement.';
+          return 'Observe: keep <code>FORTRESS_VELOCITY_GUARD_ENFORCE=0</code>; validate <code>FORTRESS_MAX_PNL_CHANGE_PER_HOUR</code>.';
+        }
+        if (st === 'ok') return 'Next: keep approvals required; maintain blackout windows before limited-live pilot.';
+        if (st === 'fail') return 'Fix now: require approvals and define event blackout windows.';
+        return 'Set controls: <code>FORTRESS_EVOLUTION_REQUIRE_APPROVAL=1</code> and <code>FORTRESS_ENTRY_BLACKOUT_WINDOWS_ET=...</code>.';
+      };
+      const phaseRows = '<div style="margin-top:0.6rem;border-top:1px solid var(--border);padding-top:0.5rem;">'
+        + '<div class="text-muted" style="font-size:11px;margin-bottom:0.25rem;">Guardrail rollout phases</div>'
+        + '<div class="feed-line info" style="font-size:11px;">Phase 1 (pre-live protections): ' + phaseBadge(phase.phase_1_pre_live_hard_protections) + '</div>'
+        + '<div class="text-muted" style="font-size:10px;margin:0 0 0.35rem 0;">' + nextToggleHint('p1', phase.phase_1_pre_live_hard_protections) + '</div>'
+        + '<div class="feed-line info" style="font-size:11px;">Phase 2 (runtime stability): ' + phaseBadge(phase.phase_2_runtime_stability) + '</div>'
+        + '<div class="text-muted" style="font-size:10px;margin:0 0 0.35rem 0;">' + nextToggleHint('p2', phase.phase_2_runtime_stability) + '</div>'
+        + '<div class="feed-line info" style="font-size:11px;">Phase 3 (evolution/event safety): ' + phaseBadge(phase.phase_3_evolution_event_safety) + '</div>'
+        + '<div class="text-muted" style="font-size:10px;margin:0 0 0.1rem 0;">' + nextToggleHint('p3', phase.phase_3_evolution_event_safety) + '</div>'
+        + '</div>';
       const plan = '<div style="margin-top:0.6rem;border-top:1px solid var(--border);padding-top:0.5rem;font-size:11px;" class="text-muted">'
         + 'Starter live sleeve if READY: max account <strong>' + esc(ex.starter_max_account_pct ?? '2.0') + '%</strong> · '
         + 'max open positions <strong>' + esc(ex.starter_max_open_positions ?? '1') + '</strong> · '
@@ -1292,7 +1323,7 @@
         + 'daily loss stop <strong>' + esc(ex.starter_daily_loss_stop_pct ?? '0.5') + '%</strong>'
         + '</div>';
       const note = card.note ? '<div class="text-muted" style="font-size:11px;margin-top:0.5rem;">' + esc(card.note) + '</div>' : '';
-      el.innerHTML = head + attentionLine + rows + plan + note;
+      el.innerHTML = head + attentionLine + rows + phaseRows + plan + note;
     }
 
     function renderHeadlineEventStatus(data) {

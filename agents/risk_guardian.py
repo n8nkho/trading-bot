@@ -9,6 +9,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import json
 from utils.policy_profile import get_profile_bundle
+from utils.operator_halt import set_trading_halt
+from utils.trading_guardrails import (
+    bool_env,
+    compute_loss_metrics,
+    update_equity_state,
+)
 from utils.volatility_adaptive_sizing import (
     adaptive_position_size_pct,
     load_latest_vix_from_fortress_report,
@@ -36,6 +42,7 @@ MAX_TOTAL_RISK_PCT = 7.0    # % of portfolio
 DAILY_LOSS_LIMIT_PCT = -2.0  # % of equity
 WEEKLY_LOSS_LIMIT_PCT = -5.0 # % of equity
 MAX_SECTOR_CONCENTRATION_PCT = 30.0  # % of portfolio
+MAX_CORRELATION_SCORE = float(os.getenv("FORTRESS_MAX_CORRELATION_SCORE", "0.70"))
 
 # Circuit breaker thresholds
 CIRCUIT_BREAKER_REDUCE_THRESHOLD = 3  # consecutive losses
@@ -70,6 +77,14 @@ AUTO_RESET_RISK_GUARDIAN_STATE = str(os.getenv("FORTRESS_AUTO_RESET_RISK_GUARDIA
     "off",
 }
 RISK_STATE_MAX_AGE_HOURS = float(os.getenv("FORTRESS_RISK_STATE_MAX_AGE_HOURS", "24"))
+
+# Phase 1/2 guardrails (safe by default: observe first, enforce via env).
+MAX_DRAWDOWN_FROM_PEAK = float(os.getenv("FORTRESS_MAX_DRAWDOWN_FROM_PEAK", "0.10"))
+MAX_DAILY_LOSS_FROM_START = float(os.getenv("FORTRESS_MAX_DAILY_LOSS", "0.03"))
+MAX_PNL_CHANGE_PER_HOUR = float(os.getenv("FORTRESS_MAX_PNL_CHANGE_PER_HOUR", "0.05"))
+DRAWDOWN_GUARD_ENFORCE = bool_env("FORTRESS_DRAWDOWN_GUARD_ENFORCE", False)
+VELOCITY_GUARD_ENFORCE = bool_env("FORTRESS_VELOCITY_GUARD_ENFORCE", False)
+CORRELATION_GUARD_ENABLED = bool_env("FORTRESS_ENABLE_CORRELATION_GUARD", False)
 
 
 def _policy_bundle() -> dict:
@@ -266,6 +281,11 @@ def check_risk_limits_with_profile(portfolio_data, new_position, strict_mode: bo
     week_pnl = portfolio_data.get('week_pnl', None)
 
     limits = get_risk_limits(strict_mode=strict_mode)
+
+    # Runtime equity-based guardrails (drawdown / daily loss / velocity).
+    runtime_guard = _evaluate_runtime_equity_guardrails(equity)
+    if runtime_guard.get("blocked"):
+        return {"approved": False, "reason": runtime_guard.get("reason") or "runtime_guardrail_blocked"}
     
     # Check circuit breaker status
     if strict_mode:
@@ -332,6 +352,13 @@ def check_risk_limits_with_profile(portfolio_data, new_position, strict_mode: bo
     if not sector_check['approved']:
         logger.warning(sector_check['reason'])
         return sector_check
+
+    # 7. Optional correlation guard (off by default to avoid accidental throughput regressions).
+    if CORRELATION_GUARD_ENABLED:
+        corr_check = check_correlation_risk(positions, new_position)
+        if not corr_check["approved"]:
+            logger.warning(corr_check["reason"])
+            return corr_check
     
     # All checks passed
     logger.info(f"Position approved: {new_position['ticker']} - {position_pct:.2f}% of portfolio")
@@ -376,11 +403,101 @@ def check_sector_concentration(positions, new_position, equity, new_position_val
     # Check if any sector exceeds limit
     for sector, value in sector_exposure.items():
         sector_pct = (value / equity) * 100
-        if sector_pct > MAX_SECTOR_CONCENTRATION_PCT:
-            reason = f"Sector '{sector}' concentration {sector_pct:.2f}% exceeds {MAX_SECTOR_CONCENTRATION_PCT}% limit"
+        max_sector = float(os.getenv("FORTRESS_MAX_SECTOR_CONCENTRATION_PCT", str(MAX_SECTOR_CONCENTRATION_PCT)))
+        if sector_pct > max_sector:
+            reason = f"Sector '{sector}' concentration {sector_pct:.2f}% exceeds {max_sector}% limit"
             return {"approved": False, "reason": reason}
     
     return {"approved": True, "reason": "Sector concentration within limits"}
+
+
+def check_correlation_risk(positions, new_position):
+    """
+    Optional pairwise correlation cap against current positions.
+    Keeps implementation lightweight and fail-safe.
+    """
+    try:
+        import yfinance as yf
+        import pandas as pd
+    except Exception:
+        return {"approved": True, "reason": "Correlation guard skipped (dependency unavailable)"}
+
+    try:
+        cand = str((new_position or {}).get("ticker") or "").strip().upper()
+        if not cand:
+            return {"approved": True, "reason": "No candidate ticker"}
+        existing = [str((p or {}).get("ticker") or "").strip().upper() for p in (positions or [])]
+        existing = [x for x in existing if x and x != cand]
+        if not existing:
+            return {"approved": True, "reason": "No existing positions to correlate"}
+
+        symbols = [cand] + existing[:20]
+        hist = yf.download(symbols, period="45d", interval="1d", progress=False, auto_adjust=True)
+        if hist is None or hist.empty:
+            return {"approved": True, "reason": "Correlation data unavailable"}
+        close = hist.get("Close")
+        if close is None or getattr(close, "empty", False):
+            return {"approved": True, "reason": "Close series unavailable"}
+        if not isinstance(close, pd.DataFrame):
+            return {"approved": True, "reason": "Insufficient symbols for correlation"}
+        rets = close.pct_change().dropna(how="all")
+        if rets.empty:
+            return {"approved": True, "reason": "No returns for correlation"}
+
+        max_corr = float(os.getenv("FORTRESS_MAX_CORRELATION_SCORE", str(MAX_CORRELATION_SCORE)))
+        for other in existing[:20]:
+            if cand not in rets.columns or other not in rets.columns:
+                continue
+            c = rets[cand].corr(rets[other])
+            if c is None:
+                continue
+            if float(c) > max_corr:
+                return {
+                    "approved": False,
+                    "reason": f"High correlation risk: {cand} vs {other} corr={float(c):.2f} > {max_corr:.2f}",
+                }
+        return {"approved": True, "reason": "Correlation risk within limit"}
+    except Exception as e:
+        logger.warning("Correlation guard failed open: %s: %s", type(e).__name__, e)
+        return {"approved": True, "reason": "Correlation guard failed open"}
+
+
+def _evaluate_runtime_equity_guardrails(equity: float | int | None) -> dict:
+    """
+    Drawdown/daily-loss/velocity checks with optional enforcement.
+    """
+    snap = update_equity_state(float(equity) if equity else None)
+    m = compute_loss_metrics(snap)
+
+    dd = m.get("drawdown_from_peak")
+    dloss = m.get("daily_loss_pct")
+    vel = m.get("hourly_equity_velocity")
+
+    reasons: list[str] = []
+    blocked = False
+
+    if dd is not None and dd >= MAX_DRAWDOWN_FROM_PEAK:
+        reasons.append(f"drawdown={dd:.2%} >= {MAX_DRAWDOWN_FROM_PEAK:.2%}")
+        if DRAWDOWN_GUARD_ENFORCE:
+            blocked = True
+    if dloss is not None and dloss >= MAX_DAILY_LOSS_FROM_START:
+        reasons.append(f"daily_loss={dloss:.2%} >= {MAX_DAILY_LOSS_FROM_START:.2%}")
+        if DRAWDOWN_GUARD_ENFORCE:
+            blocked = True
+    if vel is not None and vel >= MAX_PNL_CHANGE_PER_HOUR:
+        reasons.append(f"hourly_velocity={vel:.2%} >= {MAX_PNL_CHANGE_PER_HOUR:.2%}")
+        if VELOCITY_GUARD_ENFORCE:
+            blocked = True
+
+    if blocked:
+        reason = "runtime_guardrail_blocked: " + "; ".join(reasons)
+        try:
+            set_trading_halt(True, reason=reason[:500], actor="risk_guardian")
+        except Exception:
+            pass
+        return {"blocked": True, "reason": reason, "metrics": m}
+
+    return {"blocked": False, "reason": "; ".join(reasons), "metrics": m}
 
 
 def check_circuit_breaker():
@@ -457,6 +574,7 @@ def get_risk_status():
     """
     policy_limits = _policy_risk_limits()
     effective_limits = get_risk_limits(strict_mode=False)
+    runtime_guard = _evaluate_runtime_equity_guardrails(None)
     return {
         "consecutive_losses": consecutive_losses,
         "position_size_reduction": position_size_reduction,
@@ -470,6 +588,11 @@ def get_risk_status():
         "policy_profile": policy_limits["policy_profile"],
         "effective_max_position_size_pct": effective_limits.get("max_position_size_pct"),
         "volatility_adaptive_sizing": effective_limits.get("volatility_adaptive_sizing"),
+        "drawdown_from_peak": runtime_guard.get("metrics", {}).get("drawdown_from_peak"),
+        "daily_loss_from_start": runtime_guard.get("metrics", {}).get("daily_loss_pct"),
+        "hourly_equity_velocity": runtime_guard.get("metrics", {}).get("hourly_equity_velocity"),
+        "runtime_guardrail_reason": runtime_guard.get("reason"),
+        "runtime_guardrail_blocked": bool(runtime_guard.get("blocked")),
     }
 
 

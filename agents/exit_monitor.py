@@ -141,6 +141,9 @@ def _get_llm_engine() -> LLMReasoningEngine:
 # Exit Configuration
 STOP_LOSS_PCT = -0.02  # -2% stop loss
 MAX_HOLD_DAYS = 3  # Maximum hold period
+POSITION_AGING_GUARD = str(os.getenv("FORTRESS_POSITION_AGING_GUARD", "0")).strip().lower() in {"1", "true", "yes", "on"}
+MAX_HOLD_DAYS_LONG = int(os.getenv("FORTRESS_MAX_HOLD_DAYS_LONG", "5"))
+MAX_HOLD_DAYS_SHORT = int(os.getenv("FORTRESS_MAX_HOLD_DAYS_SHORT", "2"))
 
 # Default stock take-profit ladder (pnl_pct vs entry as fraction; one tier per monitor pass, in order)
 # Tier 1: +0.75% → 30% | Tier 2: +1.5% → 25% | Tier 3: +3% → 25% | Tier 4: +5% → 20% (= 100% over four clips)
@@ -438,6 +441,23 @@ def evaluate_exit(position):
 
     days_held = max(0, (datetime.now() - entry_naive).days)
 
+    # Short squeeze protection: cover quickly when short P&L degrades sharply intraday.
+    if is_short and str(os.getenv("FORTRESS_SHORT_SQUEEZE_GUARD", "1")).strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            vol_now = float(current_data["Volume"].iloc[-1] or 0.0)
+            vol_avg = float(current_data["Volume"].mean() or 0.0)
+            intraday_spike = (vol_now / vol_avg) if vol_avg > 0 else 0.0
+            if pnl_pct <= -0.015 and intraday_spike >= 2.0:
+                reason = (
+                    f"Short squeeze guard: adverse short P&L {pnl_pct*100:.2f}% with volume spike "
+                    f"{intraday_spike:.2f}x"
+                )
+                return create_exit_decision(
+                    ticker, "SELL_ALL", reason, qty, current_price, pnl_pct, is_short=True
+                )
+        except Exception:
+            pass
+
     # LLM-first reasoning path for stock exits (authoritative only for high-confidence EXIT).
     llm_decision = _get_llm_engine().evaluate_exit(
         {
@@ -513,9 +533,12 @@ def evaluate_exit(position):
                     ticker, "SELL_ALL", reason, qty, current_price, pnl_pct, is_short=False
                 )
 
-    # Check 3: Time Limit (3 days)
-    if days_held >= MAX_HOLD_DAYS:
-        reason = f"Time limit reached: {days_held} days >= {MAX_HOLD_DAYS} days"
+    # Check 3: Time Limit (legacy default) or guardrail-specific aging cap.
+    max_days = MAX_HOLD_DAYS
+    if POSITION_AGING_GUARD:
+        max_days = MAX_HOLD_DAYS_SHORT if is_short else MAX_HOLD_DAYS_LONG
+    if days_held >= max_days:
+        reason = f"Time limit reached: {days_held} days >= {max_days} days"
         logging.info(f"{ticker}: {reason}")
         return create_exit_decision(
             ticker, 'SELL_ALL', reason, qty, current_price, pnl_pct,

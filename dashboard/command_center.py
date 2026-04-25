@@ -1902,6 +1902,60 @@ def _build_go_live_scorecard(*, hs: dict, risk: dict, rollback: dict, perf: dict
         }
     )
 
+    # 6) Guardrail phase readiness (new controls should be visible before live).
+    runtime_blocked = bool((risk or {}).get("runtime_guardrail_blocked"))
+    dd = (risk or {}).get("drawdown_from_peak")
+    dloss = (risk or {}).get("daily_loss_from_start")
+    vel = (risk or {}).get("hourly_equity_velocity")
+    guard_reason = str((risk or {}).get("runtime_guardrail_reason") or "").strip()
+    if runtime_blocked:
+        g1_sev = "fail"
+    elif any(v is not None for v in (dd, dloss, vel)):
+        g1_sev = "ok"
+    else:
+        g1_sev = "warn"
+    checks.append(
+        {
+            "id": "guardrail_runtime",
+            "label": "Guardrails: runtime drawdown/velocity",
+            "severity": g1_sev,
+            "detail": (
+                f"blocked={runtime_blocked}, drawdown={dd if dd is not None else '—'}, "
+                f"daily_loss={dloss if dloss is not None else '—'}, velocity={vel if vel is not None else '—'}"
+                + (f", note={guard_reason[:120]}" if guard_reason else "")
+            ),
+            "hard_gate": True,
+        }
+    )
+
+    dq_enforce = str(os.getenv("FORTRESS_DATA_QUALITY_ENFORCE", "0")).strip().lower() in {"1", "true", "yes", "on"}
+    blackout_windows = str(os.getenv("FORTRESS_ENTRY_BLACKOUT_WINDOWS_ET", "") or "").strip()
+    checks.append(
+        {
+            "id": "guardrail_pretrade",
+            "label": "Guardrails: pre-trade data/event checks",
+            "severity": "ok" if dq_enforce or blackout_windows else "warn",
+            "detail": (
+                f"data_quality_enforce={dq_enforce}, "
+                f"blackout_windows={'set' if blackout_windows else 'none'}"
+            ),
+            "hard_gate": False,
+        }
+    )
+
+    evo_req_approval = str(os.getenv("FORTRESS_EVOLUTION_REQUIRE_APPROVAL", "1")).strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    checks.append(
+        {
+            "id": "guardrail_evolution",
+            "label": "Guardrails: recursive evolution approvals",
+            "severity": "ok" if evo_req_approval else "warn",
+            "detail": f"require_approval={evo_req_approval}",
+            "hard_gate": False,
+        }
+    )
+
     overall = "ok"
     hard_gate_failed = False
     for c in checks:
@@ -1924,10 +1978,17 @@ def _build_go_live_scorecard(*, hs: dict, risk: dict, rollback: dict, perf: dict
         else ("Paper-only; close warning gaps before live pilot" if overall == "warn" else "NOT READY for live capital")
     )
 
+    phase_rollout = {
+        "phase_1_pre_live_hard_protections": "ok" if g1_sev in {"ok", "warn"} else "fail",
+        "phase_2_runtime_stability": "ok" if (not runtime_blocked and vel is not None) else ("warn" if not runtime_blocked else "fail"),
+        "phase_3_evolution_event_safety": "ok" if (evo_req_approval and blackout_windows) else "warn",
+    }
+
     return {
         "overall_severity": overall,
         "recommendation": recommendation,
         "checks": checks,
+        "phase_rollout": phase_rollout,
         "exposure_plan": exposure,
         "note": "Conservative gate: requires safety + walk-forward + sample quality + core reliability before real-money launch.",
     }

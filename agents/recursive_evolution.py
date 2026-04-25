@@ -224,29 +224,67 @@ def _phase4_autonomous_changes(phase2: dict[str, Any]) -> dict[str, Any]:
     Produce autonomous change proposal and optionally apply safe parameter changes.
     """
     allow_writes = str(os.getenv("FORTRESS_EVOLUTION_ALLOW_WRITES", "0")).strip().lower() in {"1", "true", "yes", "on"}
+    require_approval = str(os.getenv("FORTRESS_EVOLUTION_REQUIRE_APPROVAL", "1")).strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    max_param_delta = float(os.getenv("FORTRESS_EVOLUTION_MAX_PARAM_DELTA_PCT", "0.20"))
     proposed = phase2.get("proposed_params") or {}
     current = phase2.get("current_params") or {}
     changed = {k: v for k, v in proposed.items() if current.get(k) != v}
 
+    # Safeguard: bound one-step parameter jump sizes.
+    bounded_changes: dict[str, Any] = {}
+    blocked_changes: dict[str, str] = {}
+    for k, v in changed.items():
+        cur = current.get(k)
+        try:
+            curf = float(cur)
+            vf = float(v)
+            if abs(curf) < 1e-9:
+                bounded_changes[k] = v
+                continue
+            rel = abs((vf - curf) / abs(curf))
+            if rel > max_param_delta:
+                blocked_changes[k] = f"delta_pct={rel:.3f}>{max_param_delta:.3f}"
+                continue
+            bounded_changes[k] = v
+        except Exception:
+            # Non-numeric params are allowed but never auto-applied without approval.
+            bounded_changes[k] = v
+
     proposal = {
         "change_type": "parameter_patch",
         "target_file": "data/current_params.json",
-        "changes": changed,
+        "changes": bounded_changes,
+        "blocked_changes": blocked_changes,
+        "requires_approval": require_approval,
         "apply_mode": "auto" if allow_writes else "dry_run",
     }
 
     applied = False
-    if allow_writes and changed:
+    if allow_writes and bounded_changes and not require_approval:
         try:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
             payload = dict(current)
-            payload.update(changed)
+            payload.update(bounded_changes)
             payload["updated_by"] = "recursive_evolution"
             payload["updated_at"] = datetime.now().isoformat()
             (DATA_DIR / "current_params.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
             applied = True
         except Exception as e:
             proposal["apply_error"] = str(e)
+    elif bounded_changes and require_approval:
+        try:
+            queue_path = DATA_DIR / "evolution_change_approval_queue.jsonl"
+            row = {
+                "timestamp": datetime.now().isoformat(),
+                "proposal": proposal,
+                "status": "pending_approval",
+            }
+            with open(queue_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row) + "\n")
+        except Exception:
+            pass
 
     return {"proposal": proposal, "applied": applied}
 

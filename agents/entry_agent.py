@@ -13,6 +13,7 @@ from pathlib import Path
 from utils.runtime_config import get_default_portfolio_usd
 from utils.policy_profile import get_profile_bundle
 from utils.market_calendar import is_us_equity_rth_open
+from utils.trading_guardrails import validate_llm_trade_output
 from agents.llm_reasoning_engine import LLMReasoningEngine
 from utils.llm_decision_tracker import get_llm_decision_tracker
 
@@ -525,6 +526,34 @@ def evaluate_single_entry(candidate, portfolio_value, *, rsi_threshold: float | 
         llm_action = str(llm_decision.get("decision") or "SKIP").upper()
         llm_conf = float(llm_decision.get("confidence") or 0.0)
         if llm_action == "BUY" and llm_conf >= _LLM_MIN_CONF:
+            valid_llm, llm_guard_reason = validate_llm_trade_output(
+                ticker,
+                str(llm_decision.get("reasoning") or ""),
+            )
+            if not valid_llm:
+                return create_skip_decision(
+                    ticker,
+                    f"LLM output rejected: {llm_guard_reason}",
+                    llm_decision_id=llm_decision_id,
+                )
+            # Optional tradability sanity-check (fails open when broker metadata unavailable).
+            try:
+                from utils.alpaca_env import is_alpaca_paper
+                from alpaca.trading.client import TradingClient
+
+                key = os.getenv("ALPACA_API_KEY")
+                sec = os.getenv("ALPACA_SECRET_KEY")
+                if key and sec:
+                    tc = TradingClient(key, sec, paper=is_alpaca_paper())
+                    asset = tc.get_asset(ticker)
+                    if not bool(getattr(asset, "tradable", False)):
+                        return create_skip_decision(
+                            ticker,
+                            "LLM output rejected: non-tradable asset",
+                            llm_decision_id=llm_decision_id,
+                        )
+            except Exception:
+                pass
             # Keep sizing bounded by existing policy/risk caps.
             current_price = float(candidate.get("current_price") or 0.0)
             if current_price <= 0:
