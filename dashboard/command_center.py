@@ -3311,7 +3311,21 @@ def api_recommendations():
 
 @app.route("/api/safety_status")
 def api_safety_status():
-    return jsonify(get_safety_status())
+    payload = get_safety_status() or {}
+    if "go_live_scorecard" not in payload:
+        payload["go_live_scorecard"] = {
+            "overall_severity": "warn",
+            "recommendation": "Scorecard temporarily unavailable; check server logs and rerun.",
+            "checks": [],
+            "exposure_plan": {
+                "starter_max_account_pct": 2.0,
+                "starter_max_open_positions": 1,
+                "starter_position_size_pct": 0.5,
+                "starter_daily_loss_stop_pct": 0.5,
+            },
+            "note": "Fallback payload injected by /api/safety_status to keep UI deterministic.",
+        }
+    return jsonify(payload)
 
 
 @app.route("/api/headline_event_status")
