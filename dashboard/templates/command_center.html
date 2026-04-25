@@ -548,6 +548,7 @@
 
   <script>
     const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine', botAudit: '/api/bot_audit', intelligenceBrief: '/api/intelligence_brief', evolutionStatus: '/api/evolution_status', llmUsage: '/api/llm_usage' };
+    const NO_CACHE = { cache: 'no-store' };
 
     let _chartRedraw = null;
     let _chartResizeDebounce = null;
@@ -808,7 +809,7 @@
       statusEl.textContent = 'Running…';
       statusEl.style.color = 'var(--text-muted)';
       el.innerHTML = 'Running verification (imports + strategies + health)…';
-      fetch(API.pristine)
+      fetch(API.pristine, NO_CACHE)
         .then(r => {
           const ct = (r.headers.get('content-type') || '').toLowerCase();
           return r.text().then(text => {
@@ -1587,7 +1588,7 @@
       const el = document.getElementById('botAudit');
       if (el) el.classList.add('loading');
       try {
-        const r = await fetch(API.botAudit);
+        const r = await fetch(API.botAudit, NO_CACHE);
         const data = await r.json();
         renderBotAudit(data);
         if (st) st.textContent = 'Last run: ' + (data && data.timestamp ? new Date(data.timestamp).toLocaleTimeString() : '—');
@@ -1870,25 +1871,25 @@
     async function loadAll() {
       try {
         const [health, agents, performance, news, recommendations, safetyStatus, botAudit, intelligenceBrief, evolutionStatus, llmUsage, headlineEvent, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, drift, trustReport, feed, positions, orders, tvSignals] = await Promise.all([
-          fetch(API.health).then(r => r.json()),
-          fetch(API.agents).then(r => r.json()),
-          fetch(API.performance).then(r => r.json()),
-          fetch(API.news).then(r => r.json()),
-          fetch(API.recommendations).then(r => r.json()),
-          fetch(API.safetyStatus).then(r => r.json()),
-          fetch(API.botAudit).then(r => r.json()).catch(() => ({})),
-          fetch(API.intelligenceBrief).then(r => r.json()).catch(() => ({})),
-          fetch(API.evolutionStatus).then(r => r.json()).catch(() => ({})),
-          fetch(API.llmUsage).then(r => r.json()).catch(() => ({})),
-          fetch(API.headlineEvent).then(function (r) { return r.ok ? r.json() : { error: true }; }).catch(function () { return { error: true }; }),
-          fetch(API.actionQueue).then(r => r.json()),
-          fetch(API.operatorRuns).then(r => r.json()),
-          fetch(API.trustLedger).then(r => r.json()),
-          fetch(API.whyTrade).then(r => r.json()),
-          fetch(API.runbooks).then(r => r.json()),
-          fetch(API.drift).then(r => r.json()),
-          fetch(API.trustReport).then(r => r.json()),
-          fetch(API.feed).then(r => r.json()),
+          fetch(API.health, NO_CACHE).then(r => r.json()),
+          fetch(API.agents, NO_CACHE).then(r => r.json()),
+          fetch(API.performance, NO_CACHE).then(r => r.json()),
+          fetch(API.news, NO_CACHE).then(r => r.json()),
+          fetch(API.recommendations, NO_CACHE).then(r => r.json()),
+          fetch(API.safetyStatus, NO_CACHE).then(r => r.json()),
+          fetch(API.botAudit, NO_CACHE).then(r => r.json()).catch(() => ({})),
+          fetch(API.intelligenceBrief, NO_CACHE).then(r => r.json()).catch(() => ({})),
+          fetch(API.evolutionStatus, NO_CACHE).then(r => r.json()).catch(() => ({})),
+          fetch(API.llmUsage, NO_CACHE).then(r => r.json()).catch(() => ({})),
+          fetch(API.headlineEvent, NO_CACHE).then(function (r) { return r.ok ? r.json() : { error: true }; }).catch(function () { return { error: true }; }),
+          fetch(API.actionQueue, NO_CACHE).then(r => r.json()),
+          fetch(API.operatorRuns, NO_CACHE).then(r => r.json()),
+          fetch(API.trustLedger, NO_CACHE).then(r => r.json()),
+          fetch(API.whyTrade, NO_CACHE).then(r => r.json()),
+          fetch(API.runbooks, NO_CACHE).then(r => r.json()),
+          fetch(API.drift, NO_CACHE).then(r => r.json()),
+          fetch(API.trustReport, NO_CACHE).then(r => r.json()),
+          fetch(API.feed, NO_CACHE).then(r => r.json()),
           fetch('/api/positions').then(r => r.json()),
           fetch('/api/orders').then(r => r.json()),
           fetch('/api/tradingview_signals?limit=25').then(function (r) { return r.ok ? r.json() : { items: [] }; }).catch(function () { return { items: [] }; })

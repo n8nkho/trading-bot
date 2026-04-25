@@ -63,6 +63,23 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 CORS(app)
 
+
+@app.after_request
+def _force_no_cache(resp):
+    """
+    Avoid stale dashboard/API responses after deploys or service restarts.
+    Applies strict no-cache headers to HTML + API routes.
+    """
+    try:
+        p = request.path or ""
+        if p == "/" or p.startswith("/api/"):
+            resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+    except Exception:
+        pass
+    return resp
+
 # Optional HTTP Basic auth for Command Center + APIs (manifest/health/setup stay public).
 _DASH_PUBLIC_PATHS = frozenset({
     "/api/health",
@@ -3172,7 +3189,10 @@ def manifest_json():
     }
     r = make_response(json.dumps(body, indent=2))
     r.headers["Content-Type"] = "application/manifest+json; charset=utf-8"
-    r.headers["Cache-Control"] = "public, max-age=3600"
+    # Prevent stale PWA metadata caching across rapid operator deploy cycles.
+    r.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    r.headers["Pragma"] = "no-cache"
+    r.headers["Expires"] = "0"
     return r
 
 
