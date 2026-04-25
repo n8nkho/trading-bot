@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from utils.market_calendar import is_us_equity_rth_open, session_label
 from utils.run_registry import (
     log_screening_failed,
     read_recent_operational_events,
@@ -136,6 +137,7 @@ def run_ops_autofix(
     dry_run: bool = False,
     stale_after_hours: float = 2.0,
     dedupe_logs: bool = True,
+    force_log_dedupe: bool = False,
 ) -> dict[str, Any]:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -150,12 +152,25 @@ def run_ops_autofix(
     rec = reconcile_stale_screening_runs(stale_after_hours=stale_after_hours, dry_run=dry_run)
     report["actions"]["reconcile_stale_runs"] = rec
 
-    if dedupe_logs:
+    market_open = bool(is_us_equity_rth_open())
+    market_state = str(session_label())
+    run_log_dedupe = dedupe_logs and (force_log_dedupe or (not market_open))
+    dedupe_skipped_reason = None
+    if dedupe_logs and not run_log_dedupe:
+        dedupe_skipped_reason = "market_open_rth"
+
+    if run_log_dedupe:
         targets = [LOGS_DIR / "sniper.log", LOGS_DIR / "screener.log", LOGS_DIR / "monitor.log"]
         dedupe_out = [dedupe_consecutive_log_lines(p, dry_run=dry_run) for p in targets]
     else:
         dedupe_out = []
     report["actions"]["log_dedupe"] = dedupe_out
+    report["actions"]["log_dedupe_enabled"] = bool(dedupe_logs)
+    report["actions"]["log_dedupe_forced"] = bool(force_log_dedupe)
+    report["actions"]["log_dedupe_ran"] = bool(run_log_dedupe)
+    report["actions"]["log_dedupe_skipped_reason"] = dedupe_skipped_reason
+    report["actions"]["market_open_rth"] = market_open
+    report["actions"]["market_state"] = market_state
 
     changed_logs = [x.get("path") for x in dedupe_out if x.get("changed")]
     report["summary"] = {

@@ -61,6 +61,41 @@ class TestOpsAutoFixAgent(unittest.TestCase):
             txt = p.read_text(encoding="utf-8")
             self.assertEqual(txt.splitlines(), ["a", "b", "c", "d"])
 
+    def test_run_ops_autofix_skips_log_dedupe_when_market_open_unless_forced(self):
+        from agents import ops_autofix_agent as oa
+
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            prev_data = oa.DATA_DIR
+            prev_logs = oa.LOGS_DIR
+            prev_latest = oa.LATEST_REPORT
+            prev_open = oa.is_us_equity_rth_open
+            prev_label = oa.session_label
+            try:
+                oa.DATA_DIR = tdp / "data"
+                oa.LOGS_DIR = tdp / "logs"
+                oa.LATEST_REPORT = oa.DATA_DIR / "ops_autofix_report_latest.json"
+                oa.LOGS_DIR.mkdir(parents=True, exist_ok=True)
+                (oa.LOGS_DIR / "screener.log").write_text("x\nx\n", encoding="utf-8")
+                oa.is_us_equity_rth_open = lambda: True
+                oa.session_label = lambda: "rth_open"
+
+                out_skip = oa.run_ops_autofix(dry_run=True, dedupe_logs=True, force_log_dedupe=False)
+                self.assertFalse(out_skip["actions"]["log_dedupe_ran"])
+                self.assertEqual(out_skip["actions"]["log_dedupe_skipped_reason"], "market_open_rth")
+                self.assertEqual(out_skip["actions"]["log_dedupe"], [])
+
+                out_force = oa.run_ops_autofix(dry_run=True, dedupe_logs=True, force_log_dedupe=True)
+                self.assertTrue(out_force["actions"]["log_dedupe_ran"])
+                self.assertEqual(out_force["actions"]["log_dedupe_skipped_reason"], None)
+                self.assertGreaterEqual(len(out_force["actions"]["log_dedupe"]), 1)
+            finally:
+                oa.DATA_DIR = prev_data
+                oa.LOGS_DIR = prev_logs
+                oa.LATEST_REPORT = prev_latest
+                oa.is_us_equity_rth_open = prev_open
+                oa.session_label = prev_label
+
 
 if __name__ == "__main__":
     unittest.main()

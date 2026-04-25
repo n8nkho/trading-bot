@@ -2527,7 +2527,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py generate_intelligence_brief - Generate daily self-QA intelligence brief")
         print("  python orchestrator.py evolve - Run recursive self-improvement cycle")
         print("  python orchestrator.py verify_learning            - LLM provider + recursive-learning file status")
-        print("  python orchestrator.py ops_autofix [--dry-run] [--stale-hours N] [--no-log-dedupe] - Run safe ops auto-healing")
+        print("  python orchestrator.py ops_autofix [--dry-run] [--stale-hours N] [--no-log-dedupe] [--force-log-dedupe] - Run safe ops auto-healing")
         print("  python orchestrator.py ops_recovery [--no-fortress] [--no-screen] [--no-pending] [portfolio_value]")
         print("  python orchestrator.py regime_check               - Print fortress + hedging file snapshot")
         print("  python orchestrator.py print_entry_skips          - Print latest daily_signals entry_gate_summary")
@@ -2543,6 +2543,7 @@ if __name__ == "__main__":
         args = sys.argv[2:]
         dry_run = "--dry-run" in args
         dedupe_logs = "--no-log-dedupe" not in args
+        force_log_dedupe = "--force-log-dedupe" in args
         stale_hours = 2.0
         if "--stale-hours" in args:
             try:
@@ -2550,7 +2551,12 @@ if __name__ == "__main__":
                 stale_hours = float(args[i + 1])
             except Exception:
                 pass
-        out = run_ops_autofix(dry_run=dry_run, stale_after_hours=stale_hours, dedupe_logs=dedupe_logs)
+        out = run_ops_autofix(
+            dry_run=dry_run,
+            stale_after_hours=stale_hours,
+            dedupe_logs=dedupe_logs,
+            force_log_dedupe=force_log_dedupe,
+        )
         append_trust_event(
             "ops_autofix_run",
             {
