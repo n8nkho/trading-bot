@@ -96,6 +96,31 @@ class TestOpsAutoFixAgent(unittest.TestCase):
                 oa.is_us_equity_rth_open = prev_open
                 oa.session_label = prev_label
 
+    def test_reconcile_uses_faster_offhours_threshold(self):
+        import utils.run_registry as rr
+        from agents import ops_autofix_agent as oa
+
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            prev_registry = rr.REGISTRY_PATH
+            prev_label = oa.session_label
+            try:
+                rr.REGISTRY_PATH = tdp / "operational_runs.jsonl"
+                rr.log_screening_started("offhours_run", "balanced", 10000.0)
+                rows = rr.read_recent_operational_events(100)
+                rows[0]["timestamp"] = "2000-01-01T00:00:00"
+                rr.REGISTRY_PATH.write_text(
+                    "".join([json.dumps(r) + "\n" for r in rows]),
+                    encoding="utf-8",
+                )
+                oa.session_label = lambda: "closed_weekend"
+                out = oa.reconcile_stale_screening_runs(stale_after_hours=2.0, dry_run=True)
+                self.assertEqual(out["effective_stale_after_hours"], 1.0)
+                self.assertEqual(out["candidates_count"], 1)
+            finally:
+                rr.REGISTRY_PATH = prev_registry
+                oa.session_label = prev_label
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -45,9 +46,33 @@ def _to_dt(ts: Any) -> datetime | None:
         return None
 
 
+def _effective_stale_hours(default_hours: float) -> float:
+    """
+    Adaptive stale threshold:
+    - RTH open: keep conservative default (2h)
+    - Off-hours/weekend/holiday: reconcile faster (default 1h)
+    """
+    try:
+        lbl = str(session_label())
+    except Exception:
+        lbl = "unknown"
+    try:
+        off_hours = float(default_hours)
+        off_hours = float(max(0.25, off_hours))
+    except Exception:
+        off_hours = 2.0
+    if lbl in {"closed_after_hours", "closed_weekend", "closed_holiday"}:
+        try:
+            return float(os.getenv("OPS_AUTOFIX_STALE_HOURS_OFFHOURS", "1.0") or "1.0")
+        except Exception:
+            return 1.0
+    return off_hours
+
+
 def reconcile_stale_screening_runs(*, stale_after_hours: float = 2.0, dry_run: bool = False) -> dict[str, Any]:
     now = datetime.now()
-    cutoff = now - timedelta(hours=float(stale_after_hours))
+    effective_hours = _effective_stale_hours(float(stale_after_hours))
+    cutoff = now - timedelta(hours=effective_hours)
     runs = summarize_screening_runs(read_recent_operational_events(5000))
     candidates: list[dict[str, Any]] = []
     reconciled: list[str] = []
@@ -76,6 +101,7 @@ def reconcile_stale_screening_runs(*, stale_after_hours: float = 2.0, dry_run: b
 
     return {
         "stale_after_hours": stale_after_hours,
+        "effective_stale_after_hours": effective_hours,
         "dry_run": dry_run,
         "candidates_count": len(candidates),
         "candidates": candidates,

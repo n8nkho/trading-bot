@@ -3074,7 +3074,10 @@ def api_operator_runs():
     reconciled = 0
     try:
         now = datetime.now()
-        cutoff = now - timedelta(hours=2)
+        # Reconcile faster when market is closed so stale weekend/off-hours
+        # in_progress runs do not linger on the operator panel.
+        stale_hours = 2.0 if _is_market_hours() else 1.0
+        cutoff = now - timedelta(hours=stale_hours)
         runs = summarize_screening_runs(read_recent_operational_events(5000))
         for row in runs:
             if row.get("terminal") in {"completed", "failed"} or row.get("finished_at"):
