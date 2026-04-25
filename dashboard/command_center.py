@@ -140,6 +140,27 @@ AGENT_LOGS = {
     "main_loop": {"log": LOGS_DIR / "main_loop.log", "name": "Main Loop", "max_age_hours": 1},
 }
 
+# Core execution path expected to stay fresh for BOT objectives.
+REQUIRED_AGENT_IDS = {
+    "cron_heartbeat",
+    "screener",
+    "monitor",
+    "sniper",
+    "fortress",
+    "sync",
+}
+
+# Useful but non-blocking for the current core execution loop.
+OPTIONAL_AGENT_IDS = {
+    "entry",
+    "grok",
+    "document_analyst",
+    "vision_analyst",
+    "orchestrator",
+    "main_loop",
+    "agent_manager",
+}
+
 # Extend agent activity to include *all* agent modules in `agents/`.
 # Where we have a dedicated log file, we map directly; otherwise we associate
 # hedging modules to the main fortress log so they still show meaningful runs.
@@ -247,7 +268,7 @@ def _validate_system():
     # Stale agents = warnings (attempt to resolve; de-prioritize during trading hours)
     activity = get_agent_activity()
     for a in activity.get("agents", []):
-        if a.get("status") == "stale":
+        if a.get("stale_actionable"):
             warnings.append(f"{a.get('name')} stale")
         elif a.get("status") == "err":
             errors.append(f"{a.get('name')} err")
@@ -693,12 +714,16 @@ def get_agent_activity():
     """Per-agent last run, status (fresh/stale), last log line."""
     agents = []
     now = datetime.now()
+    market_open = _is_market_hours()
     for key, cfg in AGENT_LOGS.items():
         log_path = cfg["log"]
         max_h = cfg["max_age_hours"]
         status = "stale"
+        ui_status = "stale"
         last_run = None
         last_line = ""
+        stale_actionable = False
+        tier = "required" if key in REQUIRED_AGENT_IDS else ("optional" if key in OPTIONAL_AGENT_IDS else "extended")
         if log_path.exists():
             mtime = datetime.fromtimestamp(log_path.stat().st_mtime)
             age_h = (now - mtime).total_seconds() / 3600
@@ -719,14 +744,28 @@ def get_agent_activity():
             ]
             if any(m in low for m in err_markers):
                 status = "err"
+        if status == "err":
+            ui_status = "err"
+            stale_actionable = True
+        elif status == "fresh":
+            ui_status = "fresh"
+        else:
+            # Reclassify stale state so optional/extended rows stay informational.
+            is_required = key in REQUIRED_AGENT_IDS
+            active_hours_required = key in {"screener", "monitor", "sniper", "sync"}
+            stale_actionable = is_required and (market_open if active_hours_required else True)
+            ui_status = "stale" if stale_actionable else "idle"
         agents.append({
             "id": key,
             "name": cfg["name"],
             "status": status,
+            "ui_status": ui_status,
+            "tier": tier,
+            "stale_actionable": stale_actionable,
             "last_run": last_run,
             "last_activity": last_line,
         })
-    return {"agents": agents, "timestamp": now.isoformat()}
+    return {"agents": agents, "timestamp": now.isoformat(), "market_open": market_open}
 
 
 def get_trading_performance():
@@ -2248,99 +2287,34 @@ def get_recommendations():
 
     if _is_trading_day_window():
         activity = get_agent_activity()
-        latest_perf = get_trading_performance()
-        latest_screening = latest_perf.get("latest_screening") or {}
-        candidates_found = int(latest_screening.get("candidates_found") or 0)
-        fortress_fresh = _latest_fortress_report_is_fresh()
-        now = datetime.now()
         cron_out = _aggregate_cron_text()
 
-        # Agent IDs that are stale-noisy in this build (legacy/no-op supervisors).
-        always_suppress_ids = {"agent_manager", "main_loop"}
-        conditional_ids = {"entry", "grok", "document_analyst", "vision_analyst", "performance_analyzer", "sync", "momentum", "smart_money", "merger_arb"}
-        fortress_family_ids = {
-            "fortress",
-            "fortress_dashboard",
-            "fortress_orchestrator",
-            "bond_manager",
-            "commodity_trader",
-            "forex_hedger",
-            "forex_sniper",
-            "theta_spreads",
-            "dividend_capture",
-            "pairs_trader",
-            "vix_insurance",
-        }
-        # Keep recommendations focused on jobs that are operationally expected to run.
-        critical_ids = {
-            "screener",
-            "monitor",
-            "sniper",
-            "fortress",
-            "llama_watchdog",
-            "error_detective",
-            "cron_heartbeat",
-            "weekly",
-            "meta_architect",
-        }
         schedule_hints = {
             "screener": "Scheduled weekdays at 15:00 ET (orchestrator.py screen).",
             "monitor": "Scheduled every 5 minutes during market hours (orchestrator.py monitor).",
-            "sniper": "Scheduled every 5 minutes during market hours (orchestrator.py snipe).",
+            "sniper": "Scheduled every 5 minutes during market hours (agents/intraday_sniper.py).",
             "fortress": "Scheduled daily at 00:00 ET (orchestrator.py fortress).",
-            "llama_watchdog": "Scheduled weekdays at 07:00 ET (orchestrator.py watchdog).",
-            "error_detective": "Scheduled daily at 06:00 ET (agents/error_detective.py).",
+            "sync": "Scheduled every 5 minutes during market hours (sync_alpaca.py).",
             "cron_heartbeat": "Scheduled every 5 minutes (cron heartbeat).",
-            "weekly": "Scheduled weekly Saturday 07:15 ET (orchestrator.py review).",
-            "meta_architect": "Scheduled weekly Saturday 07:30 ET (orchestrator.py tune).",
         }
         stale_added = 0
 
         for a in activity.get("agents", []):
-            if a.get("status") != "stale":
+            if not a.get("stale_actionable"):
                 continue
 
             agent_id = a.get("id")
-            last_run = a.get("last_run")
-            last_dt = _parse_iso_dt(last_run)
-            age_days = (now - last_dt).total_seconds() / 86400.0 if last_dt else None
-
-            if agent_id in always_suppress_ids:
-                continue
-
-            # Suppress stale alerts for non-critical/non-scheduled agents to reduce noise.
-            if agent_id not in critical_ids:
-                continue
-
-            # If screening produced zero candidates, these agents are expected to be idle.
-            if agent_id in conditional_ids and candidates_found == 0:
-                continue
-
-            # If fortress report is fresh, suppress stale warnings for fortress sub-agents.
-            if agent_id in fortress_family_ids and fortress_fresh:
-                continue
-
-            # Weekly jobs should only alert if they are more than ~one week stale.
-            if agent_id in {"weekly", "meta_architect"}:
-                if age_days is None or age_days <= 8:
-                    continue
-
-            # Sniper only alerts when stale during active market hours.
-            if agent_id == "sniper" and not _is_market_hours():
-                continue
 
             # If agent has an explicit cron signature and it's absent, avoid stale spam.
             if agent_id == "screener" and "orchestrator.py screen" not in cron_out:
                 continue
             if agent_id == "monitor" and "orchestrator.py monitor" not in cron_out:
                 continue
-            if agent_id == "sniper" and "orchestrator.py snipe" not in cron_out:
+            if agent_id == "sniper" and ("agents/intraday_sniper.py" not in cron_out and "orchestrator.py snipe" not in cron_out):
                 continue
             if agent_id == "fortress" and "orchestrator.py fortress" not in cron_out:
                 continue
-            if agent_id == "llama_watchdog" and "orchestrator.py watchdog" not in cron_out:
-                continue
-            if agent_id == "error_detective" and "agents/error_detective.py" not in cron_out:
+            if agent_id == "sync" and "sync_alpaca.py" not in cron_out:
                 continue
             if agent_id == "cron_heartbeat" and "cron_heartbeat.log" not in cron_out:
                 continue

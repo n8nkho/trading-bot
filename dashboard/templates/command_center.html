@@ -176,6 +176,7 @@
     }
     .agent-dot.fresh { background: var(--green); box-shadow: 0 0 8px var(--green); }
     .agent-dot.stale { background: var(--amber); }
+    .agent-dot.idle { background: var(--text-dim); }
     .agent-dot.err { background: var(--red); box-shadow: 0 0 8px var(--red); }
     .agent-activity { font-size: 11px; color: var(--text-muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -836,9 +837,12 @@
       el.innerHTML = data.agents.map(a => {
         const time = a.last_run ? new Date(a.last_run).toLocaleString() : '—';
         const activity = (a.last_activity || '').replace(/</g, '&lt;').substring(0, 80);
+        const tier = a.tier === 'required' ? 'CORE' : (a.tier === 'optional' ? 'OPTIONAL' : 'EXT');
+        const tierColor = a.tier === 'required' ? 'var(--cyan)' : 'var(--text-dim)';
+        const dot = a.ui_status || a.status || 'stale';
         return `<div class="agent-row">
-          <span class="agent-dot ${a.status}"></span>
-          <span>${a.name}</span>
+          <span class="agent-dot ${dot}"></span>
+          <span>${a.name} <span style="color:${tierColor};font-size:10px;letter-spacing:0.04em;">${tier}</span></span>
           <span class="agent-activity" title="${activity}">${activity || '—'}</span>
           <span class="text-muted">${time}</span>
         </div>`;
