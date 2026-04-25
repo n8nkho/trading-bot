@@ -1270,8 +1270,10 @@
           + (attention.length > 4 ? ' · +' + (attention.length - 4) + ' more' : '')
           + '</div>'
         : '<div class="text-muted" style="margin:0.15rem 0 0.6rem 0;font-size:11px;">Action focus: no blocked checks.</div>';
-      const head = '<div style="margin-bottom:0.5rem;font-size:12px;">Overall readiness: <strong style="' + sevStyle(card.overall_severity) + '">' + overall + '</strong>'
-        + '<span class="text-muted" style="margin-left:0.6rem;">' + recommendation + '</span></div>';
+      const head = '<div style="margin-bottom:0.5rem;font-size:12px;">'
+        + '<div>Overall readiness: <strong style="' + sevStyle(card.overall_severity) + '">' + overall + '</strong></div>'
+        + '<div class="text-muted" style="margin-top:0.15rem;">' + recommendation + '</div>'
+        + '</div>';
       const rows = card.checks.map(function (it) {
         const sev = esc(it.severity || 'warn');
         const gate = it.hard_gate ? '<span class="text-muted" style="font-size:10px;">hard gate</span>' : '';
