@@ -795,6 +795,9 @@ def get_agent_activity():
             "last_run": last_run,
             "last_activity": last_line,
         })
+    # Logical display order for operator UX: CORE first, then OPTIONAL, then EXT.
+    tier_rank = {"required": 0, "optional": 1, "extended": 2}
+    agents.sort(key=lambda a: (tier_rank.get(a.get("tier"), 9), str(a.get("name") or "").lower()))
     return {"agents": agents, "timestamp": now.isoformat(), "market_open": market_open}
 
 
