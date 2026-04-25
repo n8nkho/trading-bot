@@ -565,7 +565,7 @@ def reset_circuit_breaker():
     _persist_risk_state()
 
 
-def get_risk_status():
+def get_risk_status(portfolio_equity: float | None = None):
     """
     Get current risk management status.
     
@@ -574,7 +574,7 @@ def get_risk_status():
     """
     policy_limits = _policy_risk_limits()
     effective_limits = get_risk_limits(strict_mode=False)
-    runtime_guard = _evaluate_runtime_equity_guardrails(None)
+    runtime_guard = _evaluate_runtime_equity_guardrails(portfolio_equity)
     return {
         "consecutive_losses": consecutive_losses,
         "position_size_reduction": position_size_reduction,

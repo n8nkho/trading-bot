@@ -1995,14 +1995,15 @@ def _build_go_live_scorecard(*, hs: dict, risk: dict, rollback: dict, perf: dict
 
 
 def get_safety_status():
+    perf = get_trading_performance()
+    account_equity = _safe_float(perf.get("account_total_value_usd"))
     risk = {}
     try:
         from agents.risk_guardian import get_risk_status
-        risk = get_risk_status() or {}
+        risk = get_risk_status(portfolio_equity=account_equity) or {}
     except Exception:
         risk = {}
 
-    perf = get_trading_performance()
     screening = perf.get("latest_screening") or {}
     policy = get_profile_bundle()
 
