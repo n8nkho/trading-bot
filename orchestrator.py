@@ -54,6 +54,7 @@ from agents.scouts.swarm import run_scout_swarm
 from agents.analysts.consensus import run_analyst_ensemble
 from agents.intelligence_brief_generator import generate_brief, generate_markdown_summary
 from agents.recursive_evolution import run_recursive_evolution
+from agents.ops_autofix_agent import run_ops_autofix
 from utils.grok_sentiment import check_twitter_sentiment
 from utils.option_contract_schema import normalize_option_decision
 from utils.policy_profile import get_profile_bundle
@@ -2526,6 +2527,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py generate_intelligence_brief - Generate daily self-QA intelligence brief")
         print("  python orchestrator.py evolve - Run recursive self-improvement cycle")
         print("  python orchestrator.py verify_learning            - LLM provider + recursive-learning file status")
+        print("  python orchestrator.py ops_autofix [--dry-run] [--stale-hours N] [--no-log-dedupe] - Run safe ops auto-healing")
         print("  python orchestrator.py ops_recovery [--no-fortress] [--no-screen] [--no-pending] [portfolio_value]")
         print("  python orchestrator.py regime_check               - Print fortress + hedging file snapshot")
         print("  python orchestrator.py print_entry_skips          - Print latest daily_signals entry_gate_summary")
@@ -2535,6 +2537,31 @@ if __name__ == "__main__":
     
     if command in ("ops_recovery", "ops-recovery"):
         sys.exit(run_ops_recovery(sys.argv[2:]))
+
+    if command in ("ops_autofix", "ops-autofix"):
+        ensure_repo_root_cwd()
+        args = sys.argv[2:]
+        dry_run = "--dry-run" in args
+        dedupe_logs = "--no-log-dedupe" not in args
+        stale_hours = 2.0
+        if "--stale-hours" in args:
+            try:
+                i = args.index("--stale-hours")
+                stale_hours = float(args[i + 1])
+            except Exception:
+                pass
+        out = run_ops_autofix(dry_run=dry_run, stale_after_hours=stale_hours, dedupe_logs=dedupe_logs)
+        append_trust_event(
+            "ops_autofix_run",
+            {
+                "dry_run": dry_run,
+                "reconciled_runs": (out.get("summary") or {}).get("reconciled_runs", 0),
+                "changed_logs_count": (out.get("summary") or {}).get("changed_logs_count", 0),
+                "report_path": out.get("report_path"),
+            },
+        )
+        print(json.dumps(out, indent=2, default=str))
+        sys.exit(0)
     
     if command in ("regime_check", "regime-check"):
         ensure_repo_root_cwd()

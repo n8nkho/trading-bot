@@ -2013,6 +2013,12 @@ def get_runbooks():
                 "command": "python3 orchestrator.py ops_recovery",
             },
             {
+                "id": "ops_autofix_tier0",
+                "title": "Ops AutoFix (Tier-0 safe)",
+                "impact": "Auto-reconcile stale screening runs and optionally dedupe noisy logs with backups. Defaults to apply mode; use --dry-run first.",
+                "command": "python3 orchestrator.py ops_autofix --dry-run",
+            },
+            {
                 "id": "regime_check_cli",
                 "title": "Print regime / hedge file snapshot",
                 "impact": "Read-only: latest fortress_report + hedging_recommendations.json presence.",
