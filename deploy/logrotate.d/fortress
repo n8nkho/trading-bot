@@ -1,0 +1,9 @@
+/home/ubuntu/trading-bot/logs/*.log {
+daily
+rotate 7
+compress
+missingok
+notifempty
+copytruncate
+maxsize 50M
+}
