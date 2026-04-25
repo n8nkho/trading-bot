@@ -1797,6 +1797,138 @@ def _build_stabilization_monitor(
     }
 
 
+def _build_go_live_scorecard(*, hs: dict, risk: dict, rollback: dict, perf: dict, screening: dict) -> dict:
+    """
+    Objective operator gate for first live deployment.
+    This is intentionally conservative: a single failed hard gate keeps readiness red.
+    """
+    checks: list[dict] = []
+
+    # 1) Safety controls must be clean before live deployment.
+    halted = bool((hs or {}).get("effective_halted"))
+    cb_active = bool((risk or {}).get("circuit_breaker_active"))
+    forced_profile = str((rollback or {}).get("forced_profile") or "").strip()
+    if halted or cb_active:
+        sev = "fail"
+    elif forced_profile:
+        sev = "warn"
+    else:
+        sev = "ok"
+    checks.append(
+        {
+            "id": "safety_controls",
+            "label": "Safety controls clean",
+            "severity": sev,
+            "detail": (
+                f"halted={halted}, circuit_breaker={cb_active}, forced_rollback={forced_profile or 'none'}"
+            ),
+            "hard_gate": True,
+        }
+    )
+
+    # 2) Walk-forward stability should be positive before live capital.
+    wf = _read_json(DATA_DIR / "walk_forward_report.json", default={}) or {}
+    wf_stable = wf.get("stable")
+    wf_reason = wf.get("reason") or "unknown"
+    wf_sev = "ok" if wf_stable is True else ("warn" if wf_stable is None else "fail")
+    checks.append(
+        {
+            "id": "walk_forward",
+            "label": "Walk-forward stability",
+            "severity": wf_sev,
+            "detail": f"stable={wf_stable} ({wf_reason})",
+            "hard_gate": True,
+        }
+    )
+
+    # 3) Trade sample size and realized paper performance.
+    pnl_summary = _read_pnl_ledger_summary(days=30)
+    fills_30d = int(pnl_summary.get("count") or 0)
+    realized_30d = float(pnl_summary.get("realized_pnl") or 0.0)
+    win_rate = pnl_summary.get("win_rate")
+    if fills_30d >= 30 and realized_30d > 0:
+        perf_sev = "ok"
+    elif fills_30d >= 15 and realized_30d >= 0:
+        perf_sev = "warn"
+    else:
+        perf_sev = "fail"
+    checks.append(
+        {
+            "id": "sample_and_expectancy",
+            "label": "30d sample size + expectancy",
+            "severity": perf_sev,
+            "detail": f"fills_30d={fills_30d}, realized_30d={realized_30d:.2f}, win_rate={win_rate if win_rate is not None else '—'}",
+            "hard_gate": True,
+        }
+    )
+
+    # 4) Entry throughput should show ability to convert candidates into BUY signals.
+    buy_n = int((screening or {}).get("buy_count") or 0)
+    cand_n = int((screening or {}).get("candidates_found") or 0)
+    skip_n = int((screening or {}).get("skip_count") or 0)
+    throughput_sev = "ok" if buy_n > 0 else ("warn" if cand_n == 0 else "fail")
+    checks.append(
+        {
+            "id": "entry_throughput",
+            "label": "Entry throughput (latest screen)",
+            "severity": throughput_sev,
+            "detail": f"candidates={cand_n}, buy={buy_n}, skip={skip_n}",
+            "hard_gate": False,
+        }
+    )
+
+    # 5) Core agent reliability: no actionable stale/err states.
+    activity = get_agent_activity()
+    actionable = [
+        a for a in (activity.get("agents") or [])
+        if a.get("tier") == "required" and (a.get("stale_actionable") or a.get("status") == "err")
+    ]
+    rel_sev = "ok" if not actionable else "fail"
+    checks.append(
+        {
+            "id": "core_reliability",
+            "label": "Core runtime reliability",
+            "severity": rel_sev,
+            "detail": (
+                "all core agents healthy"
+                if not actionable
+                else "issues: " + ", ".join(str(a.get("name")) for a in actionable[:4])
+            ),
+            "hard_gate": True,
+        }
+    )
+
+    overall = "ok"
+    hard_gate_failed = False
+    for c in checks:
+        overall = _worst(overall, c.get("severity") or "ok")
+        if c.get("hard_gate") and c.get("severity") == "fail":
+            hard_gate_failed = True
+    if hard_gate_failed:
+        overall = "fail"
+
+    exposure = {
+        "starter_max_account_pct": 2.0,
+        "starter_max_open_positions": 1,
+        "starter_position_size_pct": 0.5,
+        "starter_daily_loss_stop_pct": 0.5,
+    }
+
+    recommendation = (
+        "READY for limited live pilot"
+        if overall == "ok"
+        else ("Paper-only; close warning gaps before live pilot" if overall == "warn" else "NOT READY for live capital")
+    )
+
+    return {
+        "overall_severity": overall,
+        "recommendation": recommendation,
+        "checks": checks,
+        "exposure_plan": exposure,
+        "note": "Conservative gate: requires safety + walk-forward + sample quality + core reliability before real-money launch.",
+    }
+
+
 def get_safety_status():
     risk = {}
     try:
@@ -1876,6 +2008,14 @@ def get_safety_status():
         drift_report_age_hours=drift_report_age_hours,
     )
 
+    go_live_scorecard = _build_go_live_scorecard(
+        hs=hs,
+        risk=risk,
+        rollback=rollback,
+        perf=perf,
+        screening=screening,
+    )
+
     return {
         "timestamp": datetime.now().isoformat(),
         "policy_profile": policy.get("active_profile"),
@@ -1906,6 +2046,7 @@ def get_safety_status():
         "drift_snapshot_updated_at": drift_snapshot_updated_at,
         "drift_report_age_hours": drift_report_age_hours,
         "stabilization": stabilization,
+        "go_live_scorecard": go_live_scorecard,
     }
 
 

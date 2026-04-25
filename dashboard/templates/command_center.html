@@ -425,6 +425,10 @@
         <div class="panel-title">STABILIZATION MONITOR <span class="text-muted" style="font-size:0.65em;font-weight:400;">from /api/safety_status · drift uses last <code style="font-size:0.9em;">data/drift_report.json</code> only (no re-run)</span></div>
         <div id="stabilizationMonitor" class="loading">Loading…</div>
       </div>
+      <div class="panel col-12">
+        <div class="panel-title">GO-LIVE SCORECARD <span class="text-muted" style="font-size:0.65em;font-weight:400;">conservative paper-to-live gate</span></div>
+        <div id="goLiveScorecard" class="loading">Loading…</div>
+      </div>
 
       <div class="panel col-4">
         <div class="panel-title">BOT AUDIT (OBJECTIVES)</div>
@@ -1193,6 +1197,7 @@
       if (!el) return;
       if (!data) {
         renderStabilizationMonitor(null);
+        renderGoLiveScorecard(null);
         return;
       }
       const strip = document.getElementById('haltStrip');
@@ -1236,6 +1241,47 @@
         <div>Cron Heartbeat: <strong>${hb}</strong></div>
       `;
       renderStabilizationMonitor(data);
+      renderGoLiveScorecard(data);
+    }
+
+    function renderGoLiveScorecard(data) {
+      const el = document.getElementById('goLiveScorecard');
+      if (!el) return;
+      el.classList.remove('loading');
+      const card = data && data.go_live_scorecard;
+      if (!card || !Array.isArray(card.checks)) {
+        el.innerHTML = '<span class="text-muted">Go-live scorecard unavailable</span>';
+        return;
+      }
+      const esc = (s) => String(s == null ? '' : s).replace(/</g, '&lt;').replace(/&/g, '&amp;');
+      const sevStyle = (s) => {
+        if (s === 'fail') return 'color:var(--red);font-weight:600;';
+        if (s === 'warn') return 'color:var(--amber);font-weight:600;';
+        return 'color:var(--green);font-weight:600;';
+      };
+      const overall = esc(card.overall_severity || 'warn').toUpperCase();
+      const recommendation = esc(card.recommendation || '—');
+      const head = '<div style="margin-bottom:0.5rem;font-size:12px;">Overall readiness: <strong style="' + sevStyle(card.overall_severity) + '">' + overall + '</strong>'
+        + '<span class="text-muted" style="margin-left:0.6rem;">' + recommendation + '</span></div>';
+      const rows = card.checks.map(function (it) {
+        const sev = esc(it.severity || 'warn');
+        const gate = it.hard_gate ? '<span class="text-muted" style="font-size:10px;">hard gate</span>' : '';
+        return '<div class="feed-line ' + (it.severity === 'fail' ? 'error' : it.severity === 'warn' ? 'warning' : 'info') + '" style="display:flex;flex-wrap:wrap;gap:0.35rem 0.75rem;align-items:baseline;">'
+          + '<span style="min-width:5.5rem;' + sevStyle(it.severity) + '">' + sev.toUpperCase() + '</span>'
+          + '<span style="font-weight:600;">' + esc(it.label || '') + '</span>'
+          + gate
+          + '<span class="text-muted" style="font-size:11px;">' + esc(it.detail || '') + '</span>'
+          + '</div>';
+      }).join('');
+      const ex = card.exposure_plan || {};
+      const plan = '<div style="margin-top:0.6rem;border-top:1px solid var(--border);padding-top:0.5rem;font-size:11px;" class="text-muted">'
+        + 'Starter live sleeve if READY: max account <strong>' + esc(ex.starter_max_account_pct ?? '2.0') + '%</strong> · '
+        + 'max open positions <strong>' + esc(ex.starter_max_open_positions ?? '1') + '</strong> · '
+        + 'position size <strong>' + esc(ex.starter_position_size_pct ?? '0.5') + '%</strong> · '
+        + 'daily loss stop <strong>' + esc(ex.starter_daily_loss_stop_pct ?? '0.5') + '%</strong>'
+        + '</div>';
+      const note = card.note ? '<div class="text-muted" style="font-size:11px;margin-top:0.5rem;">' + esc(card.note) + '</div>' : '';
+      el.innerHTML = head + rows + plan + note;
     }
 
     function renderHeadlineEventStatus(data) {
