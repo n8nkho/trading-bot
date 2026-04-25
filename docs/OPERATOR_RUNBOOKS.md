@@ -81,6 +81,9 @@ See table in `run_strategies.py` docstring for label → command mapping.
 | Goal | Command |
 |------|---------|
 | Daily screen | `python3 orchestrator.py screen` |
+| Ops AutoFix (safe dry-run) | `python3 orchestrator.py ops_autofix --dry-run` |
+| Ops AutoFix (apply) | `python3 orchestrator.py ops_autofix` |
+| Install Ops AutoFix cron | `bash scripts/install_ops_autofix_cron.sh --dry-run` (or `--apply`) |
 | Submit HITL queue | `python3 orchestrator.py execute_pending` |
 | Exits | `python3 orchestrator.py monitor` |
 | Hedges | `python3 orchestrator.py fort`… `fortress` |

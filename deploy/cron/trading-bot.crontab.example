@@ -36,3 +36,10 @@
 #
 # Daily recursive evolution cycle (paper-safe by default; dry-run unless FORTRESS_EVOLUTION_ALLOW_WRITES=1)
 # 5 17 * * 1-5 $REPO/scripts/cron_run.sh evolve >> $REPO/logs/evolution.log 2>&1
+#
+# Ops AutoFix (guarded rollout):
+# 1) Dry-run first (recommended for first 1-2 days): writes report only; no state/log mutations.
+# 10 * * * * $REPO/scripts/cron_run.sh ops_autofix --dry-run >> $REPO/logs/ops_autofix.log 2>&1
+#
+# 2) Promote to apply mode after dry-run review:
+# 10 * * * * $REPO/scripts/cron_run.sh ops_autofix >> $REPO/logs/ops_autofix.log 2>&1
