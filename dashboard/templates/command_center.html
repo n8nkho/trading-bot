@@ -1680,6 +1680,7 @@
         if (
           normalized === '{' ||
           normalized === '}' ||
+          /^[\[\]\{\},\s]+$/.test(normalized) ||
           /^"[^"]+"\s*:\s*.*$/.test(normalized)
         ) {
           return '';
