@@ -538,6 +538,51 @@ class TestBotAuditAgent(unittest.TestCase):
         self.assertNotIn("Multiple core logs stale (automation incident)", titles)
         self.assertIn("Sniper log looks stale", titles)
 
+    def test_market_closed_downgrades_zero_fill_severity(self):
+        tmp = Path("._tmp_bot_audit_market_closed")
+        if tmp.exists():
+            for p in tmp.rglob("*"):
+                try:
+                    if p.is_file():
+                        p.unlink()
+                except Exception:
+                    pass
+        tmp.mkdir(parents=True, exist_ok=True)
+        data_dir = tmp / "data"
+        logs_dir = tmp / "logs"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        # Saturday 10:00 ET.
+        now_utc = datetime(2026, 3, 28, 14, 0, 0, tzinfo=timezone.utc)
+        # Create historical lookback fills, but none in current 3am ET session.
+        rows = []
+        for i in range(10):
+            rows.append(
+                {
+                    "timestamp": f"2026-03-2{(i % 5) + 2}T15:00:00+00:00",
+                    "ticker": f"T{i}",
+                    "pnl": 1.0 if i % 2 == 0 else -0.2,
+                    "strategy_id": "intraday_sniper",
+                }
+            )
+        self._write_jsonl(data_dir / "pnl_ledger.jsonl", rows)
+
+        report = audit_bot_performance(
+            data_dir=data_dir,
+            logs_dir=logs_dir,
+            lookback_days=7,
+            audit_days=1,
+            now_utc=now_utc,
+            include_market=False,
+        )
+        self.assertEqual(report["audit_window"]["market_open"], False)
+        self.assertIn(report["audit_window"]["market_reason"], ("weekend", "after_hours", "pre_market"))
+        self.assertNotEqual(report["overall_status"], "critical")
+        drivers = report.get("audit_synthesis", {}).get("primary_drivers") or []
+        gap = next((d for d in drivers if d.get("code") == "session_throughput_gap_with_history"), {})
+        self.assertEqual(gap.get("weight"), "medium")
+
 
 if __name__ == "__main__":
     unittest.main()

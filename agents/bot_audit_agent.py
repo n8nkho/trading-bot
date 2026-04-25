@@ -1078,6 +1078,8 @@ def _synthesize_audit_diagnosis(
     hedge_regime: str | None,
     tape_trend: str | None,
     vix_last: float | None,
+    market_open: bool,
+    market_reason: str,
 ) -> dict[str, Any]:
     """
     Single narrative that orders root causes for operators (heuristic, not causal proof).
@@ -1091,15 +1093,20 @@ def _synthesize_audit_diagnosis(
     automation_stale = core_stale or sniper_stale
 
     if total_session_fills == 0 and lookback_fills >= 8:
+        fill_detail = "Session has zero realized fills but ledger lookback shows prior activity."
+        if not market_open:
+            fill_detail += f" Market is currently closed ({market_reason}); verify again in next open window before treating as throughput incident."
+        else:
+            fill_detail += " Likely scheduler gap today or exits not hitting ledger yet."
         drivers.append(
             {
                 "code": "session_throughput_gap_with_history",
-                "weight": "high",
-                "detail": "Session has zero realized fills but ledger lookback shows prior activity — likely scheduler gap today or exits not hitting ledger yet.",
+                "weight": "medium" if not market_open else "high",
+                "detail": fill_detail,
             }
         )
 
-    if automation_stale and total_session_fills == 0:
+    if automation_stale and total_session_fills == 0 and market_open:
         if core_stale and sniper_stale:
             sched_detail = (
                 "Core job logs (best of orchestrator/screener/monitor/fortress) and sniper.log look stale — "
@@ -1187,6 +1194,8 @@ def _synthesize_audit_diagnosis(
         parts.append("In RISK_OFF, zero equity BUYs may match policy; validate against fortress targets before chasing throughput.")
     if loss_status == "ok" and profit_status == "critical":
         parts.append("Loss objective is OK while profit throughput is critical — focus on entries/execution, not stop tightening.")
+    if not market_open:
+        parts.append("Market is currently closed; prioritize freshness checks and rerun throughput evaluation during next RTH window.")
 
     readiness = "critical" if overall_status == "critical" else ("degraded" if profit_status == "critical" or loss_status != "ok" else "nominal")
 
@@ -1207,6 +1216,7 @@ def _actionable_bot_changes(
     gate_rollup: dict[str, Any],
     execution_mode: str | None,
     eff_pol: dict[str, Any],
+    market_open: bool,
 ) -> list[dict[str, Any]]:
     """
     Concrete, file/env-level suggestions (operator must validate; not auto-applied).
@@ -1214,7 +1224,7 @@ def _actionable_bot_changes(
     items: list[dict[str, Any]] = []
     codes = {d.get("code") for d in (diagnosis.get("primary_drivers") or [])}
 
-    if "scheduler_or_log_staleness" in codes or "session_throughput_gap_with_history" in codes:
+    if "scheduler_or_log_staleness" in codes or ("session_throughput_gap_with_history" in codes and market_open):
         items.append(
             {
                 "priority": 1,
@@ -1779,6 +1789,15 @@ def audit_bot_performance(
     logs_dir = logs_dir or DEFAULT_LOGS_DIR
     now_utc = now_utc or datetime.now(timezone.utc)
     now_et = now_utc.astimezone(ET)
+    market_open = (now_et.weekday() < 5) and (dt_time(9, 30) <= now_et.time() <= dt_time(16, 0))
+    if now_et.weekday() >= 5:
+        market_reason = "weekend"
+    elif now_et.time() < dt_time(9, 30):
+        market_reason = "pre_market"
+    elif now_et.time() > dt_time(16, 0):
+        market_reason = "after_hours"
+    else:
+        market_reason = "rth_open"
 
     # Calendar day of "now" in ET (reference). Session stats use 3 AM ET anchor, not midnight.
     day0 = now_et.date()
@@ -1968,7 +1987,7 @@ def audit_bot_performance(
     )
 
     overall_status = "warn"
-    if loss_status == "critical" or profit_status == "critical":
+    if loss_status == "critical" or (profit_status == "critical" and market_open):
         overall_status = "critical"
     elif loss_status == "ok" and profit_status == "ok":
         overall_status = "ok"
@@ -2066,6 +2085,8 @@ def audit_bot_performance(
         hedge_regime=hedge_payload.get("regime"),
         tape_trend=mvb.get("tape_trend"),
         vix_last=vix_for_syn,
+        market_open=market_open,
+        market_reason=market_reason,
     )
     actionable = _actionable_bot_changes(
         diagnosis=diagnosis,
@@ -2074,6 +2095,7 @@ def audit_bot_performance(
         gate_rollup=gate_rollup,
         execution_mode=screen_snap.get("execution_mode"),
         eff_pol=eff_pol,
+        market_open=market_open,
     )
 
     # Recommendations: deterministic heuristics.
@@ -2173,10 +2195,25 @@ def audit_bot_performance(
         if total_today == 0:
             recommendations.append(
                 {
-                    "severity": "high" if overall_status == "critical" else "medium",
+                    "severity": (
+                        "low"
+                        if not market_open
+                        else ("high" if overall_status == "critical" else "medium")
+                    ),
                     "title": "No fills in session window — check opportunity→execution path",
-                    "body": f"Ledger shows 0 realized P&L rows {session_label}. Verify cron scheduling (screen/snipe/spy_swing), execution_mode, and that orders were not deferred or blocked by pre_trade_gate.",
-                    "action": "operator: run `python3 orchestrator.py screen` (then execute_pending if HITL) and/or check `crontab -l` + `logs/sniper.log` freshness.",
+                    "body": (
+                        f"Ledger shows 0 realized P&L rows {session_label}. "
+                        + (
+                            f"Market is currently closed ({market_reason}); prioritize freshness checks now and re-evaluate after open."
+                            if not market_open
+                            else "Verify cron scheduling (screen/snipe/spy_swing), execution_mode, and that orders were not deferred or blocked by pre_trade_gate."
+                        )
+                    ),
+                    "action": (
+                        "operator: verify `crontab -l` + `logs/sniper.log` freshness now; rerun `python3 orchestrator.py screen` during next RTH window."
+                        if not market_open
+                        else "operator: run `python3 orchestrator.py screen` (then execute_pending if HITL) and/or check `crontab -l` + `logs/sniper.log` freshness."
+                    ),
                 }
             )
         if loss_status != "ok":
@@ -2209,6 +2246,8 @@ def audit_bot_performance(
             "start_et": session_start_et.isoformat(),
             "end_et": now_et.isoformat(),
             "label": session_label,
+            "market_open": market_open,
+            "market_reason": market_reason,
         },
         "lookback_days": lookback_days,
         "audited": {
