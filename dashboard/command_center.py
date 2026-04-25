@@ -133,6 +133,7 @@ AGENT_LOGS = {
     "fortress_dashboard": {"log": LOGS_DIR / "fortress_dashboard.log", "name": "Fortress Dashboard", "max_age_hours": 26},
     "weekly": {"log": LOGS_DIR / "weekly.log", "name": "Weekly Review", "max_age_hours": 26},
     "sync": {"log": LOGS_DIR / "sync.log", "name": "Sync Alpaca", "max_age_hours": 2},
+    "ops_autofix": {"log": LOGS_DIR / "ops_autofix.log", "name": "Ops AutoFix", "max_age_hours": 2},
     "orchestrator": {"log": LOGS_DIR / "orchestrator.log", "name": "Orchestrator", "max_age_hours": 9999},
     "agent_manager": {"log": LOGS_DIR / "agent_manager.log", "name": "Agent Manager", "max_age_hours": 1},
     "llama_watchdog": {"log": LOGS_DIR / "llama_watchdog.log", "name": "Llama Watchdog", "max_age_hours": 2},
@@ -148,6 +149,7 @@ REQUIRED_AGENT_IDS = {
     "sniper",
     "fortress",
     "sync",
+    "ops_autofix",
 }
 
 # Useful but non-blocking for the current core execution loop.
@@ -733,6 +735,13 @@ def get_agent_activity():
             raw = _tail(log_path, 1)
             if raw:
                 last_line = raw.strip().split("\n")[-1][-200:]
+            # Keep Screener row focused on screening activity, not ops_autofix runs.
+            if key == "screener" and "ops_autofix" in last_line.lower():
+                recent = _tail(log_path, 120).splitlines()
+                for ln in reversed(recent):
+                    if "ops_autofix" not in ln.lower():
+                        last_line = ln[-200:]
+                        break
             low = last_line.lower()
             err_markers = [
                 "traceback",
