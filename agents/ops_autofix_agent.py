@@ -35,6 +35,8 @@ if not logger.handlers:
     _fh = logging.FileHandler(LOGS_DIR / "ops_autofix.log")
     _fh.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(_fh)
+    # Prevent duplicate routing into root-configured logs (e.g. screener.log).
+    logger.propagate = False
 
 
 def _to_dt(ts: Any) -> datetime | None:
