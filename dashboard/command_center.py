@@ -180,6 +180,27 @@ OPTIONAL_AGENT_IDS = {
     "agent_manager",
 }
 
+# Legacy/no-op rows to keep out of primary activity unless explicitly overridden.
+ARCHIVED_AGENT_IDS = {
+    "momentum",
+    "inefficiency",
+    "merger_arb",
+    "trump_trader",
+    "smart_money",
+}
+
+# Non-core agents that remain operator-relevant even when not recently active.
+ALWAYS_SHOW_NONCORE_IDS = {
+    "risk_guardian",
+    "bot_audit_agent",
+    "drift_detector",
+    "llama_watchdog",
+    "error_detective",
+    "walk_forward_validator",
+    "intelligence_brief_generator",
+    "recursive_evolution",
+}
+
 # Extend agent activity to include *all* agent modules in `agents/`.
 # Where we have a dedicated log file, we map directly; otherwise we associate
 # hedging modules to the main fortress log so they still show meaningful runs.
@@ -761,6 +782,12 @@ def get_agent_activity():
     now = datetime.now()
     market_open = _is_market_hours()
     off_hours_fresh_grace_h = float(os.getenv("FORTRESS_OFF_HOURS_FRESH_GRACE_HOURS", "72"))
+    noncore_max_age_days = float(os.getenv("FORTRESS_ACTIVITY_NONCORE_MAX_AGE_DAYS", "14"))
+    show_override = {
+        s.strip() for s in str(os.getenv("FORTRESS_ACTIVITY_SHOW_IDS", "")).split(",") if s.strip()
+    }
+    hidden_legacy = 0
+    hidden_stale_noncore = 0
     for key, cfg in AGENT_LOGS.items():
         log_path = cfg["log"]
         max_h = cfg["max_age_hours"]
@@ -828,7 +855,7 @@ def get_agent_activity():
             else:
                 stale_actionable = is_required and (market_open if active_hours_required else True)
                 ui_status = "stale" if stale_actionable else "idle"
-        agents.append({
+        row = {
             "id": key,
             "name": cfg["name"],
             "status": status,
@@ -837,11 +864,37 @@ def get_agent_activity():
             "stale_actionable": stale_actionable,
             "last_run": last_run,
             "last_activity": last_line,
-        })
+        }
+
+        # Core rows are always visible.
+        is_core = key in REQUIRED_AGENT_IDS
+        if not is_core:
+            if key in ARCHIVED_AGENT_IDS and key not in show_override:
+                hidden_legacy += 1
+                continue
+            if key not in ALWAYS_SHOW_NONCORE_IDS and key not in show_override:
+                # Hide stale non-core rows that have not run recently.
+                if not last_run:
+                    hidden_stale_noncore += 1
+                    continue
+                try:
+                    age_days = (now - datetime.fromisoformat(str(last_run))).total_seconds() / 86400.0
+                except Exception:
+                    age_days = 10_000
+                if age_days > noncore_max_age_days:
+                    hidden_stale_noncore += 1
+                    continue
+        agents.append(row)
     # Logical display order for operator UX: CORE first, then OPTIONAL, then EXT.
     tier_rank = {"required": 0, "optional": 1, "extended": 2}
     agents.sort(key=lambda a: (tier_rank.get(a.get("tier"), 9), str(a.get("name") or "").lower()))
-    return {"agents": agents, "timestamp": now.isoformat(), "market_open": market_open}
+    return {
+        "agents": agents,
+        "timestamp": now.isoformat(),
+        "market_open": market_open,
+        "hidden_legacy_count": hidden_legacy,
+        "hidden_stale_noncore_count": hidden_stale_noncore,
+    }
 
 
 def get_trading_performance():
