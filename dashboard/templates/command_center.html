@@ -839,10 +839,16 @@
       const seenNames = new Set();
       const rows = [];
       for (const a of data.agents) {
-        const nameKey = String(a && a.name ? a.name : '').trim().toLowerCase();
-        if (!nameKey) continue;
-        if (seenNames.has(nameKey)) continue;
-        seenNames.add(nameKey);
+        const rawNameKey = String(a && a.name ? a.name : '').trim().toLowerCase();
+        const rawIdKey = String(a && a.id ? a.id : '').trim().toLowerCase();
+        if (!rawNameKey && !rawIdKey) continue;
+        // Canonicalize known alias rows so "Ops Autofix Agent" collapses into "Ops AutoFix".
+        const dedupeKey =
+          (rawIdKey === 'ops_autofix_agent' || rawNameKey === 'ops autofix agent')
+            ? 'ops autofix'
+            : (rawNameKey || rawIdKey);
+        if (seenNames.has(dedupeKey)) continue;
+        seenNames.add(dedupeKey);
         rows.push(a);
       }
       el.innerHTML = rows.map(a => {
