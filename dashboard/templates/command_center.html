@@ -1664,10 +1664,16 @@
         const t = Date.parse(iso);
         return Number.isFinite(t) ? t : null;
       };
+      const normalizedFeedText = (txt) => {
+        // Remove leading logger timestamp so semantically identical messages dedupe.
+        return String(txt || '')
+          .replace(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d+)?\s*-\s*/, '')
+          .trim();
+      };
       for (const f of src) {
         const agent = String(f.agent || '');
         const text = String(f.text || '');
-        const key = `${agent}||${text}`;
+        const key = `${agent}||${normalizedFeedText(text)}`;
         const ts = parseLineEpoch(text);
         const prev = lastSeenByKey.get(key);
         if (prev != null && ts != null && Math.abs(ts - prev) <= dedupeWindowMs) {
