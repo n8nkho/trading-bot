@@ -220,7 +220,14 @@ def build_operator_morning_brief(
     stack_items.append({
         "id": "cron",
         "ok": cron_ok,
-        "text": f"Cron jobs detected: {he.get('cron_count', 0)} marker(s) in aggregate scan.",
+        "text": (
+            f"Cron jobs detected: {he.get('cron_count', 0)} unique job line(s)"
+            + (
+                f" ({he.get('cron_marker_hits', 0)} marker hit(s) in aggregate scan)."
+                if he.get("cron_marker_hits") is not None
+                else "."
+            )
+        ),
     })
     val_errs = he.get("validation_errors") or []
     stack_items.append({

@@ -594,6 +594,28 @@ def _cron_marker_list() -> list[str]:
     return out
 
 
+def _count_unique_cron_jobs(cron_text: str, markers: list[str]) -> int:
+    """
+    Count unique cron job lines, not marker hits.
+    Avoids inflated counts when multiple markers match the same line or when
+    equivalent cron sources are merged.
+    """
+    uniq: set[str] = set()
+    for raw in (cron_text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        # Skip env assignments and variable declarations in crontab.
+        if "=" in line and line.split("=", 1)[0].strip().replace("_", "").isalnum() and line.count(" ") == 0:
+            continue
+        low = line.lower()
+        if not any(m.lower() in low for m in markers):
+            continue
+        # Normalize whitespace so equivalent lines dedupe.
+        uniq.add(" ".join(line.split()))
+    return len(uniq)
+
+
 def get_system_health():
     """Services, cron, disk, CPU/RAM, risk, data files."""
     health = {
@@ -601,6 +623,7 @@ def get_system_health():
         "services": {},
         "cron_configured": False,
         "cron_count": 0,
+        "cron_marker_hits": 0,
         "disk": {},
         "cpu": {},
         "memory": {},
@@ -627,7 +650,8 @@ def get_system_health():
         out = _aggregate_cron_text()
         markers = _cron_marker_list()
         health["cron_aggregate_chars"] = len(out)
-        health["cron_count"] = sum(out.count(m) for m in markers)
+        health["cron_marker_hits"] = sum(out.count(m) for m in markers)
+        health["cron_count"] = _count_unique_cron_jobs(out, markers)
         health["cron_configured"] = health["cron_count"] > 0
         if os.environ.get("FORTRESS_CRON_DEBUG", "").strip() in ("1", "true", "yes"):
             health["cron_debug"] = {
