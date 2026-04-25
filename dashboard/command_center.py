@@ -1867,9 +1867,16 @@ def _build_go_live_scorecard(*, hs: dict, risk: dict, rollback: dict, perf: dict
     )
 
     # 4) Entry throughput should show ability to convert candidates into BUY signals.
-    buy_n = int((screening or {}).get("buy_count") or 0)
+    # Throughput telemetry sources evolved over time; prefer entry_gate counts,
+    # then fall back to approved count from screening summary.
+    buy_n = int(
+        (screening or {}).get("entry_buy")
+        or (screening or {}).get("buy_count")
+        or (screening or {}).get("approved")
+        or 0
+    )
     cand_n = int((screening or {}).get("candidates_found") or 0)
-    skip_n = int((screening or {}).get("skip_count") or 0)
+    skip_n = int((screening or {}).get("entry_skip") or (screening or {}).get("skip_count") or 0)
     throughput_sev = "ok" if buy_n > 0 else ("warn" if cand_n == 0 else "fail")
     checks.append(
         {
