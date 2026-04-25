@@ -20,6 +20,7 @@ import time as pytime
 from datetime import datetime, time, timedelta, timezone
 from dateutil import parser
 from collections import Counter
+import re
 import pytz
 from dotenv import load_dotenv
 
@@ -33,7 +34,13 @@ from agents.screener_agent import run_screener
 from agents.entry_agent import evaluate_entry
 from agents.exit_monitor import monitor_positions as monitor_exit_conditions, record_llm_outcome_after_sell_all_fill
 from agents.risk_guardian import check_risk_limits, get_risk_limits, get_risk_status, update_consecutive_losses
-from agents.performance_analyzer import track_decision, track_outcome, load_current_params
+from agents.performance_analyzer import (
+    track_decision,
+    track_outcome,
+    load_current_params,
+    save_current_params,
+    DEFAULT_PARAMS,
+)
 from utils.llm_decision_tracker import get_llm_decision_tracker
 from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mode
 # Fortress hedging is optionally deployable; avoid import-time failures.
@@ -127,6 +134,134 @@ def _read_latest_json(data_dir: Path, filename_glob: str) -> dict:
         return doc if isinstance(doc, dict) else {}
     except Exception:
         return {}
+
+
+def _auto_adjust_rsi_from_previous_run(*, risk_status: dict | None = None) -> dict:
+    """
+    Conservative RSI auto-adjuster for entry gate throughput.
+    - Hard bounds: [ENTRY_AUTO_RSI_MIN, ENTRY_AUTO_RSI_MAX] defaults to [40, 43]
+    - Moves by at most +1/-1 per day.
+    - Skips adjustments under risk stress, forced rollback, or window-dominated skips.
+    """
+    enabled = str(os.getenv("ENTRY_AUTO_ADJUST_RSI", "1")).strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return {"enabled": False, "changed": False, "reason": "disabled"}
+
+    try:
+        min_rsi = int(float(os.getenv("ENTRY_AUTO_RSI_MIN", "40") or "40"))
+        max_rsi = int(float(os.getenv("ENTRY_AUTO_RSI_MAX", "43") or "43"))
+    except ValueError:
+        min_rsi, max_rsi = 40, 43
+    if min_rsi > max_rsi:
+        min_rsi, max_rsi = max_rsi, min_rsi
+
+    st = risk_status or {}
+    if bool(st.get("circuit_breaker_active")) or int(st.get("consecutive_losses") or 0) > 0:
+        return {"enabled": True, "changed": False, "reason": "risk_stress"}
+
+    try:
+        from utils.policy_guardrails import get_public_rollback_status
+
+        rb = get_public_rollback_status() or {}
+        if rb.get("forced_profile"):
+            return {"enabled": True, "changed": False, "reason": "forced_rollback_active"}
+    except Exception:
+        pass
+
+    pattern = str(DATA_DIR / "daily_signals_*.json")
+    files = sorted(glob.glob(pattern), key=lambda p: Path(p).stat().st_mtime, reverse=True)
+    if not files:
+        return {"enabled": True, "changed": False, "reason": "no_prior_run"}
+
+    prev = _read_latest_json(DATA_DIR, "daily_signals_*.json")
+    entry = prev.get("entry_gate_summary") if isinstance(prev, dict) else {}
+    if not isinstance(entry, dict):
+        return {"enabled": True, "changed": False, "reason": "no_entry_summary"}
+
+    skip_count = int(entry.get("skip_count") or 0)
+    buy_count = int(entry.get("buy_count") or 0)
+    tops = entry.get("top_skip_reasons") if isinstance(entry.get("top_skip_reasons"), list) else []
+    if skip_count <= 0:
+        return {"enabled": True, "changed": False, "reason": "no_skips"}
+
+    rsi_skip_count = 0
+    window_skip_count = 0
+    rsi_observed: list[float] = []
+    for row in tops:
+        if not isinstance(row, dict):
+            continue
+        reason = str(row.get("reason") or "")
+        cnt = int(row.get("count") or 1)
+        low = reason.lower()
+        if "outside entry window" in low:
+            window_skip_count += cnt
+        if "rsi not oversold enough" in low:
+            rsi_skip_count += cnt
+            m = re.search(r"\(([-+]?\d+(?:\.\d+)?)\s*>=\s*([-+]?\d+(?:\.\d+)?)\)", reason)
+            if m:
+                try:
+                    rsi_observed.append(float(m.group(1)))
+                except ValueError:
+                    pass
+
+    window_ratio = (window_skip_count / skip_count) if skip_count else 0.0
+    rsi_ratio = (rsi_skip_count / skip_count) if skip_count else 0.0
+
+    params = load_current_params()
+    merged = dict(DEFAULT_PARAMS)
+    if isinstance(params, dict):
+        merged.update(params)
+    current_rsi = int(float(merged.get("rsi_threshold", DEFAULT_PARAMS["rsi_threshold"])))
+
+    # Avoid repeated oscillations within the same day.
+    last_adj = str(merged.get("rsi_autotune_last_adjusted_at") or "")
+    today = datetime.now().strftime("%Y-%m-%d")
+    if last_adj.startswith(today):
+        return {"enabled": True, "changed": False, "reason": "already_adjusted_today", "rsi_threshold": current_rsi}
+
+    target = current_rsi
+    reason = "hold"
+    # Increase only when RSI is the dominant blocker and entry window wasn't dominant.
+    if buy_count == 0 and rsi_ratio >= 0.6 and window_ratio < 0.5 and current_rsi < max_rsi:
+        target = current_rsi + 1
+        reason = "raise_for_rsi_throughput"
+    # Decrease for caution if prior run had buys and no RSI pressure.
+    elif buy_count > 0 and rsi_skip_count == 0 and current_rsi > min_rsi:
+        target = current_rsi - 1
+        reason = "tighten_for_risk"
+
+    target = max(min_rsi, min(max_rsi, int(target)))
+    if target == current_rsi:
+        return {
+            "enabled": True,
+            "changed": False,
+            "reason": reason,
+            "rsi_threshold": current_rsi,
+            "rsi_skip_ratio": round(rsi_ratio, 3),
+            "window_skip_ratio": round(window_ratio, 3),
+        }
+
+    merged["rsi_threshold"] = target
+    merged["rsi_autotune_last_adjusted_at"] = datetime.now().isoformat()
+    merged["last_updated"] = datetime.now().isoformat()
+    save_current_params(merged)
+    logger.info(
+        "RSI auto-adjusted from %s to %s (%s; rsi_skip_ratio=%.2f window_skip_ratio=%.2f)",
+        current_rsi,
+        target,
+        reason,
+        rsi_ratio,
+        window_ratio,
+    )
+    return {
+        "enabled": True,
+        "changed": True,
+        "reason": reason,
+        "old_rsi": current_rsi,
+        "new_rsi": target,
+        "rsi_skip_ratio": round(rsi_ratio, 3),
+        "window_skip_ratio": round(window_ratio, 3),
+    }
 
 
 def _refresh_order_result(order_result: dict, max_wait_seconds: int = 3, poll_interval_seconds: float = 1.0) -> dict:
@@ -926,6 +1061,7 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
 
         # Risk-elimination mode: triggered only when the risk engine is already under stress.
         risk_status = get_risk_status()
+        rsi_autotune = _auto_adjust_rsi_from_previous_run(risk_status=risk_status)
         consecutive_losses = int(risk_status.get("consecutive_losses") or 0)
         circuit_breaker_active = bool(risk_status.get("circuit_breaker_active"))
         strict_mode = circuit_breaker_active or consecutive_losses >= 2
@@ -987,6 +1123,7 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         screening_meta["strict_mode"] = strict_mode
         screening_meta["strict_mode_reason"] = strict_mode_reason
         screening_meta["hedge_gate"] = hedge_gate_summary
+        screening_meta["rsi_autotune"] = rsi_autotune
         
         if len(candidates) == 0:
             logger.info("No candidates found. Ending workflow.")
