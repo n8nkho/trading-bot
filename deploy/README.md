@@ -4,6 +4,8 @@
 
 ### 1. Install log rotation
 
+The logrotate stanza uses `su ubuntu ubuntu` so rotation works when `logs/` is writable by user `ubuntu` (avoids “insecure permissions” skips).
+
 ```bash
 sudo cp deploy/logrotate.d/fortress /etc/logrotate.d/fortress
 sudo logrotate --force /etc/logrotate.d/fortress
