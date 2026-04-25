@@ -1672,22 +1672,42 @@
           .replace(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:,\d+)?\s*-\s*/, '')
           .trim();
       };
+      const summarizeOpsAutofix = (txt) => {
+        const raw = String(txt || '');
+        const normalized = normalizedFeedText(raw);
+        if (!normalized) return 'ops_autofix activity';
+        const dryRun = /\bdry_run[:=]\s*true\b/i.test(normalized) ? 'dry-run' : 'apply';
+        const rec = normalized.match(/\breconciled_count[:=]\s*(\d+)/i);
+        const cand = normalized.match(/\bcandidates_count[:=]\s*(\d+)/i);
+        const dedupe = normalized.match(/\bdeduped(?:_lines)?[:=]\s*(\d+)/i);
+        const backups = normalized.match(/\bbackups?(?:_written)?[:=]\s*(\d+)/i);
+        if (rec || cand || dedupe || backups || /\bops_autofix\b/i.test(normalized)) {
+          const parts = [`mode=${dryRun}`];
+          if (cand) parts.push(`candidates=${cand[1]}`);
+          if (rec) parts.push(`reconciled=${rec[1]}`);
+          if (dedupe) parts.push(`deduped=${dedupe[1]}`);
+          if (backups) parts.push(`backups=${backups[1]}`);
+          return `ops_autofix summary (${parts.join(', ')})`;
+        }
+        return normalized.slice(0, 140);
+      };
       for (const f of src) {
         const agent = String(f.agent || '');
         const text = String(f.text || '');
+        const displayText = agent === 'Ops AutoFix' ? summarizeOpsAutofix(text) : text;
         if (agent === 'Cron Heartbeat') {
           heartbeatCount += 1;
           // Keep feed useful: retain only the most recent heartbeat lines.
           if (heartbeatCount > 8) continue;
         }
-        const key = `${agent}||${normalizedFeedText(text)}`;
+        const key = `${agent}||${normalizedFeedText(displayText)}`;
         const ts = parseLineEpoch(text);
         const prev = lastSeenByKey.get(key);
         if (prev != null && ts != null && Math.abs(ts - prev) <= dedupeWindowMs) {
           continue;
         }
         if (ts != null) lastSeenByKey.set(key, ts);
-        kept.push(f);
+        kept.push({ ...f, text: displayText });
         if (kept.length >= 40) break;
       }
       el.innerHTML = kept.map(f => `
