@@ -835,7 +835,17 @@
     function renderAgents(data) {
       const el = document.getElementById('agents');
       if (!data || !data.agents || !data.agents.length) { el.innerHTML = '<span class="empty">No agent data</span>'; return; }
-      el.innerHTML = data.agents.map(a => {
+      // Defensive UI dedupe by display name in case backend aliases leak through.
+      const seenNames = new Set();
+      const rows = [];
+      for (const a of data.agents) {
+        const nameKey = String(a && a.name ? a.name : '').trim().toLowerCase();
+        if (!nameKey) continue;
+        if (seenNames.has(nameKey)) continue;
+        seenNames.add(nameKey);
+        rows.push(a);
+      }
+      el.innerHTML = rows.map(a => {
         const time = a.last_run ? new Date(a.last_run).toLocaleString() : '—';
         const activity = (a.last_activity || '').replace(/</g, '&lt;').substring(0, 80);
         const tier = a.tier === 'required' ? 'CORE' : (a.tier === 'optional' ? 'OPTIONAL' : 'EXT');
