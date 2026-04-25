@@ -40,6 +40,41 @@ Add these lines:
 0 6 * * 1-5 TZ=America/New_York cd /home/ubuntu/trading-bot && \
   /home/ubuntu/trading-bot/venv/bin/python -m agents.briefing_agent \
   >> /home/ubuntu/trading-bot/logs/briefing.log 2>&1
+
+# Cross-asset (5:30am ET — before briefing)
+30 5 * * 1-5 TZ=America/New_York cd /home/ubuntu/trading-bot && \
+  /home/ubuntu/trading-bot/venv/bin/python -m agents.cross_asset_agent \
+  >> /home/ubuntu/trading-bot/logs/cross_asset.log 2>&1
+
+# Regime detection (9:30am ET — market open)
+30 9 * * 1-5 TZ=America/New_York cd /home/ubuntu/trading-bot && \
+  /home/ubuntu/trading-bot/venv/bin/python -m agents.regime_detector \
+  >> /home/ubuntu/trading-bot/logs/regime.log 2>&1
+
+# Sentiment velocity (every 30 min during market hours)
+*/30 9-16 * * 1-5 TZ=America/New_York cd /home/ubuntu/trading-bot && \
+  /home/ubuntu/trading-bot/venv/bin/python -m agents.sentiment_velocity_agent \
+  >> /home/ubuntu/trading-bot/logs/sentiment_velocity.log 2>&1
+
+# Options flow (every 15 min during market hours)
+*/15 9-16 * * 1-5 TZ=America/New_York cd /home/ubuntu/trading-bot && \
+  /home/ubuntu/trading-bot/venv/bin/python -m agents.options_flow_agent \
+  >> /home/ubuntu/trading-bot/logs/options_flow.log 2>&1
+
+# Earnings intel (every 5 min during earnings window)
+*/5 16-21 * * 1-5 TZ=America/New_York cd /home/ubuntu/trading-bot && \
+  /home/ubuntu/trading-bot/venv/bin/python -m agents.earnings_intel_agent \
+  >> /home/ubuntu/trading-bot/logs/earnings_intel.log 2>&1
+
+# Prompt evolution (5:30pm ET — after reflection)
+30 17 * * 1-5 TZ=America/New_York cd /home/ubuntu/trading-bot && \
+  /home/ubuntu/trading-bot/venv/bin/python -m agents.prompt_evolution_agent \
+  >> /home/ubuntu/trading-bot/logs/prompt_evolution.log 2>&1
+
+# Regime re-check (every 2 hours during market)
+0 10,12,14,16 * * 1-5 TZ=America/New_York cd /home/ubuntu/trading-bot && \
+  /home/ubuntu/trading-bot/venv/bin/python -m agents.regime_detector \
+  >> /home/ubuntu/trading-bot/logs/regime.log 2>&1
 ```
 
 ### 5. Verify dry runs pass

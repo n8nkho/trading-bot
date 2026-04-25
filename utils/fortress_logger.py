@@ -24,6 +24,12 @@ _PRUNE_NAMES = (
     "orchestrator.log",
     "monitor.log",
     "exit_monitor.log",
+    "sentiment_velocity.log",
+    "earnings_intel.log",
+    "options_flow.log",
+    "cross_asset.log",
+    "regime.log",
+    "prompt_evolution.log",
 )
 
 
@@ -51,7 +57,11 @@ def _maybe_prune() -> None:
         for p in _LOGS.iterdir():
             if not p.is_file():
                 continue
-            if p.name not in _PRUNE_NAMES and not p.name.startswith("briefing_"):
+            if (
+                p.name not in _PRUNE_NAMES
+                and not p.name.startswith("briefing_")
+                and not p.name.startswith("backtest_")
+            ):
                 continue
             try:
                 if p.stat().st_mtime < cutoff:
@@ -113,6 +123,11 @@ def append_briefing_log(line: str, *, dated: bool = False) -> None:
 
 def append_alerts_log(line: str) -> None:
     _append_log_line("alerts.log", line)
+
+
+def append_log(filename: str, line: str) -> None:
+    """Generic helper for single-line append into logs/<filename>."""
+    _append_log_line(filename, line)
 
 
 class FortressLogger:

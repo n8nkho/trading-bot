@@ -16,6 +16,27 @@
 # Pre-market briefing (~6 AM ET Mon–Fri): logs/briefing_YYYYMMDD.log; optional data/daily_risk_params.json
 # 0 6 * * 1-5 TZ=America/New_York cd $REPO && ./venv/bin/python3 agents/briefing_agent.py >> $REPO/logs/briefing_scheduled.log 2>&1
 #
+# Cross-asset (5:30am ET — before briefing)
+# 30 5 * * 1-5 TZ=America/New_York cd $REPO && ./venv/bin/python3 -m agents.cross_asset_agent >> $REPO/logs/cross_asset.log 2>&1
+#
+# Regime detection (9:30am ET — market open)
+# 30 9 * * 1-5 TZ=America/New_York cd $REPO && ./venv/bin/python3 -m agents.regime_detector >> $REPO/logs/regime.log 2>&1
+#
+# Sentiment velocity (every 30min during market hours)
+# */30 9-16 * * 1-5 TZ=America/New_York cd $REPO && ./venv/bin/python3 -m agents.sentiment_velocity_agent >> $REPO/logs/sentiment_velocity.log 2>&1
+#
+# Options flow (every 15min during market hours)
+# */15 9-16 * * 1-5 TZ=America/New_York cd $REPO && ./venv/bin/python3 -m agents.options_flow_agent >> $REPO/logs/options_flow.log 2>&1
+#
+# Earnings intel (every 5min earnings window)
+# */5 16-21 * * 1-5 TZ=America/New_York cd $REPO && ./venv/bin/python3 -m agents.earnings_intel_agent >> $REPO/logs/earnings_intel.log 2>&1
+#
+# Prompt evolution (5:30pm ET — after reflection)
+# 30 17 * * 1-5 TZ=America/New_York cd $REPO && ./venv/bin/python3 -m agents.prompt_evolution_agent >> $REPO/logs/prompt_evolution.log 2>&1
+#
+# Regime re-check (every 2 hours during market)
+# 0 10,12,14,16 * * 1-5 TZ=America/New_York cd $REPO && ./venv/bin/python3 -m agents.regime_detector >> $REPO/logs/regime.log 2>&1
+#
 # Entry critique loop runs inside orchestrator when FORTRESS_CRITIQUE_LOOP_ENABLED=1 (no separate cron).
 #
 # Recovery after downtime (manual or extra cron slot):
