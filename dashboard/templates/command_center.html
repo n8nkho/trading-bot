@@ -389,6 +389,10 @@
     </header>
     <div id="haltStrip" class="halt-strip" role="alert" aria-live="polite"></div>
     <div id="licenseUpgradeBanner" role="note"></div>
+    <div class="panel col-12" style="margin-bottom:0.9rem;">
+      <div class="panel-title">ALERTS FEED</div>
+      <div id="alertsFeedTop" class="loading">Loading…</div>
+    </div>
 
     <div class="bulk-collapse-row">
       <button type="button" id="btnBulkDetailPanels" class="btn-bulk-detail-only" aria-label="Collapse all sections below Morning Brief">▼</button>
@@ -445,6 +449,18 @@
       <div class="panel col-4">
         <div class="panel-title">RECURSIVE EVOLUTION STATUS</div>
         <div id="evolutionStatus" class="loading">Loading…</div>
+      </div>
+      <div class="panel col-12">
+        <div class="panel-title">RECURSIVE INTELLIGENCE STACK</div>
+        <div id="recursiveStackSection" class="loading">Loading…</div>
+      </div>
+      <div class="panel col-12">
+        <div class="panel-title">PROMPT EVOLUTION &amp; REFLECTION</div>
+        <div id="promptReflectionSection" class="loading">Loading…</div>
+      </div>
+      <div class="panel col-12">
+        <div class="panel-title">MORNING BRIEFING</div>
+        <div id="morningBriefingSection" class="loading">Loading…</div>
       </div>
       <div class="panel col-4">
         <div class="panel-title">LLM USAGE &amp; SPEND</div>
@@ -551,7 +567,7 @@
   </div>
 
   <script>
-    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine', botAudit: '/api/bot_audit', intelligenceBrief: '/api/intelligence_brief', evolutionStatus: '/api/evolution_status', llmUsage: '/api/llm_usage' };
+    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine', botAudit: '/api/bot_audit', intelligenceBrief: '/api/intelligence_brief', evolutionStatus: '/api/evolution_status', llmUsage: '/api/llm_usage', critiqueStats: '/api/critique_stats', regimeStatus: '/api/regime_status', sentimentVelocity: '/api/sentiment_velocity', optionsFlow: '/api/options_flow', earningsIntel: '/api/earnings_intel', crossAsset: '/api/cross_asset', promptEvolution: '/api/prompt_evolution', reflectionTrend: '/api/reflection_trend', backtestLatest: '/api/backtest_latest', morningBriefing: '/api/morning_briefing', alertsFeed: '/api/alerts_feed' };
     const NO_CACHE = { cache: 'no-store' };
 
     let _chartRedraw = null;
@@ -1439,17 +1455,94 @@
       const el = document.getElementById('runbooks');
       if (!el) return;
       const items = (data && data.items) ? data.items : [];
-      if (!items.length) {
+      const extra = [
+        { title: 'Run Regime Detector', impact: 'Detect current market regime and adjust screener parameters.', command: 'python3 -m agents.regime_detector' },
+        { title: 'Run Cross-Asset Intelligence', impact: 'Fetch cross-asset signals (bonds, forex, commodities vs equities).', command: 'python3 -m agents.cross_asset_agent' },
+        { title: 'Run Sentiment Velocity', impact: 'Score sentiment velocity for open positions and watchlist.', command: 'python3 -m agents.sentiment_velocity_agent' },
+        { title: 'Run Options Flow Scanner', impact: 'Scan for unusual options activity and smart money signals.', command: 'python3 -m agents.options_flow_agent' },
+        { title: 'Run Earnings Intel', impact: 'Process available earnings transcripts for held symbols.', command: 'python3 -m agents.earnings_intel_agent' },
+        { title: 'Run Backtest Analysis', impact: 'Replay trade history through current recursive stack.', command: 'python3 -m agents.backtest_agent' },
+        { title: 'Run Prompt Evolution Check', impact: 'Check reflection scores and evolve prompts if degraded.', command: 'python3 -m agents.prompt_evolution_agent' }
+      ];
+      const merged = items.concat(extra);
+      if (!merged.length) {
         el.innerHTML = '<span class="empty">No runbooks configured</span>';
         return;
       }
-      el.innerHTML = items.map(i => `
+      el.innerHTML = merged.map(i => `
         <div class="rec-item low">
           <div class="title">${(i.title || '').replace(/</g, '&lt;')}</div>
           <div class="body">${(i.impact || '').replace(/</g, '&lt;')}</div>
           <div class="action"><code>${(i.command || '').replace(/</g, '&lt;')}</code></div>
         </div>
       `).join('');
+    }
+
+    function renderAlertsFeedTop(data) {
+      const el = document.getElementById('alertsFeedTop');
+      if (!el) return;
+      const items = (data && data.recent) ? data.recent : [];
+      const total = Number((data && data.total_alerts) || 0);
+      if (!total) {
+        el.innerHTML = '<span class="badge" style="background:#1a3a2a;color:var(--green);">No active alerts</span>';
+        return;
+      }
+      const last = items.length ? items[items.length - 1] : null;
+      const banner = '<div style="margin-bottom:0.5rem;padding:0.45rem 0.6rem;border:1px solid var(--red);background:rgba(249,65,68,0.12);color:var(--red);border-radius:6px;">' + total + ' alert(s) · ' + ((last && last.message) ? String(last.message).replace(/</g, '&lt;').slice(0, 160) : 'latest alert') + '</div>';
+      const list = items.slice(-5).map(i => '<div class="feed-line warning">[' + ((i.type || 'ALERT') + '').replace(/</g, '&lt;') + '] ' + ((i.symbol || '—') + '').replace(/</g, '&lt;') + ' · ' + String(i.message || '').replace(/</g, '&lt;').slice(0, 180) + '</div>').join('');
+      el.innerHTML = banner + '<div class="feed-list" style="max-height:130px;">' + list + '</div>';
+    }
+
+    function renderRecursiveStack(regime, critique, sentiment, crossAsset, optionsFlow, earningsIntel) {
+      const el = document.getElementById('recursiveStackSection');
+      if (!el) return;
+      const reg = regime || {};
+      const crit = critique || {};
+      const sv = sentiment || {};
+      const ca = crossAsset || {};
+      const of = optionsFlow || {};
+      const ei = earningsIntel || {};
+      const critRows = (crit.recent || []).slice(-5).map(r => '<tr><td>' + String(r.timestamp || '').replace(/</g,'&lt;') + '</td><td>' + String(r.symbol || '').replace(/</g,'&lt;') + '</td><td>' + String(r.pass1 || '').replace(/</g,'&lt;') + '</td><td>' + String(r.pass2_verdict || '').replace(/</g,'&lt;') + '</td><td>' + String(r.action || '').replace(/</g,'&lt;') + '</td></tr>').join('');
+      const flowRows = (of.signals || []).slice(-5).map(s => '<tr><td>' + String(s.symbol || '').replace(/</g,'&lt;') + '</td><td>' + String(s.direction || '').replace(/</g,'&lt;') + '</td><td>' + String(s.classification || '').replace(/</g,'&lt;') + '</td><td>' + String(s.conviction || '').replace(/</g,'&lt;') + '</td><td>' + String(s.timestamp || '').replace(/</g,'&lt;') + '</td></tr>').join('');
+      const earnRows = (ei.entries || []).slice(-5).map(s => '<tr><td>' + String(s.symbol || '').replace(/</g,'&lt;') + '</td><td>' + String(s.verdict || '').replace(/</g,'&lt;') + '</td><td>' + String(s.recommended_action || '').replace(/</g,'&lt;') + '</td><td>' + String(s.ceo_tone || '').replace(/</g,'&lt;') + '</td><td>' + String(s.processed_at || '').replace(/</g,'&lt;') + '</td></tr>').join('');
+      const svCards = Object.keys(sv.symbols || {}).map(k => { const v = sv.symbols[k] || {}; return '<div class="rec-item low"><div class="title">' + k + ' · ' + String(v.classification || 'UNKNOWN').replace(/</g,'&lt;') + '</div><div class="body">velocity: ' + String(v.velocity ?? '0') + ' | signal: ' + String(v.signal || '').replace(/</g,'&lt;') + '</div></div>'; }).join('');
+      el.innerHTML = `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0.8rem;">
+          <div class="rec-item low"><div class="title">Regime Status</div><div class="body">Regime: ${String(reg.regime || 'UNKNOWN').replace(/</g,'&lt;')} · Min score: ${reg.screener_min_score ?? '—'} · Size mult: ${reg.position_size_multiplier ?? '—'} · Halt: ${reg.halt_new_entries ? 'YES' : 'NO'}</div></div>
+          <div class="rec-item low"><div class="title">Critique Loop Stats</div><div class="body">Total: ${crit.total_today || 0} · CONFIRM ${(Number(crit.confirm_rate || 0) * 100).toFixed(1)}% · MODIFY ${(Number(crit.modify_rate || 0) * 100).toFixed(1)}% · REJECT ${(Number(crit.reject_rate || 0) * 100).toFixed(1)}% · Fallback ${crit.fallback_count || 0} · Variant ${String(crit.prompt_variant || 'control').replace(/</g,'&lt;')}</div></div>
+          <div class="rec-item low"><div class="title">Sentiment Velocity</div><div class="body">EXIT_RISK: ${sv.exit_risk_count || 0} · Surging: ${sv.surging_count || 0} · Collapsing: ${sv.collapsing_count || 0}</div>${svCards || '<div class="empty">No data yet</div>'}</div>
+          <div class="rec-item low"><div class="title">Cross-Asset Intelligence</div><div class="body">Bias: ${String(ca.overall_bias || 'NEUTRAL').replace(/</g,'&lt;')} · Confidence: ${ca.confidence || 0}/10 · Signal: ${String(ca.key_signal || '').replace(/</g,'&lt;')}</div></div>
+        </div>
+        <div class="panel-scroll" style="margin-top:0.6rem;"><table class="trade-table"><thead><tr><th>Time</th><th>Symbol</th><th>Pass1</th><th>Pass2</th><th>Action</th></tr></thead><tbody>${critRows || '<tr><td colspan="5" class="empty">No critiques yet</td></tr>'}</tbody></table></div>
+        <div class="panel-scroll" style="margin-top:0.6rem;"><table class="trade-table"><thead><tr><th>Symbol</th><th>Direction</th><th>Type</th><th>Conviction</th><th>Time</th></tr></thead><tbody>${flowRows || '<tr><td colspan="5" class="empty">No flow data yet</td></tr>'}</tbody></table></div>
+        <div class="panel-scroll" style="margin-top:0.6rem;"><table class="trade-table"><thead><tr><th>Symbol</th><th>Verdict</th><th>Action</th><th>CEO Tone</th><th>Processed</th></tr></thead><tbody>${earnRows || '<tr><td colspan="5" class="empty">No earnings processed yet</td></tr>'}</tbody></table></div>
+      `;
+    }
+
+    function renderPromptReflection(reflectionTrend, promptEvolution) {
+      const el = document.getElementById('promptReflectionSection');
+      if (!el) return;
+      const rt = reflectionTrend || {};
+      const pe = promptEvolution || {};
+      const logs = (pe.recent_log || []).slice(-5).map(l => String(l).replace(/</g,'&lt;')).join('<br>');
+      const scores = (rt.recent_scores || []).slice(-5).map(r => '<tr><td>' + String(r.date || '').replace(/</g,'&lt;') + '</td><td>' + String(r.symbol || '').replace(/</g,'&lt;') + '</td><td>' + String(r.score || '').replace(/</g,'&lt;') + '</td><td>' + String(r.feedback || '').replace(/</g,'&lt;') + '</td></tr>').join('');
+      el.innerHTML = `<div class="rec-item low"><div class="title">Reflection Score Trend</div><div class="body">7d ${Number(rt.last_7d_avg || 0).toFixed(1)}/10 · 30d ${Number(rt.last_30d_avg || 0).toFixed(1)}/10 · Trend ${String(rt.trend || 'STABLE').replace(/</g,'&lt;')} · Alerts ${rt.alert_count || 0}</div></div>
+      <div class="panel-scroll" style="margin-top:0.6rem;"><table class="trade-table"><thead><tr><th>Date</th><th>Symbol</th><th>Score</th><th>Feedback</th></tr></thead><tbody>${scores || '<tr><td colspan="4" class="empty">No reflection records</td></tr>'}</tbody></table></div>
+      <div class="rec-item low" style="margin-top:0.6rem;"><div class="title">Prompt Evolution Status</div><div class="body">Active: ${String(pe.active_variant || 'control').replace(/</g,'&lt;')} · Evolutions: ${pe.evolution_count || 0} · Trigger score: ${pe.trigger_avg_score ?? '—'}</div><pre class="hedge-pre">${logs || 'No evolution logs yet'}</pre></div>`;
+    }
+
+    function renderMorningBriefing(data) {
+      const el = document.getElementById('morningBriefingSection');
+      if (!el) return;
+      const d = data || {};
+      const rows = (d.position_assessments || []).slice(0, 15).map(r => '<tr><td>' + String(r.symbol || '').replace(/</g,'&lt;') + '</td><td>' + String(r.assessment || '').replace(/</g,'&lt;') + '</td><td>' + String(r.reason || '').replace(/</g,'&lt;') + '</td></tr>').join('');
+      const risks = (d.top_risks || []).map(r => '<li>' + String(r).replace(/</g,'&lt;') + '</li>').join('');
+      const full = (d.full_log || []).map(x => String(x).replace(/</g,'&lt;')).join('\n');
+      el.innerHTML = `<div class="rec-item low"><div class="title">${d.found ? (d.date || '') : 'No briefing found'} ${d.found ? '' : '(today/yesterday)'}</div><div class="body">${String(d.macro_line || '').replace(/</g,'&lt;')} · Risk posture: ${String(d.risk_posture || '').replace(/</g,'&lt;')}</div></div>
+      <div class="panel-scroll" style="margin-top:0.6rem;"><table class="trade-table"><thead><tr><th>Symbol</th><th>Assessment</th><th>Reason</th></tr></thead><tbody>${rows || '<tr><td colspan="3" class="empty">No assessments</td></tr>'}</tbody></table></div>
+      <ul style="margin-top:0.5rem;">${risks || '<li class="empty">No top risks parsed</li>'}</ul>
+      <div class="text-muted" style="margin:0.4rem 0;">${String(d.reflection_score_line || '').replace(/</g,'&lt;')}</div>
+      <details><summary style="cursor:pointer;color:var(--cyan);">Expand to see full briefing log</summary><pre class="hedge-pre">${full || 'No log content'}</pre></details>`;
     }
 
     function renderBotAudit(data) {
@@ -2009,7 +2102,7 @@
 
     async function loadAll() {
       try {
-        const [health, agents, performance, news, recommendations, safetyStatus, botAudit, intelligenceBrief, evolutionStatus, llmUsage, headlineEvent, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, drift, trustReport, feed, positions, orders, tvSignals] = await Promise.all([
+        const [health, agents, performance, news, recommendations, safetyStatus, botAudit, intelligenceBrief, evolutionStatus, llmUsage, headlineEvent, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, drift, trustReport, feed, positions, orders, tvSignals, critiqueStats, regimeStatus, sentimentVelocity, optionsFlow, earningsIntel, crossAsset, promptEvolution, reflectionTrend, backtestLatest, morningBriefing, alertsFeed] = await Promise.all([
           fetch(API.health, NO_CACHE).then(r => r.json()),
           fetch(API.agents, NO_CACHE).then(r => r.json()),
           fetch(API.performance, NO_CACHE).then(r => r.json()),
@@ -2031,7 +2124,18 @@
           fetch(API.feed, NO_CACHE).then(r => r.json()),
           fetch('/api/positions').then(r => r.json()),
           fetch('/api/orders').then(r => r.json()),
-          fetch('/api/tradingview_signals?limit=25').then(function (r) { return r.ok ? r.json() : { items: [] }; }).catch(function () { return { items: [] }; })
+          fetch('/api/tradingview_signals?limit=25').then(function (r) { return r.ok ? r.json() : { items: [] }; }).catch(function () { return { items: [] }; }),
+          fetch(API.critiqueStats, NO_CACHE).then(r => r.json()).catch(() => ({})),
+          fetch(API.regimeStatus, NO_CACHE).then(r => r.json()).catch(() => ({})),
+          fetch(API.sentimentVelocity, NO_CACHE).then(r => r.json()).catch(() => ({})),
+          fetch(API.optionsFlow, NO_CACHE).then(r => r.json()).catch(() => ({})),
+          fetch(API.earningsIntel, NO_CACHE).then(r => r.json()).catch(() => ({})),
+          fetch(API.crossAsset, NO_CACHE).then(r => r.json()).catch(() => ({})),
+          fetch(API.promptEvolution, NO_CACHE).then(r => r.json()).catch(() => ({})),
+          fetch(API.reflectionTrend, NO_CACHE).then(r => r.json()).catch(() => ({})),
+          fetch(API.backtestLatest, NO_CACHE).then(r => r.json()).catch(() => ({})),
+          fetch(API.morningBriefing, NO_CACHE).then(r => r.json()).catch(() => ({})),
+          fetch(API.alertsFeed, NO_CACHE).then(r => r.json()).catch(() => ({}))
         ]);
         renderOperatorBrief(await fetchOperatorBriefSafe());
         renderTradingViewSignals(tvSignals);
@@ -2058,6 +2162,10 @@
         renderFeed(feed);
         renderPositions(positions);
         renderOrders(orders);
+        renderAlertsFeedTop(alertsFeed);
+        renderRecursiveStack(regimeStatus, critiqueStats, sentimentVelocity, crossAsset, optionsFlow, earningsIntel);
+        renderPromptReflection(reflectionTrend, promptEvolution);
+        renderMorningBriefing(morningBriefing);
         setUpdated();
         setTimeout(loadPriceChart, 120);
       } catch (e) {
@@ -2067,6 +2175,9 @@
     }
 
     document.getElementById('btnRefresh').addEventListener('click', loadAll);
+    setInterval(async () => {
+      try { renderAlertsFeedTop(await fetch(API.alertsFeed, NO_CACHE).then(r => r.json())); } catch (e) {}
+    }, 60000);
     const btnPristine = document.getElementById('btnPristine');
     if (btnPristine) btnPristine.addEventListener('click', runPristine);
     const btnBotAudit = document.getElementById('btnBotAudit');

@@ -13,7 +13,7 @@ import shutil
 import glob
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Project root
@@ -3528,6 +3528,504 @@ def api_evolution_status():
 @app.route("/api/llm_usage")
 def api_llm_usage():
     return jsonify(get_llm_usage_status())
+
+
+def _safe_read_json(path: Path, default):
+    try:
+        if not path.exists():
+            return default
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def _safe_tail(path: Path, n: int) -> list[str]:
+    try:
+        if not path.exists():
+            return []
+        return [ln for ln in path.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()][-n:]
+    except Exception:
+        return []
+
+
+def _parse_iso(s: str | None):
+    try:
+        if not s:
+            return None
+        return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _today_et_datestr() -> str:
+    try:
+        import pytz
+
+        et = pytz.timezone("America/New_York")
+        return datetime.now(et).strftime("%Y%m%d")
+    except Exception:
+        return datetime.now().strftime("%Y%m%d")
+
+
+@app.route("/api/critique_stats")
+def api_critique_stats():
+    out = {
+        "last_updated": None,
+        "total_today": 0,
+        "confirm_count": 0,
+        "modify_count": 0,
+        "reject_count": 0,
+        "confirm_rate": 0.0,
+        "modify_rate": 0.0,
+        "reject_rate": 0.0,
+        "recent": [],
+        "fallback_count": 0,
+        "prompt_variant": "control",
+    }
+    try:
+        lines = _safe_tail(LOGS_DIR / "critique.log", 200)
+        recs = []
+        for ln in lines:
+            is_fallback = "fallback" in ln.lower()
+            if is_fallback:
+                out["fallback_count"] += 1
+            m = re.search(
+                r"\[(?P<sym>[A-Z0-9\._\-]+)\]\s+Pass1:\s*(?P<pass1>[^|]+)\|\s*Pass2:\s*(?P<pass2>[^|]+)\|\s*Action:\s*(?P<action>.+)$",
+                ln,
+            )
+            if not m:
+                continue
+            pass2 = str(m.group("pass2")).upper()
+            verdict = "REJECT"
+            if "CONFIRM" in pass2:
+                verdict = "CONFIRM"
+                out["confirm_count"] += 1
+            elif "MODIFY" in pass2:
+                verdict = "MODIFY"
+                out["modify_count"] += 1
+            else:
+                out["reject_count"] += 1
+            recs.append(
+                {
+                    "timestamp": "",
+                    "symbol": m.group("sym"),
+                    "pass1": m.group("pass1").strip(),
+                    "pass2_verdict": verdict,
+                    "action": m.group("action").strip(),
+                    "is_fallback": is_fallback,
+                }
+            )
+        out["total_today"] = out["confirm_count"] + out["modify_count"] + out["reject_count"]
+        if out["total_today"] > 0:
+            t = float(out["total_today"])
+            out["confirm_rate"] = round(out["confirm_count"] / t, 4)
+            out["modify_rate"] = round(out["modify_count"] / t, 4)
+            out["reject_rate"] = round(out["reject_count"] / t, 4)
+        out["recent"] = recs[-10:]
+        p = LOGS_DIR / "critique.log"
+        if p.exists():
+            out["last_updated"] = datetime.fromtimestamp(p.stat().st_mtime).isoformat()
+        ps = _safe_read_json(DATA_DIR / "prompt_store.json", {})
+        if isinstance(ps, dict):
+            out["prompt_variant"] = str(ps.get("active_variant") or "control")
+    except Exception:
+        pass
+    return jsonify(out)
+
+
+@app.route("/api/regime_status")
+def api_regime_status():
+    out = {
+        "regime": "UNKNOWN",
+        "regime_confidence": 0.0,
+        "regime_detected_at": None,
+        "halt_new_entries": False,
+        "screener_min_score": None,
+        "position_size_multiplier": None,
+        "max_concurrent_positions": None,
+        "preferred_exit_tier": None,
+        "critique_strictness": None,
+        "risk_posture": None,
+        "vix": None,
+        "generated_at": datetime.now().isoformat(),
+    }
+    try:
+        rp = _safe_read_json(DATA_DIR / "daily_risk_params.json", {})
+        if isinstance(rp, dict):
+            g = rp.get("regime_params") or {}
+            out["regime"] = str(rp.get("regime") or out["regime"])
+            out["regime_confidence"] = float(rp.get("regime_confidence") or 0.0)
+            out["regime_detected_at"] = rp.get("regime_detected_at")
+            out["halt_new_entries"] = bool(g.get("halt_new_entries"))
+            out["screener_min_score"] = g.get("screener_min_score")
+            out["position_size_multiplier"] = g.get("position_size_multiplier")
+            out["max_concurrent_positions"] = g.get("max_concurrent_positions")
+            out["preferred_exit_tier"] = g.get("preferred_exit_tier")
+            out["critique_strictness"] = g.get("critique_strictness")
+            out["risk_posture"] = rp.get("risk_posture")
+            out["vix"] = rp.get("vix")
+    except Exception:
+        pass
+    return jsonify(out)
+
+
+@app.route("/api/sentiment_velocity")
+def api_sentiment_velocity():
+    out = {"generated_at": None, "symbols": {}, "exit_risk_count": 0, "surging_count": 0, "collapsing_count": 0}
+    try:
+        sv = _safe_read_json(DATA_DIR / "sentiment_velocity.json", {})
+        if isinstance(sv, dict):
+            out["generated_at"] = sv.get("generated_at")
+            syms = sv.get("symbols") if isinstance(sv.get("symbols"), dict) else {}
+            out["symbols"] = syms
+            for _, v in syms.items():
+                if not isinstance(v, dict):
+                    continue
+                cls = str(v.get("classification") or "").upper()
+                sig = str(v.get("signal") or "").upper()
+                if sig == "EXIT_RISK":
+                    out["exit_risk_count"] += 1
+                if cls == "SURGING":
+                    out["surging_count"] += 1
+                if cls == "COLLAPSING":
+                    out["collapsing_count"] += 1
+    except Exception:
+        pass
+    return jsonify(out)
+
+
+@app.route("/api/options_flow")
+def api_options_flow():
+    out = {"generated_at": None, "signals": [], "bullish_count": 0, "bearish_count": 0, "high_conviction_count": 0}
+    try:
+        doc = _safe_read_json(DATA_DIR / "options_flow.json", {})
+        if isinstance(doc, dict):
+            out["generated_at"] = doc.get("generated_at")
+            arr = doc.get("signals") if isinstance(doc.get("signals"), list) else []
+            parsed = []
+            for s in arr[-100:]:
+                if not isinstance(s, dict):
+                    continue
+                score = s.get("score") if isinstance(s.get("score"), dict) else {}
+                flow = s.get("flow") if isinstance(s.get("flow"), dict) else {}
+                direction = str(score.get("direction") or "").upper()
+                cls = str(s.get("classification") or flow.get("classification") or "").upper()
+                conviction = int(score.get("conviction") or 0)
+                if direction == "BULL" or "BULLISH" in cls:
+                    out["bullish_count"] += 1
+                if direction == "BEAR" or "BEARISH" in cls:
+                    out["bearish_count"] += 1
+                if conviction >= 7:
+                    out["high_conviction_count"] += 1
+                parsed.append(
+                    {
+                        "symbol": s.get("symbol"),
+                        "direction": direction or ("BULL" if "BULLISH" in cls else ("BEAR" if "BEARISH" in cls else "NEUTRAL")),
+                        "classification": cls,
+                        "conviction": conviction,
+                        "premium": flow.get("premium"),
+                        "expiry": flow.get("expiry") or flow.get("expiry_days"),
+                        "reasoning": score.get("reasoning"),
+                        "timestamp": s.get("timestamp"),
+                    }
+                )
+            out["signals"] = parsed[-50:]
+    except Exception:
+        pass
+    return jsonify(out)
+
+
+@app.route("/api/earnings_intel")
+def api_earnings_intel():
+    out = {"entries": [], "total": 0, "beats_count": 0, "misses_count": 0, "upcoming_48h": []}
+    try:
+        doc = _safe_read_json(DATA_DIR / "earnings_intel.json", {"entries": []})
+        arr = doc.get("entries") if isinstance(doc, dict) and isinstance(doc.get("entries"), list) else []
+        positions = _safe_read_json(DATA_DIR / "positions.json", [])
+        if isinstance(positions, dict):
+            positions = positions.get("positions", [])
+        held = {str((p or {}).get("underlying_ticker") or (p or {}).get("ticker") or "").upper() for p in (positions or []) if isinstance(p, dict)}
+        held.discard("")
+        parsed = []
+        for e in arr[-100:]:
+            if not isinstance(e, dict):
+                continue
+            a = e.get("analysis") if isinstance(e.get("analysis"), dict) else {}
+            verdict = str(a.get("verdict") or e.get("verdict") or "IN_LINE")
+            if "BEAT" in verdict:
+                out["beats_count"] += 1
+            if "MISS" in verdict:
+                out["misses_count"] += 1
+            sym = str(e.get("symbol") or a.get("symbol") or "").upper()
+            parsed.append(
+                {
+                    "symbol": sym,
+                    "verdict": verdict,
+                    "recommended_action": a.get("recommended_action"),
+                    "revenue_vs_exp": a.get("revenue_vs_exp"),
+                    "guidance": a.get("guidance"),
+                    "ceo_tone": a.get("ceo_tone"),
+                    "top_concerns": a.get("top_concerns") if isinstance(a.get("top_concerns"), list) else [],
+                    "processed_at": e.get("generated_at") or e.get("processed_at"),
+                    "affects_open_position": sym in held,
+                }
+            )
+        out["entries"] = parsed[-50:]
+        out["total"] = len(parsed)
+        now = datetime.now(timezone.utc)
+        out["upcoming_48h"] = sorted(
+            {
+                str(x.get("symbol") or "").upper()
+                for x in out["entries"]
+                if _parse_iso(x.get("processed_at"))
+                and (now - _parse_iso(x.get("processed_at"))).total_seconds() <= 48 * 3600
+            }
+        )
+    except Exception:
+        pass
+    return jsonify(out)
+
+
+@app.route("/api/cross_asset")
+def api_cross_asset():
+    out = {
+        "generated_at": None,
+        "overall_bias": "NEUTRAL",
+        "confidence": 0,
+        "favored_sectors": [],
+        "avoid_sectors": [],
+        "key_signal": "",
+        "reasoning": "",
+        "instruments": {},
+    }
+    try:
+        doc = _safe_read_json(DATA_DIR / "cross_asset_signal.json", {})
+        if isinstance(doc, dict):
+            for k in ["generated_at", "overall_bias", "confidence", "favored_sectors", "avoid_sectors", "key_signal", "reasoning"]:
+                if k in doc:
+                    out[k] = doc.get(k)
+            inst = {}
+            matrix = doc.get("matrix") if isinstance(doc.get("matrix"), list) else []
+            for row in matrix:
+                if not isinstance(row, dict):
+                    continue
+                asset = str(row.get("asset") or "").upper()
+                if not asset:
+                    continue
+                inst[asset] = {
+                    "change": row.get("change_1d"),
+                    "classification": row.get("state"),
+                    "implication": row.get("implication"),
+                }
+            out["instruments"] = inst
+    except Exception:
+        pass
+    return jsonify(out)
+
+
+@app.route("/api/prompt_evolution")
+def api_prompt_evolution():
+    out = {
+        "active_variant": "control",
+        "evolution_triggered_at": None,
+        "trigger_avg_score": None,
+        "failure_patterns": [],
+        "variants": {},
+        "recent_log": [],
+        "evolution_count": 0,
+    }
+    try:
+        doc = _safe_read_json(DATA_DIR / "prompt_store.json", {})
+        if isinstance(doc, dict):
+            out["active_variant"] = str(doc.get("active_variant") or "control")
+            out["evolution_triggered_at"] = doc.get("evolution_triggered_at")
+            out["trigger_avg_score"] = doc.get("trigger_avg_score")
+            out["failure_patterns"] = doc.get("failure_patterns") if isinstance(doc.get("failure_patterns"), list) else []
+            vars_in = doc.get("variants") if isinstance(doc.get("variants"), dict) else {}
+            vv = {}
+            for name in ["control", "variant_a", "variant_b"]:
+                src = vars_in.get(name) if isinstance(vars_in.get(name), dict) else {}
+                vv[name] = {
+                    "avg_score": src.get("avg_score"),
+                    "trade_count": int(src.get("trade_count") or 0),
+                    "active_since": src.get("active_since"),
+                }
+            out["variants"] = vv
+        lines = _safe_tail(LOGS_DIR / "prompt_evolution.log", 20)
+        out["recent_log"] = lines
+        out["evolution_count"] = sum(1 for ln in lines if "evolution_trigger" in ln or "Using variant" in ln)
+    except Exception:
+        pass
+    return jsonify(out)
+
+
+@app.route("/api/reflection_trend")
+def api_reflection_trend():
+    out = {
+        "last_7d_avg": 0.0,
+        "last_30d_avg": 0.0,
+        "trend": "STABLE",
+        "alert_triggered": False,
+        "alert_count": 0,
+        "total_trades_reflected": 0,
+        "recent_scores": [],
+        "score_distribution": {"excellent": 0, "good": 0, "poor": 0},
+    }
+    try:
+        doc = _safe_read_json(DATA_DIR / "reflection_log.json", {})
+        rows = []
+        if isinstance(doc, dict):
+            rows = doc.get("records") if isinstance(doc.get("records"), list) else doc.get("entries")
+            if not isinstance(rows, list):
+                rows = []
+        scored = []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            try:
+                s = float(r.get("score"))
+            except Exception:
+                continue
+            dt = _parse_iso(r.get("date") or r.get("ts_utc") or r.get("timestamp"))
+            scored.append((dt, s, r))
+            if s >= 8:
+                out["score_distribution"]["excellent"] += 1
+            elif s >= 6:
+                out["score_distribution"]["good"] += 1
+            else:
+                out["score_distribution"]["poor"] += 1
+        out["total_trades_reflected"] = len(scored)
+        now = datetime.now(timezone.utc)
+        s7 = [s for dt, s, _ in scored if dt and (now - dt).total_seconds() <= 7 * 86400]
+        s30 = [s for dt, s, _ in scored if dt and (now - dt).total_seconds() <= 30 * 86400]
+        out["last_7d_avg"] = round(sum(s7) / len(s7), 3) if s7 else 0.0
+        out["last_30d_avg"] = round(sum(s30) / len(s30), 3) if s30 else 0.0
+        if out["last_7d_avg"] - out["last_30d_avg"] > 0.3:
+            out["trend"] = "IMPROVING"
+        elif out["last_30d_avg"] - out["last_7d_avg"] > 0.3:
+            out["trend"] = "DEGRADING"
+        else:
+            out["trend"] = "STABLE"
+        out["recent_scores"] = [
+            {
+                "date": str((dt.isoformat() if dt else r.get("date") or ""))[:10],
+                "symbol": r.get("symbol"),
+                "score": int(s),
+                "feedback": str(r.get("feedback") or r.get("summary") or "")[:180],
+            }
+            for dt, s, r in scored[-10:]
+        ]
+        alerts = _safe_tail(LOGS_DIR / "reflection_alert.log", 5000)
+        out["alert_count"] = len(alerts)
+        out["alert_triggered"] = out["alert_count"] > 0
+    except Exception:
+        pass
+    return jsonify(out)
+
+
+@app.route("/api/backtest_latest")
+def api_backtest_latest():
+    out = {}
+    try:
+        doc = _safe_read_json(DATA_DIR / "backtest_results.json", {"runs": []})
+        runs = doc.get("runs") if isinstance(doc, dict) and isinstance(doc.get("runs"), list) else []
+        if not runs:
+            return jsonify(out)
+        r = runs[-1]
+        out = {
+            "run_date": r.get("generated_at"),
+            "trades_analyzed": r.get("total_trades"),
+            "original_win_rate": (r.get("original") or {}).get("win_rate_pct"),
+            "backtested_win_rate": (r.get("backtested") or {}).get("win_rate_pct"),
+            "win_rate_delta": (r.get("delta") or {}).get("win_rate_pct"),
+            "original_avg_pnl": (r.get("original") or {}).get("avg_pnl_pct"),
+            "backtested_avg_pnl": (r.get("backtested") or {}).get("avg_pnl_pct"),
+            "pnl_delta": (r.get("delta") or {}).get("avg_pnl_pct"),
+            "trades_rejected_by_stack": (r.get("backtested") or {}).get("rejected_count"),
+            "loss_avoided_pct": 0.0,
+            "critique_agreement_rate": r.get("critique_agreement_rate_pct"),
+            "avg_reflection_score": r.get("avg_reflection_score"),
+            "top_missed_opportunities": r.get("top_missed_opportunities") or [],
+            "top_correct_rejections": r.get("top_correct_rejections") or [],
+        }
+    except Exception:
+        pass
+    return jsonify(out)
+
+
+@app.route("/api/morning_briefing")
+def api_morning_briefing():
+    out = {
+        "date": None,
+        "found": False,
+        "risk_posture": "",
+        "macro_line": "",
+        "position_assessments": [],
+        "top_risks": [],
+        "sentiment_velocity_section": "",
+        "reflection_score_line": "",
+        "full_log": [],
+        "log_path": "",
+    }
+    try:
+        today = _today_et_datestr()
+        yday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+        cand = [LOGS_DIR / f"briefing_{today}.log", LOGS_DIR / f"briefing_{yday}.log"]
+        path = next((p for p in cand if p.exists()), None)
+        if not path:
+            return jsonify(out)
+        lines = _safe_tail(path, 2000)
+        out["found"] = True
+        out["date"] = path.stem.split("_")[-1]
+        out["full_log"] = lines
+        out["log_path"] = str(path)
+        for i, ln in enumerate(lines):
+            s = ln.strip()
+            up = s.upper()
+            if up.startswith("MACRO:"):
+                out["macro_line"] = s
+            if "RISK POSTURE:" in up:
+                out["risk_posture"] = s.split(":", 1)[-1].strip()
+            if "REFLECTION" in up and "AVG" in up:
+                out["reflection_score_line"] = s
+            if "SENTIMENT VELOCITY" in up:
+                out["sentiment_velocity_section"] = "\n".join(lines[i : min(i + 20, len(lines))])
+            m = re.match(r"\s*([A-Z]{1,6})\s*[—-]\s*(HOLD|WATCH|EXIT_RISK)\s*[—-]\s*(.*)$", s)
+            if m:
+                out["position_assessments"].append({"symbol": m.group(1), "assessment": m.group(2), "reason": m.group(3)})
+            if s.startswith("- ") and len(out["top_risks"]) < 10:
+                out["top_risks"].append(s[2:])
+    except Exception:
+        pass
+    return jsonify(out)
+
+
+@app.route("/api/alerts_feed")
+def api_alerts_feed():
+    out = {"total_alerts": 0, "exit_risk_count": 0, "recent": []}
+    try:
+        p = LOGS_DIR / "alerts.log"
+        lines = _safe_tail(p, 5000)
+        out["total_alerts"] = len(lines)
+        out["exit_risk_count"] = sum(1 for ln in lines if "EXIT_RISK" in ln.upper())
+        recent = []
+        for ln in lines[-20:]:
+            up = ln.upper()
+            typ = "ALERT"
+            for t in ["EXIT_RISK", "PROMPT_ALERT", "REGIME", "OPTIONS", "EARNINGS", "SENTIMENT"]:
+                if t in up:
+                    typ = t
+                    break
+            sym = None
+            m = re.search(r"\b[A-Z]{1,6}\b", ln)
+            if m:
+                sym = m.group(0)
+            recent.append({"timestamp": "", "type": typ, "symbol": sym, "message": ln})
+        out["recent"] = recent[-20:]
+    except Exception:
+        pass
+    return jsonify(out)
 
 
 @app.route("/manifest.json")
