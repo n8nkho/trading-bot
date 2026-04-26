@@ -68,6 +68,32 @@ def run_briefing(*, dry_run: bool = True) -> dict:
         prev = {}
     prev["updated_at"] = et.isoformat()
     prev["notes"] = str(prev.get("notes") or "") + f" | briefing {et.date()}"
+    # ── Sentiment velocity hook (read-only) ──────────────────────────────
+    try:
+        if os.path.exists("data/sentiment_velocity.json"):
+            from utils.atomic_json import read_json as _read_json
+
+            _sv = _read_json("data/sentiment_velocity.json", default={})
+            _sv_symbols = _sv.get("symbols", {})
+            if _sv_symbols:
+                _logger.log_briefing("\nSENTIMENT VELOCITY:", dated_filename=dated)
+                for _sym, _sv_data in _sv_symbols.items():
+                    _cls = _sv_data.get("classification", "UNKNOWN")
+                    _vel = _sv_data.get("velocity", 0)
+                    _sig = _sv_data.get("signal", "")
+                    _theme = _sv_data.get("key_themes", [])
+                    _theme_str = ", ".join(_theme[:2]) if _theme else ""
+                    _logger.log_briefing(
+                        f"  {_sym} — {_cls} (velocity: {_vel:+.2f}) "
+                        f"| signal: {_sig}"
+                        + (f" | {_theme_str}" if _theme_str else ""),
+                        dated_filename=dated,
+                    )
+            else:
+                _logger.log_briefing("\nSENTIMENT VELOCITY: no data yet", dated_filename=dated)
+    except Exception as _e:
+        _logger.log_briefing(f"\nSENTIMENT VELOCITY: unavailable ({_e})", dated_filename=dated)
+    # ── End sentiment velocity hook ───────────────────────────────────────
     write_json_atomic(_RISK_PARAMS, prev)
     return {**summary, "daily_risk_params_updated": True}
 

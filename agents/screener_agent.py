@@ -786,6 +786,36 @@ class RecursiveScreener:
         *,
         portfolio_nav: float | None = None,
     ) -> list[dict]:
+        # ── Regime hook (read-only) ──────────────────────────────────────────
+        _regime_min_score = None
+        _regime_halt = False
+        try:
+            if os.path.exists("data/daily_risk_params.json"):
+                from utils.atomic_json import read_json
+
+                _rp = read_json("data/daily_risk_params.json", default={})
+                _regime_params = _rp.get("regime_params", {})
+                if _regime_params.get("halt_new_entries"):
+                    _regime_halt = True
+                if _regime_params.get("screener_min_score") is not None:
+                    _regime_min_score = float(_regime_params["screener_min_score"])
+        except Exception as _e:
+            pass  # Silent — never interrupt screening
+
+        if _regime_halt:
+            try:
+                from utils.fortress_logger import append_log
+
+                append_log("screener.log", f"[REGIME] halt_new_entries=True — returning 0 candidates")
+            except Exception:
+                pass
+            return []
+
+        # Use regime-adjusted min score if available, else existing default
+        _l2_min_score = _regime_min_score if _regime_min_score is not None \
+            else getattr(self, 'min_score', 65)
+        # ── End regime hook ──────────────────────────────────────────────────
+
         if not _recursive_screener_enabled():
             return list(candidates)
 
@@ -844,7 +874,7 @@ class RecursiveScreener:
                 continue
 
             tech, card = self.score_technical(cand)
-            if tech < self.min_layer2_score:
+            if tech < _l2_min_score:
                 hints = []
                 if float(card.get("volume_score") or 0) < 45:
                     hints.append("weak volume")

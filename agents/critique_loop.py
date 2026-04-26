@@ -105,13 +105,65 @@ def evaluate_with_critique(
         pass1 = _pass1_fallback(signal)
         pass2 = _pass2_fallback(pass1)
     else:
-        p1_raw = r.call_deepseek(_build_pass1_prompt(signal, trade))
+        # ── Prompt evolution hook (read-only) ────────────────────────────────
+        _pass1_prompt = _build_pass1_prompt(signal, trade)
+        _pass2_prompt = _build_pass2_prompt(signal, trade, {})
+        try:
+            if os.path.exists("data/prompt_store.json"):
+                from utils.atomic_json import read_json as _ps_read
+
+                _ps = _ps_read("data/prompt_store.json", default={})
+                _active = _ps.get("active_variant", "control")
+                if _active and _active != "control":
+                    _variant = _ps.get("variants", {}).get(_active, {})
+                    if _variant.get("pass1_prompt"):
+                        _pass1_prompt = _variant["pass1_prompt"].format(
+                            signal=json.dumps(signal, default=str),
+                            trade=json.dumps(trade, default=str),
+                        )
+                    if _variant.get("pass2_prompt"):
+                        _pass2_prompt = _variant["pass2_prompt"]
+                    try:
+                        from utils.fortress_logger import append_critique_log
+
+                        append_critique_log(f"[PROMPT_EVOLUTION] Using variant: {_active}")
+                    except Exception:
+                        pass
+        except Exception:
+            pass  # Silent — always fall back to defaults
+        # ── End prompt evolution hook ─────────────────────────────────────────
+
+        p1_raw = r.call_deepseek(_pass1_prompt)
         pass1 = _parse_json_response(p1_raw or "") or _pass1_fallback(signal)
         if "decision" not in pass1:
             pass1["decision"] = _pass1_fallback(signal)["decision"]
         if "confidence" not in pass1:
             pass1["confidence"] = _pass1_fallback(signal)["confidence"]
-        p2_raw = r.call_xai(_build_pass2_prompt(signal, trade, pass1))
+        # Refresh pass2 prompt with pass1 context unless prompt-store override exists.
+        _default_p2 = _build_pass2_prompt(signal, trade, pass1)
+        try:
+            if os.path.exists("data/prompt_store.json"):
+                from utils.atomic_json import read_json as _ps_read
+
+                _ps2 = _ps_read("data/prompt_store.json", default={})
+                _active2 = _ps2.get("active_variant", "control")
+                if _active2 and _active2 != "control":
+                    _variant2 = _ps2.get("variants", {}).get(_active2, {})
+                    if _variant2.get("pass2_prompt"):
+                        _pass2_prompt = _variant2["pass2_prompt"].format(
+                            signal=json.dumps(signal, default=str),
+                            trade=json.dumps(trade, default=str),
+                            pass1=json.dumps(pass1, default=str),
+                        )
+                    else:
+                        _pass2_prompt = _default_p2
+                else:
+                    _pass2_prompt = _default_p2
+            else:
+                _pass2_prompt = _default_p2
+        except Exception:
+            _pass2_prompt = _default_p2
+        p2_raw = r.call_xai(_pass2_prompt)
         pass2 = _parse_json_response(p2_raw or "") or _pass2_fallback(pass1)
         if "verdict" not in pass2:
             pass2["verdict"] = _pass2_fallback(pass1)["verdict"]
