@@ -162,6 +162,13 @@ AGENT_LOGS = {
     "reflection_agent": {"log": LOGS_DIR / "reflection.log", "name": "Reflection Agent", "max_age_hours": 30},
     "briefing_agent": {"log": LOGS_DIR / "briefing.log", "name": "Morning Briefing", "max_age_hours": 30},
     "alerts": {"log": LOGS_DIR / "alerts.log", "name": "Fortress Alerts", "max_age_hours": 26},
+    "regime_detector": {"log": LOGS_DIR / "regime.log", "name": "Regime Detector", "max_age_hours": 6},
+    "cross_asset_agent": {"log": LOGS_DIR / "cross_asset.log", "name": "Cross Asset Agent", "max_age_hours": 12},
+    "sentiment_velocity_agent": {"log": LOGS_DIR / "sentiment_velocity.log", "name": "Sentiment Velocity", "max_age_hours": 3},
+    "options_flow_agent": {"log": LOGS_DIR / "options_flow.log", "name": "Options Flow Agent", "max_age_hours": 6},
+    "earnings_intel_agent": {"log": LOGS_DIR / "earnings_intel.log", "name": "Earnings Intel Agent", "max_age_hours": 12},
+    "backtest_agent": {"log": LOGS_DIR / "backtest.log", "name": "Backtest Agent", "max_age_hours": 30},
+    "prompt_evolution_agent": {"log": LOGS_DIR / "prompt_evolution.log", "name": "Prompt Evolution", "max_age_hours": 30},
 }
 
 # Core execution path expected to stay fresh for BOT objectives.
@@ -213,6 +220,13 @@ ALWAYS_SHOW_NONCORE_IDS = {
     "reflection_agent",
     "briefing_agent",
     "alerts",
+    "regime_detector",
+    "cross_asset_agent",
+    "sentiment_velocity_agent",
+    "options_flow_agent",
+    "earnings_intel_agent",
+    "backtest_agent",
+    "prompt_evolution_agent",
 }
 
 # Extend agent activity to include *all* agent modules in `agents/`.
@@ -238,6 +252,12 @@ def _extend_agent_logs_from_modules() -> None:
         "critique_loop": ("critique.log", "Critique Loop"),
         "reflection_agent": ("reflection.log", "Reflection Agent"),
         "briefing_agent": ("briefing.log", "Morning Briefing"),
+        "regime_detector": ("regime.log", "Regime Detector"),
+        "cross_asset_agent": ("cross_asset.log", "Cross Asset Agent"),
+        "sentiment_velocity_agent": ("sentiment_velocity.log", "Sentiment Velocity"),
+        "options_flow_agent": ("options_flow.log", "Options Flow Agent"),
+        "earnings_intel_agent": ("earnings_intel.log", "Earnings Intel Agent"),
+        "prompt_evolution_agent": ("prompt_evolution.log", "Prompt Evolution"),
     }
 
     # Hedging/fortress-related modules tend to emit into fortress orchestration stdout/stderr.
@@ -271,6 +291,13 @@ def _extend_agent_logs_from_modules() -> None:
             "critique_loop": "critique_loop",
             "reflection_agent": "reflection_agent",
             "briefing_agent": "briefing_agent",
+            "regime_detector": "regime_detector",
+            "cross_asset_agent": "cross_asset_agent",
+            "sentiment_velocity_agent": "sentiment_velocity_agent",
+            "options_flow_agent": "options_flow_agent",
+            "earnings_intel_agent": "earnings_intel_agent",
+            "backtest_agent": "backtest_agent",
+            "prompt_evolution_agent": "prompt_evolution_agent",
         }
         agent_id = id_map.get(stem, stem)
 
@@ -827,8 +854,48 @@ def get_agent_activity():
     }
     hidden_legacy = 0
     hidden_stale_noncore = 0
+    flag_map = {
+        "regime_detector": "FORTRESS_REGIME_DETECTION_ENABLED",
+        "cross_asset_agent": "FORTRESS_CROSS_ASSET_ENABLED",
+        "sentiment_velocity_agent": "FORTRESS_SENTIMENT_VELOCITY_ENABLED",
+        "options_flow_agent": "FORTRESS_OPTIONS_FLOW_ENABLED",
+        "earnings_intel_agent": "FORTRESS_EARNINGS_INTEL_ENABLED",
+        "backtest_agent": "FORTRESS_BACKTEST_ENABLED",
+        "prompt_evolution_agent": "FORTRESS_PROMPT_EVOLUTION_ENABLED",
+        "critique_loop": "FORTRESS_CRITIQUE_LOOP_ENABLED",
+        "reflection_agent": "FORTRESS_REFLECTION_ALLOW_WRITES",
+        "briefing_agent": "FORTRESS_BRIEFING_ALLOW_WRITES",
+    }
+    category_override = {
+        "critique_loop": "CORE",
+        "reflection_agent": "CORE",
+        "briefing_agent": "CORE",
+        "regime_detector": "EXT",
+        "cross_asset_agent": "EXT",
+        "sentiment_velocity_agent": "EXT",
+        "options_flow_agent": "EXT",
+        "earnings_intel_agent": "EXT",
+        "backtest_agent": "EXT",
+        "prompt_evolution_agent": "EXT",
+    }
+
+    def _env_enabled(name: str | None) -> bool | None:
+        if not name:
+            return None
+        v = str(os.getenv(name, "")).strip().lower()
+        if v == "":
+            return False
+        return v not in {"0", "false", "no", "off"}
+
     for key, cfg in AGENT_LOGS.items():
         log_path = cfg["log"]
+        if key == "backtest_agent":
+            try:
+                picks = sorted(LOGS_DIR.glob("backtest_*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+                if picks:
+                    log_path = picks[0]
+            except Exception:
+                pass
         max_h = cfg["max_age_hours"]
         status = "stale"
         ui_status = "stale"
@@ -903,6 +970,9 @@ def get_agent_activity():
             "stale_actionable": stale_actionable,
             "last_run": last_run,
             "last_activity": last_line,
+            "flag": flag_map.get(key),
+            "flag_enabled": _env_enabled(flag_map.get(key)),
+            "category": category_override.get(key, ("CORE" if tier == "required" else ("OPTIONAL" if tier == "optional" else "EXT"))),
         }
 
         # Core rows are always visible.

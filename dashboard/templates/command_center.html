@@ -877,12 +877,15 @@
       el.innerHTML = rows.map(a => {
         const time = a.last_run ? new Date(a.last_run).toLocaleString() : '—';
         const activity = (a.last_activity || '').replace(/</g, '&lt;').substring(0, 80);
-        const tier = a.tier === 'required' ? 'CORE' : (a.tier === 'optional' ? 'OPTIONAL' : 'EXT');
-        const tierColor = a.tier === 'required' ? 'var(--cyan)' : 'var(--text-dim)';
+        const tier = (a.category || (a.tier === 'required' ? 'CORE' : (a.tier === 'optional' ? 'OPTIONAL' : 'EXT'))).toString();
+        const tierColor = tier === 'CORE' ? 'var(--cyan)' : 'var(--text-dim)';
+        const flag = (a.flag || '').toString();
+        const enabled = a.flag_enabled === true ? 'ENABLED' : (a.flag_enabled === false ? 'DISABLED' : 'N/A');
+        const enabledColor = a.flag_enabled === true ? 'var(--green)' : (a.flag_enabled === false ? 'var(--red)' : 'var(--text-muted)');
         const dot = a.ui_status || a.status || 'stale';
         return `<div class="agent-row">
           <span class="agent-dot ${dot}"></span>
-          <span>${a.name} <span style="color:${tierColor};font-size:10px;letter-spacing:0.04em;">${tier}</span></span>
+          <span>${a.name} <span style="color:${tierColor};font-size:10px;letter-spacing:0.04em;">${tier}</span><br><span class="text-muted" style="font-size:10px;">${flag ? flag.replace(/</g, '&lt;') : '—'} · <span style="color:${enabledColor};">${enabled}</span></span></span>
           <span class="agent-activity" title="${activity}">${activity || '—'}</span>
           <span class="text-muted">${time}</span>
         </div>`;
@@ -2011,7 +2014,7 @@
       }
     }
 
-    function renderOperatorBrief(data) {
+    function renderOperatorBrief(data, extras) {
       const el = document.getElementById('operatorBrief');
       if (!el) return;
       if (!data) {
@@ -2046,6 +2049,30 @@
         const ok = s.ok ? 'var(--green)' : 'var(--amber)';
         return `<div style="display:flex;gap:0.5rem;align-items:flex-start;"><span style="color:${ok};font-weight:700;">${s.ok ? '✓' : '!'}</span><span>${(s.text || '').replace(/</g, '&lt;')}</span></div>`;
       }).join('');
+      const ex = extras || {};
+      const now = new Date();
+      const toDate = (v) => { const d = v ? new Date(v) : null; return (d && !isNaN(d.getTime())) ? d : null; };
+      const regimeDt = toDate(ex.regimeStatus && ex.regimeStatus.regime_detected_at);
+      const svDt = toDate(ex.sentimentVelocity && ex.sentimentVelocity.generated_at);
+      const briefDate = ((ex.morningBriefing && ex.morningBriefing.date) || '').toString();
+      const today = (function () {
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, '0');
+        const d = String(now.getDate()).padStart(2, '0');
+        return y + m + d;
+      })();
+      const critiquesRow = ((ex.agents && ex.agents.agents) || []).find(a => a && a.id === 'critique_loop');
+      const deepChecks = [
+        { ok: !!(regimeDt && ((now - regimeDt) / 3600000) < 3), text: 'Regime detector: last run < 3 hours ago' },
+        { ok: !!(ex.morningBriefing && ex.morningBriefing.found && briefDate === today), text: "Morning briefing: today's file exists" },
+        { ok: !!(svDt && ((now - svDt) / 3600000) < 1), text: 'Sentiment velocity: data < 1 hour old' },
+        { ok: !!(critiquesRow && critiquesRow.flag_enabled === true), text: 'Critique loop: enabled (FORTRESS_CRITIQUE_LOOP_ENABLED)' },
+        { ok: !((ex.reflectionTrend && Number(ex.reflectionTrend.alert_count || 0) > 0)), text: 'Prompt evolution: no degradation alert' },
+      ];
+      const deepHtml = deepChecks.map(s => {
+        const ok = s.ok ? 'var(--green)' : 'var(--amber)';
+        return `<div style="display:flex;gap:0.5rem;align-items:flex-start;"><span style="color:${ok};font-weight:700;">${s.ok ? '✓' : '!'}</span><span>${(s.text || '').replace(/</g, '&lt;')}</span></div>`;
+      }).join('');
       const bookHtml = book.length ? book.map(b => {
         const e = b.earnings_within_10d ? ` · <strong>earnings</strong> ≤10d ${b.earnings_within_10d}` : '';
         const ch = b.chg_pct_1d != null ? ` 1d ${b.chg_pct_1d >= 0 ? '+' : ''}${b.chg_pct_1d}%` : '';
@@ -2074,6 +2101,7 @@
         <div style="margin-top:0.85rem;padding-top:0.65rem;border-top:1px solid var(--border);">
           <div style="color:var(--amber);font-family:'Orbitron',sans-serif;font-size:0.7rem;letter-spacing:0.08em;margin-bottom:0.35rem;">STACK CHECKLIST</div>
           ${stackHtml}
+          <div style="margin-top:0.5rem;">${deepHtml}</div>
         </div>
         <div style="margin-top:0.85rem;padding-top:0.65rem;border-top:1px solid var(--border);">
           <div style="color:var(--amber);font-family:'Orbitron',sans-serif;font-size:0.7rem;letter-spacing:0.08em;margin-bottom:0.35rem;">BOOK-AWARE (${(data.stack && data.stack.positions_count) || 0} symbols · ${(data.stack && data.stack.book_source) || '—'})</div>
@@ -2137,7 +2165,13 @@
           fetch(API.morningBriefing, NO_CACHE).then(r => r.json()).catch(() => ({})),
           fetch(API.alertsFeed, NO_CACHE).then(r => r.json()).catch(() => ({}))
         ]);
-        renderOperatorBrief(await fetchOperatorBriefSafe());
+        renderOperatorBrief(await fetchOperatorBriefSafe(), {
+          regimeStatus,
+          sentimentVelocity,
+          morningBriefing,
+          reflectionTrend,
+          agents
+        });
         renderTradingViewSignals(tvSignals);
         renderHealth(health);
         renderAgents(agents);
