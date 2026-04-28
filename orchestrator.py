@@ -2660,7 +2660,14 @@ def print_regime_health_banner() -> None:
         except Exception as e:
             print(f"  hedging_recommendations.json: read error ({type(e).__name__})")
     else:
-        print("  hedging_recommendations.json: (missing — refresh fortress / hedge cycle)")
+        # Newer fortress outputs may only persist recommendations inside fortress_report.
+        report_strategies = (report or {}).get("strategies") if isinstance(report, dict) else None
+        if isinstance(report_strategies, dict) and report_strategies:
+            print(
+                "  hedging_recommendations.json: (missing — using fortress_report strategies snapshot)"
+            )
+        else:
+            print("  hedging_recommendations.json: (missing — refresh fortress / hedge cycle)")
     print("=" * 72 + "\n")
 
 
