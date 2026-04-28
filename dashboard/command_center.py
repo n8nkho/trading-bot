@@ -3957,7 +3957,9 @@ def api_reflection_trend():
                 s = float(r.get("score"))
             except Exception:
                 continue
-            dt = _parse_iso(r.get("date") or r.get("ts_utc") or r.get("timestamp"))
+            dt = _parse_iso(r.get("ts_utc") or r.get("timestamp") or r.get("date"))
+            if dt and dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
             scored.append((dt, s, r))
             if s >= 8:
                 out["score_distribution"]["excellent"] += 1
