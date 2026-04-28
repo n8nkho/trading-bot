@@ -59,15 +59,14 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 CORS(app)
 
-# Optional HTTP Basic auth for Command Center + APIs (manifest/health/setup stay public).
+# Optional HTTP Basic auth for Command Center + APIs.
+# Read-only first-run setup paths stay public; credential-changing setup APIs do not.
 _DASH_PUBLIC_PATHS = frozenset({
     "/api/health",
     "/api/system_health",
     "/proof",
     "/setup",
     "/api/setup/status",
-    "/api/setup/save_keys",
-    "/api/setup/test_connection",
     "/manifest.json",
     "/api/hooks/tradingview",
     "/api/billing/stripe-webhook",
