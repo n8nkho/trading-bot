@@ -25,9 +25,40 @@ def _load() -> dict[str, Any]:
     return doc
 
 
+def _to_float(v: Any) -> float | None:
+    try:
+        if v is None:
+            return None
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_pnl_fields(record: dict[str, Any]) -> dict[str, Any]:
+    """
+    Ensure percentage PnL fields are consistently present for downstream reflection.
+
+    Canonical field is `pnl_pct` in percent units, e.g. 2.5 means +2.5%.
+    """
+    out = dict(record)
+    pct = _to_float(out.get("pnl_pct"))
+    if pct is None:
+        pct = _to_float(out.get("pnl_percent"))
+    if pct is None:
+        pct = _to_float(out.get("return_pct"))
+    if pct is None:
+        frac = _to_float(out.get("pnl_pct_fraction"))
+        if frac is not None:
+            # Fractional inputs are common in orchestrator, e.g. 0.023 => 2.3%.
+            pct = frac * 100.0 if abs(frac) <= 1.0 else frac
+    if pct is not None:
+        out["pnl_pct"] = round(pct, 6)
+    return out
+
+
 def append_closed_trade(record: dict[str, Any]) -> str:
     tid = str(record.get("id") or uuid.uuid4())
-    record = dict(record)
+    record = _normalize_pnl_fields(dict(record))
     record.setdefault("id", tid)
     doc = _load()
     doc["trades"].append(record)
