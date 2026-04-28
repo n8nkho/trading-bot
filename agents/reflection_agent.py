@@ -32,6 +32,78 @@ def _allow_writes() -> bool:
     )
 
 
+def _trade_pnl_pct(trade: dict) -> float | None:
+    for key in ("pnl_pct", "pnl_percent", "return_pct", "realized_pnl_pct"):
+        try:
+            if key in trade and trade.get(key) is not None:
+                return float(trade.get(key))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _build_reflection_entry(ts_utc: str, trades: list[dict], recent: list[dict]) -> dict:
+    issues: list[str] = []
+    wins = 0
+    losses = 0
+    scored = 0
+    total_pnl = 0.0
+
+    for t in recent:
+        if not isinstance(t, dict):
+            continue
+        pnl = _trade_pnl_pct(t)
+        if pnl is None:
+            continue
+        scored += 1
+        total_pnl += pnl
+        if pnl >= 0:
+            wins += 1
+        else:
+            losses += 1
+
+    score = 8.0
+    if len(trades) == 0:
+        score -= 4.0
+        issues.append("No closed trades recorded in trade_history.json")
+    if len(recent) == 0:
+        score -= 1.0
+        issues.append("No recent window available for reflection")
+    if scored == 0 and len(recent) > 0:
+        score -= 2.0
+        issues.append("Recent trades missing pnl_pct/return_pct fields")
+    if losses > wins and scored >= 3:
+        score -= 2.0
+        issues.append("Losses outnumber wins in reflection window")
+    if total_pnl < -2.0 and scored >= 3:
+        score -= 1.5
+        issues.append("Net recent pnl_pct is materially negative")
+
+    score = max(0.0, min(10.0, score))
+    symbol = "portfolio"
+    if recent and isinstance(recent[-1], dict):
+        symbol = str(recent[-1].get("symbol") or symbol)
+
+    if issues:
+        feedback = "; ".join(issues)
+    else:
+        feedback = "Baseline checks healthy: trade history and pnl fields present"
+
+    return {
+        "ts_utc": ts_utc,
+        "date": ts_utc[:10],
+        "symbol": symbol,
+        "score": round(score, 2),
+        "feedback": feedback,
+        "trade_count_total": len(trades),
+        "trade_count_window": len(recent),
+        "wins_window": wins,
+        "losses_window": losses,
+        "scored_trades_window": scored,
+        "avg_pnl_pct_window": round(total_pnl / scored, 4) if scored > 0 else None,
+    }
+
+
 def run_reflection(*, dry_run: bool = True) -> dict:
     trades_doc = read_json(_TRADE_HISTORY, {"trades": []})
     trades = trades_doc.get("trades") if isinstance(trades_doc, dict) else []
@@ -53,13 +125,7 @@ def run_reflection(*, dry_run: bool = True) -> dict:
     entries = log_doc.get("entries") if isinstance(log_doc, dict) else []
     if not isinstance(entries, list):
         entries = []
-    entries.append(
-        {
-            "ts_utc": summary["ts_utc"],
-            "trade_count_total": len(trades),
-            "snippet": f"last_window={len(recent)} trades (LLM summary optional; wire LLMRouter later)",
-        }
-    )
+    entries.append(_build_reflection_entry(summary["ts_utc"], trades, recent))
     log_doc = {"entries": entries}
     write_json_atomic(_REFLECTION_LOG, log_doc)
     return {**summary, "reflection_appended": True}
