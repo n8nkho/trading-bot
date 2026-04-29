@@ -2062,10 +2062,13 @@
         return y + m + d;
       })();
       const critiquesRow = ((ex.agents && ex.agents.agents) || []).find(a => a && a.id === 'critique_loop');
+      const regimeRow = ((ex.agents && ex.agents.agents) || []).find(a => a && a.id === 'regime_detector');
+      const svRow = ((ex.agents && ex.agents.agents) || []).find(a => a && a.id === 'sentiment_velocity');
+      const isFreshRow = (r) => !!(r && (r.status === 'fresh' || r.ui_status === 'fresh'));
       const deepChecks = [
-        { ok: !!(regimeDt && ((now - regimeDt) / 3600000) < 3), text: 'Regime detector: last run < 3 hours ago' },
+        { ok: !!((regimeDt && ((now - regimeDt) / 3600000) < 3) || isFreshRow(regimeRow)), text: 'Regime detector: last run < 3 hours ago' },
         { ok: !!(ex.morningBriefing && ex.morningBriefing.found && briefDate === today), text: "Morning briefing: today's file exists" },
-        { ok: !!(svDt && ((now - svDt) / 3600000) < 1), text: 'Sentiment velocity: data < 1 hour old' },
+        { ok: !!((svDt && ((now - svDt) / 3600000) < 1) || isFreshRow(svRow)), text: 'Sentiment velocity: data < 1 hour old' },
         { ok: !!(critiquesRow && critiquesRow.flag_enabled === true), text: 'Critique loop: enabled (FORTRESS_CRITIQUE_LOOP_ENABLED)' },
         { ok: !((ex.reflectionTrend && Number(ex.reflectionTrend.alert_count || 0) > 0)), text: 'Prompt evolution: no degradation alert' },
       ];
