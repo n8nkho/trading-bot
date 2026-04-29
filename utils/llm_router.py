@@ -31,6 +31,9 @@ def normalize_xai_api_key(raw: str) -> str:
     k = (raw or "").strip().strip('"').strip("'")
     if not k:
         return ""
+    # Cron/scripts sometimes prepend twice after merges — collapse `xai-xai-…` → `xai-…`.
+    while k.lower().startswith("xai-xai-"):
+        k = k[4:]
     if k.lower().startswith("xai-"):
         return k
     if len(k) >= 20 and re.fullmatch(r"[A-Za-z0-9_-]+", k):

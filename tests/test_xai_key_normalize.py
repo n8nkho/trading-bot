@@ -19,3 +19,9 @@ def test_preserves_full_prefix() -> None:
 
 def test_strips_quotes() -> None:
     assert normalize_xai_api_key('"Jrvg7LvK5KHm4mFFexg0"').startswith("xai-Jrvg7")
+
+
+def test_collapses_double_xai_prefix() -> None:
+    bare = "Jrvg7LvK5KHm4mFFexg0"
+    doubled = "xai-xai-" + bare
+    assert normalize_xai_api_key(doubled) == normalize_xai_api_key("xai-" + bare)

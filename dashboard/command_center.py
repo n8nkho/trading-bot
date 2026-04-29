@@ -557,6 +557,25 @@ def _tail(path, lines=50):
     return ""
 
 
+def _risk_log_werkzeug_noise(line: str, log_path: Path) -> bool:
+    """risk.log should only contain Risk Guardian; werkzeug lines indicate handler misrouting."""
+    return log_path.name == "risk.log" and "werkzeug" in line.lower()
+
+
+def _feed_line_usable(line: str, log_path: Path) -> bool:
+    """Skip JSON shards and werkzeug contamination so /api/feed stays human-readable."""
+    if _risk_log_werkzeug_noise(line, log_path):
+        return False
+    if _activity_line_usable(line):
+        return True
+    st = line.strip()
+    if re.match(r"^\d{4}-\d{2}-\d{2}", st) and re.search(
+        r"\s-\s[\w.]+\s-\s(INFO|WARNING|ERROR|CRITICAL)\b", line
+    ):
+        return True
+    return False
+
+
 def _activity_line_usable(line: str) -> bool:
     """Drop mid-JSON / Python-repr fragments so AGENT ACTIVITY shows a real log line when possible."""
     s = line.strip()
@@ -580,15 +599,30 @@ def _activity_line_usable(line: str) -> bool:
 def _agent_activity_snippet(log_path: Path, max_chars: int = 200) -> str:
     raw = _tail(log_path, 60)
     lines = [ln.rstrip() for ln in raw.splitlines() if ln.strip()]
+
+    def _snippet_skip(ln: str) -> bool:
+        if _risk_log_werkzeug_noise(ln, log_path):
+            return True
+        low = ln.lower()
+        if "expected_dividend" in low or "expected_return_pct" in low:
+            return True
+        return False
+
     for ln in reversed(lines):
+        if _snippet_skip(ln):
+            continue
         if _activity_line_usable(ln):
             return ln[-max_chars:]
     for ln in reversed(lines):
+        if _snippet_skip(ln):
+            continue
         if re.search(r"\b(INFO|ERROR|WARNING|CRITICAL)\b", ln) or re.match(
             r"^\d{4}-\d{2}-\d{2}", ln.strip()
         ):
             return ln[-max_chars:]
     for ln in reversed(lines):
+        if _snippet_skip(ln):
+            continue
         if len(ln) < 280 and ln.strip()[:1] not in "{[\"'.":
             return ln[-max_chars:]
     return ""
@@ -4345,6 +4379,8 @@ def api_feed():
         for line in raw.split("\n"):
             line = line.strip()
             if not line:
+                continue
+            if not _feed_line_usable(line, log_path):
                 continue
             # Skip JSON pretty-print fragments cron accidentally captured into agent logs.
             if len(line) <= 2 and line in "{}[]":

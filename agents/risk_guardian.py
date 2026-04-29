@@ -20,19 +20,30 @@ from utils.volatility_adaptive_sizing import (
     load_latest_vix_from_fortress_report,
 )
 
-# Setup logging
+# Setup logging: attach handlers only to this module's logger.
+# Do NOT use logging.basicConfig on the root logger — when the dashboard imports
+# risk_guardian, Flask/werkzeug request logs would otherwise be written to risk.log.
 log_dir = Path("logs")
 log_dir.mkdir(exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_dir / "risk.log"),
-        logging.StreamHandler()
-    ]
-)
+_fmt = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
+
+def _configure_risk_logging() -> None:
+    lg = logging.getLogger(__name__)
+    if lg.handlers:
+        return
+    lg.setLevel(logging.INFO)
+    fh = logging.FileHandler(log_dir / "risk.log")
+    fh.setFormatter(_fmt)
+    lg.addHandler(fh)
+    sh = logging.StreamHandler()
+    sh.setFormatter(_fmt)
+    lg.addHandler(sh)
+    lg.propagate = False
+
+
+_configure_risk_logging()
 logger = logging.getLogger(__name__)
 
 # Risk limits configuration
