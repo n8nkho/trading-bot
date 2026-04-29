@@ -562,8 +562,17 @@ def _risk_log_werkzeug_noise(line: str, log_path: Path) -> bool:
     return log_path.name == "risk.log" and "werkzeug" in line.lower()
 
 
+def _looks_like_flask_access_line(line: str) -> bool:
+    """HTTP request lines (werkzeug or default Flask) mistaken for agent logs when root logging targeted agent files."""
+    if "HTTP/1.1" not in line:
+        return False
+    return bool(re.search(r'"(?:GET|POST|PUT|DELETE|PATCH|HEAD)\s+/', line))
+
+
 def _feed_line_usable(line: str, log_path: Path) -> bool:
     """Skip JSON shards and werkzeug contamination so /api/feed stays human-readable."""
+    if _looks_like_flask_access_line(line):
+        return False
     if _risk_log_werkzeug_noise(line, log_path):
         return False
     if _activity_line_usable(line):
@@ -578,6 +587,8 @@ def _feed_line_usable(line: str, log_path: Path) -> bool:
 
 def _activity_line_usable(line: str) -> bool:
     """Drop mid-JSON / Python-repr fragments so AGENT ACTIVITY shows a real log line when possible."""
+    if _looks_like_flask_access_line(line):
+        return False
     s = line.strip()
     if len(s) < 6:
         return False
@@ -601,6 +612,8 @@ def _agent_activity_snippet(log_path: Path, max_chars: int = 200) -> str:
     lines = [ln.rstrip() for ln in raw.splitlines() if ln.strip()]
 
     def _snippet_skip(ln: str) -> bool:
+        if _looks_like_flask_access_line(ln):
+            return True
         if _risk_log_werkzeug_noise(ln, log_path):
             return True
         low = ln.lower()

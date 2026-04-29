@@ -21,6 +21,26 @@ from utils.runtime_config import get_llm_config
 DATA_DIR = Path("data")
 CURRENT_PARAMS_FILE = DATA_DIR / "current_params.json"
 
+_log_dir = Path("logs")
+_log_dir.mkdir(exist_ok=True)
+_screener_fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+
+def _configure_screener_logging() -> None:
+    """Only agents.screener_agent logs go to screener.log (not Flask/werkzeug on root)."""
+    lg = logging.getLogger(__name__)
+    if lg.handlers:
+        return
+    lg.setLevel(logging.INFO)
+    fh = logging.FileHandler(_log_dir / "screener.log")
+    fh.setFormatter(_screener_fmt)
+    lg.addHandler(fh)
+    lg.propagate = False
+
+
+_configure_screener_logging()
+logger = logging.getLogger(__name__)
+
 
 def _read_latest_json(data_dir: Path, pattern: str) -> dict:
     try:
@@ -118,7 +138,7 @@ def load_screening_params():
         if CURRENT_PARAMS_FILE.exists():
             with open(CURRENT_PARAMS_FILE, 'r') as f:
                 params = json.load(f)
-                logging.info(f"Loaded tuned parameters: RSI<{params['rsi_threshold']}, Drop: {params['drop_min']}% to {params['drop_max']}%")
+                logger.info(f"Loaded tuned parameters: RSI<{params['rsi_threshold']}, Drop: {params['drop_min']}% to {params['drop_max']}%")
                 return params
         else:
             # Default parameters
@@ -129,19 +149,13 @@ def load_screening_params():
                 'volume_ratio_min': 1.5
             }
     except Exception as e:
-        logging.error(f"Error loading parameters, using defaults: {e}")
+        logger.error(f"Error loading parameters, using defaults: {e}")
         return {
             'rsi_threshold': 40,
             'drop_min': -15,
             'drop_max': -5,
             'volume_ratio_min': 1.5
         }
-
-logging.basicConfig(
-    filename='logs/screener.log', 
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 
 def run_screener():
     # Load current parameters (may have been auto-tuned)
@@ -156,14 +170,14 @@ def run_screener():
     agentic_pack = load_agentic_opportunities(DATA_DIR, min_consensus=0.60)
     agentic_symbols = agentic_pack.get("symbols") or []
     if agentic_symbols:
-        logging.info(
+        logger.info(
             "Agentic queue loaded: %d BUY symbol(s) from scout+analyst (cio=%s, budget_fraction=%.2f)",
             len(agentic_symbols),
             agentic_pack.get("cio_directive"),
             float(agentic_pack.get("agentic_budget_fraction") or 1.0),
         )
     else:
-        logging.info("Agentic queue unavailable or empty; using deterministic-only screener tiers.")
+        logger.info("Agentic queue unavailable or empty; using deterministic-only screener tiers.")
 
     # LLM is optional/advisory. By default runtime config sets llm.provider=none,
     # so we should not block screening on a local Ollama call.
@@ -250,14 +264,14 @@ def run_screener():
 
         tiers, universe_cap_meta = apply_license_universe_cap(tiers)
         if universe_cap_meta.get("universe_truncated"):
-            logging.warning(
+            logger.warning(
                 "Universe trimmed by license: max=%s configured=%s using=%s",
                 universe_cap_meta.get("license_max_universe"),
                 universe_cap_meta.get("universe_configured_before_cap"),
                 universe_cap_meta.get("universe_after_cap"),
             )
     except Exception as exc:
-        logging.warning("License universe cap skipped: %s", exc)
+        logger.warning("License universe cap skipped: %s", exc)
 
     policy = get_profile_bundle()
     screening_cfg = policy.get("screening") or {}
@@ -377,7 +391,7 @@ def run_screener():
     for tier_idx, tier_stocks in enumerate(tiers[:max_tiers_to_scan], start=1):
         tier_start_ts = time.time()
         if time.time() - start_ts > max_runtime_seconds:
-            logging.warning(f"Screening runtime cap hit; stopping after tier {tier_idx-1}.")
+            logger.warning(f"Screening runtime cap hit; stopping after tier {tier_idx-1}.")
             tier_stop_reason = "runtime_cap_hit"
             break
 
@@ -500,14 +514,14 @@ def run_screener():
                 candidates.append(cand)
                 if source_label == "agentic":
                     agentic_candidate_count += 1
-                    logging.info("%s: candidate accepted via AGENTIC priority path", ticker)
+                    logger.info("%s: candidate accepted via AGENTIC priority path", ticker)
                 else:
                     deterministic_candidate_count += 1
-                    logging.info("%s: candidate accepted via deterministic path", ticker)
+                    logger.info("%s: candidate accepted via deterministic path", ticker)
                 tier_candidates_added += 1
             except Exception as e:
-                logging.error(f"Error heavy-analyzing {ticker}: {type(e).__name__}: {str(e)}")
-                logging.error(f"Full traceback for {ticker}:\n{traceback.format_exc()}")
+                logger.error(f"Error heavy-analyzing {ticker}: {type(e).__name__}: {str(e)}")
+                logger.error(f"Full traceback for {ticker}:\n{traceback.format_exc()}")
                 continue
 
         heavy_duration_seconds = round(time.time() - heavy_start_ts, 3)
@@ -588,7 +602,7 @@ def calculate_rsi(prices, n=14):
             return rsi.iloc[-1]
         return rsi
     except Exception as e:
-        logging.error(f"Error calculating RSI: {type(e).__name__}: {str(e)}")
+        logger.error(f"Error calculating RSI: {type(e).__name__}: {str(e)}")
         raise
 
 def get_news_headlines(ticker, limit):
@@ -600,10 +614,10 @@ def get_news_headlines(ticker, limit):
             if 'title' in h:
                 headlines.append(h['title'])
             else:
-                logging.warning(f"News item for {ticker} missing 'title' field: {h.keys()}")
+                logger.warning(f"News item for {ticker} missing 'title' field: {h.keys()}")
         return headlines
     except Exception as e:
-        logging.warning(f"Could not fetch news for {ticker}: {type(e).__name__}: {str(e)}")
+        logger.warning(f"Could not fetch news for {ticker}: {type(e).__name__}: {str(e)}")
         return []
 
 
@@ -1223,7 +1237,7 @@ class RecursiveScreener:
                 if not math.isnan(corr) and corr > max_correlation:
                     return False, f"high correlation {corr:.2f} vs open {other}"
         except Exception as e:
-            logging.warning("RecursiveScreener correlation skip %s: %s", sym, e)
+            logger.warning("RecursiveScreener correlation skip %s: %s", sym, e)
 
         return True, ""
 
