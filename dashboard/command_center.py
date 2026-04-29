@@ -568,16 +568,30 @@ def _activity_line_usable(line: str) -> bool:
         return False
     if re.match(r"^\.\d+,", s):
         return False
+    low = s.lower()
+    # Hedging / fortress JSON dumps split across lines in some logs
+    if "expected_dividend" in low or "expected_return_pct" in low:
+        return False
+    if re.search(r"^\s*[\}\]],\s*\{", s):
+        return False
     return True
 
 
 def _agent_activity_snippet(log_path: Path, max_chars: int = 200) -> str:
-    raw = _tail(log_path, 45)
+    raw = _tail(log_path, 60)
     lines = [ln.rstrip() for ln in raw.splitlines() if ln.strip()]
     for ln in reversed(lines):
         if _activity_line_usable(ln):
             return ln[-max_chars:]
-    return lines[-1][-max_chars:] if lines else ""
+    for ln in reversed(lines):
+        if re.search(r"\b(INFO|ERROR|WARNING|CRITICAL)\b", ln) or re.match(
+            r"^\d{4}-\d{2}-\d{2}", ln.strip()
+        ):
+            return ln[-max_chars:]
+    for ln in reversed(lines):
+        if len(ln) < 280 and ln.strip()[:1] not in "{[\"'.":
+            return ln[-max_chars:]
+    return ""
 
 
 # Substrings that indicate trading-bot jobs in crontab (user and/or /etc/cron.d).

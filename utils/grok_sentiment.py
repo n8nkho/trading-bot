@@ -26,6 +26,12 @@ def check_twitter_sentiment(ticker, confidence_threshold=0.8):
     Returns:
         "BULLISH", "BEARISH", "NEUTRAL", or None if API key missing
     """
+    try:
+        from utils.llm_router import ensure_llm_env_loaded
+
+        ensure_llm_env_loaded()
+    except Exception:
+        pass
     # Check if API key exists
     api_key = os.getenv("XAI_API_KEY")
     if not api_key:

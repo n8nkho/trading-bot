@@ -26,18 +26,28 @@ _call_times: deque[float] = deque()
 
 
 def _load_repo_dotenv() -> None:
-    """Load repo .env files before reading API keys (cron-safe: no rely on `export` in shell)."""
+    """Load repo .env files before reading API keys.
+
+    Primary `.env` uses override=True so a stale XAI/DeepSeek value injected by cron,
+    systemd, or `export` in a wrapper cannot beat the on-disk file (common VM footgun).
+    `.env.fortress` stays override=False so explicit process env can override flags.
+    """
     global _DOTENV_LOADED
     if _DOTENV_LOADED:
         return
     try:
         from dotenv import load_dotenv
 
-        load_dotenv(_REPO_ROOT / ".env", override=False)
+        load_dotenv(_REPO_ROOT / ".env", override=True)
         load_dotenv(_REPO_ROOT / ".env.fortress", override=False)
     except Exception:
         pass
     _DOTENV_LOADED = True
+
+
+def ensure_llm_env_loaded() -> None:
+    """Load repo `.env` / `.env.fortress` using the same rules as LLMRouter (for non-router callers)."""
+    _load_repo_dotenv()
 
 
 def _acquire_rate_slot() -> None:
