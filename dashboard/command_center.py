@@ -2650,6 +2650,15 @@ def get_evolution_status() -> dict:
     return out
 
 
+def _attach_llm_provider_credits(out: dict) -> None:
+    try:
+        from utils.llm_credits import get_llm_credit_snapshot
+
+        out["provider_credits"] = get_llm_credit_snapshot()
+    except Exception as e:
+        out["provider_credits"] = {"error": str(e)[:200], "timestamp": datetime.now().isoformat()}
+
+
 def get_llm_usage_status() -> dict:
     """
     Load DeepSeek/Ollama LLM token usage + estimated costs for dashboard display.
@@ -2666,6 +2675,7 @@ def get_llm_usage_status() -> dict:
     }
     path = DATA_DIR / "api_costs.jsonl"
     if not path.exists():
+        _attach_llm_provider_credits(out)
         return out
 
     rows: list[dict] = []
@@ -2682,9 +2692,11 @@ def get_llm_usage_status() -> dict:
                 if isinstance(row, dict):
                     rows.append(row)
     except OSError:
+        _attach_llm_provider_credits(out)
         return out
 
     if not rows:
+        _attach_llm_provider_credits(out)
         return out
 
     out["available"] = True
@@ -2735,6 +2747,7 @@ def get_llm_usage_status() -> dict:
     out["lifetime"]["cost_usd"] = round(out["lifetime"]["cost_usd"], 6)
     out["by_model"] = sorted(by_model.values(), key=lambda x: x["cost_usd"], reverse=True)[:6]
     out["recent_calls"] = rows[-10:]
+    _attach_llm_provider_credits(out)
     return out
 
 
@@ -3636,6 +3649,17 @@ def api_evolution_status():
 @app.route("/api/llm_usage")
 def api_llm_usage():
     return jsonify(get_llm_usage_status())
+
+
+@app.route("/api/llm_credits")
+def api_llm_credits():
+    """Provider prepaid balances + Fortress spend rollup (same snapshot embedded in /api/llm_usage)."""
+    try:
+        from utils.llm_credits import get_llm_credit_snapshot
+
+        return jsonify(get_llm_credit_snapshot())
+    except Exception as e:
+        return jsonify({"error": str(e)[:200]}), 500
 
 
 def _safe_read_json(path: Path, default):

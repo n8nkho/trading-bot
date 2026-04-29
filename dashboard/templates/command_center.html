@@ -567,7 +567,7 @@
   </div>
 
   <script>
-    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine', botAudit: '/api/bot_audit', intelligenceBrief: '/api/intelligence_brief', evolutionStatus: '/api/evolution_status', llmUsage: '/api/llm_usage', critiqueStats: '/api/critique_stats', regimeStatus: '/api/regime_status', sentimentVelocity: '/api/sentiment_velocity', optionsFlow: '/api/options_flow', earningsIntel: '/api/earnings_intel', crossAsset: '/api/cross_asset', promptEvolution: '/api/prompt_evolution', reflectionTrend: '/api/reflection_trend', backtestLatest: '/api/backtest_latest', morningBriefing: '/api/morning_briefing', alertsFeed: '/api/alerts_feed' };
+    const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine', botAudit: '/api/bot_audit', intelligenceBrief: '/api/intelligence_brief', evolutionStatus: '/api/evolution_status', llmUsage: '/api/llm_usage', llmCredits: '/api/llm_credits', critiqueStats: '/api/critique_stats', regimeStatus: '/api/regime_status', sentimentVelocity: '/api/sentiment_velocity', optionsFlow: '/api/options_flow', earningsIntel: '/api/earnings_intel', crossAsset: '/api/cross_asset', promptEvolution: '/api/prompt_evolution', reflectionTrend: '/api/reflection_trend', backtestLatest: '/api/backtest_latest', morningBriefing: '/api/morning_briefing', alertsFeed: '/api/alerts_feed' };
     const NO_CACHE = { cache: 'no-store' };
 
     let _chartRedraw = null;
@@ -1752,8 +1752,34 @@
       const el = document.getElementById('llmUsage');
       if (!el) return;
       el.classList.remove('loading');
+      const pc = (data && data.provider_credits) || {};
+      const provs = (pc.providers || []);
+      let creditHtml = '';
+      if (provs.length) {
+        creditHtml = '<div style="margin-bottom:0.55rem;padding-bottom:0.55rem;border-bottom:1px solid var(--border);"><strong>Provider credits / balance</strong><ul style="margin:0.35rem 0 0 1rem;padding:0;">';
+        provs.forEach(function (p) {
+          const name = String(p.provider || '—');
+          let bits = [];
+          if (p.spent_usd_30d != null && p.spent_usd_30d !== undefined) bits.push('Fortress spend 30d ~$' + Number(p.spent_usd_30d).toFixed(4));
+          if (p.ok && p.balance_infos && p.balance_infos.length) {
+            p.balance_infos.forEach(function (b) {
+              bits.push(String(b.currency || '') + ' bal ' + String(b.total_balance != null ? b.total_balance : '—'));
+            });
+          }
+          if (p.manual_balance_usd != null) bits.push('manual ~$' + Number(p.manual_balance_usd).toFixed(2));
+          if (p.prepaid && typeof p.prepaid === 'object') bits.push('prepaid snapshot OK');
+          if (p.detail) bits.push(String(p.detail).slice(0, 140));
+          if (p.note) bits.push(String(p.note));
+          if (p.mode === 'local') bits.push('local');
+          creditHtml += '<li style="margin:0.12rem 0;"><strong>' + esc(name) + '</strong> · ' + esc(bits.join(' · ') || '—') + '</li>';
+        });
+        creditHtml += '</ul><span class="text-muted" style="font-size:10px;">' + esc(pc.timestamp || '') + '</span></div>';
+      }
+      if (pc.error) {
+        creditHtml += '<div class="text-muted" style="font-size:11px;margin-bottom:0.45rem;">Credits snapshot error: ' + esc(pc.error) + '</div>';
+      }
       if (!data || !data.available) {
-        el.innerHTML = '<span class="empty">No LLM usage records yet. Run LLM-enabled commands to populate <code>data/api_costs.jsonl</code>.</span>';
+        el.innerHTML = creditHtml + '<span class="empty">No LLM usage meter yet. Run LLM-enabled agents to populate <code>data/api_costs.jsonl</code>.</span>';
         return;
       }
       const today = data.today || {};
@@ -1773,7 +1799,7 @@
             return '<li style="margin:0.12rem 0;">' + esc(r.timestamp || '—') + ' · ' + svc + '/' + model + ' · in ' + (r.input_tokens ?? 0) + ' · out ' + (r.output_tokens ?? 0) + ' · $' + Number(r.cost_with_cache || 0).toFixed(6) + '</li>';
           }).join('') + '</ul>'
         : '<span class="text-muted">No recent calls.</span>';
-      el.innerHTML = `
+      el.innerHTML = creditHtml + `
         <div><strong>Today:</strong> ${today.calls ?? 0} calls · in ${today.input_tokens ?? 0} · out ${today.output_tokens ?? 0} · $${Number(today.cost_usd || 0).toFixed(6)}</div>
         <div><strong>Last 7d:</strong> ${week.calls ?? 0} calls · in ${week.input_tokens ?? 0} · out ${week.output_tokens ?? 0} · $${Number(week.cost_usd || 0).toFixed(6)}</div>
         <div><strong>Lifetime:</strong> ${life.calls ?? 0} calls · in ${life.input_tokens ?? 0} · out ${life.output_tokens ?? 0} · $${Number(life.cost_usd || 0).toFixed(6)}</div>

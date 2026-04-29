@@ -16,6 +16,15 @@ PRICING = {
     },
     'grok': {
         'grok-mini': {'input': 0.15, 'output': 0.60},
+        # Approximate USD/Mtok — align with console pricing when you reconcile bills.
+        'grok-3': {'input': 0.30, 'output': 0.50},
+        'grok-3-mini': {'input': 0.15, 'output': 0.60},
+    },
+    # LLMRouter.call_xai records service=xai (same models as Grok API).
+    'xai': {
+        'grok-3': {'input': 0.30, 'output': 0.50},
+        'grok-3-mini': {'input': 0.15, 'output': 0.60},
+        'grok-mini': {'input': 0.15, 'output': 0.60},
     },
     'deepseek': {
         # Pricing from user-provided DeepSeek sheet (USD per 1M tokens).
@@ -51,12 +60,36 @@ def ensure_data_dir():
     DATA_DIR.mkdir(exist_ok=True)
 
 
+def _resolve_pricing_row(service: str, model: str) -> tuple[str, str, dict]:
+    """Return (service_key, model_key, pricing dict). Raises ValueError if unknown."""
+    svc = (service or "").strip().lower() or "unknown"
+    m = (model or "").strip() or "unknown"
+    if svc in PRICING and m in PRICING[svc]:
+        return svc, m, PRICING[svc][m]
+    if svc in ("grok", "xai"):
+        ml = m.lower()
+        candidates: list[str] = []
+        if "mini" in ml:
+            candidates.extend(["grok-3-mini", "grok-mini"])
+        else:
+            candidates.append("grok-3")
+        candidates.extend(["grok-mini", "grok-3-mini", "grok-3"])
+        seen: set[str] = set()
+        for mk in candidates:
+            if mk in seen:
+                continue
+            seen.add(mk)
+            if mk in PRICING.get(svc, {}):
+                return svc, mk, PRICING[svc][mk]
+    raise ValueError(f"Unknown service/model: {service}/{model}")
+
+
 def track_api_cost(service, model, input_tokens, output_tokens, cached_tokens=0):
     """
     Track API cost for a single call.
     
     Args:
-        service: 'anthropic', 'grok', or 'ollama'
+        service: 'anthropic', 'deepseek', 'grok', 'xai', or 'ollama'
         model: Model name (e.g., 'claude-haiku', 'grok-mini', 'llama3.1:8b')
         input_tokens: Number of input tokens
         output_tokens: Number of output tokens
@@ -67,11 +100,7 @@ def track_api_cost(service, model, input_tokens, output_tokens, cached_tokens=0)
     """
     ensure_data_dir()
     
-    # Get pricing for this service/model
-    if service not in PRICING or model not in PRICING[service]:
-        raise ValueError(f"Unknown service/model: {service}/{model}")
-    
-    pricing = PRICING[service][model]
+    svc_key, model_key, pricing = _resolve_pricing_row(service, model)
     
     # Calculate cost without cache
     input_cost_full = (input_tokens / 1_000_000) * pricing['input']
@@ -86,11 +115,13 @@ def track_api_cost(service, model, input_tokens, output_tokens, cached_tokens=0)
     
     savings = cost_without_cache - cost_with_cache
     
-    # Create record
+    # Create record (preserve original service/model labels for dashboards)
     record = {
         'timestamp': datetime.now().isoformat(),
         'service': service,
         'model': model,
+        'pricing_service': svc_key,
+        'pricing_model': model_key,
         'input_tokens': input_tokens,
         'output_tokens': output_tokens,
         'cached_tokens': cached_tokens,
