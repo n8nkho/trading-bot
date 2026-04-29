@@ -17,11 +17,26 @@ from utils.trading_guardrails import validate_llm_trade_output
 from agents.llm_reasoning_engine import LLMReasoningEngine
 from utils.llm_decision_tracker import get_llm_decision_tracker
 
-logging.basicConfig(
-    filename='logs/entry.log',
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+# Log only this module to entry.log — do not use logging.basicConfig on root or
+# Flask/werkzeug lines get written to entry.log when the dashboard imports entry_agent.
+_log_dir = Path("logs")
+_log_dir.mkdir(exist_ok=True)
+_entry_fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+
+def _configure_entry_logging() -> None:
+    lg = logging.getLogger(__name__)
+    if lg.handlers:
+        return
+    lg.setLevel(logging.INFO)
+    fh = logging.FileHandler(_log_dir / "entry.log")
+    fh.setFormatter(_entry_fmt)
+    lg.addHandler(fh)
+    lg.propagate = False
+
+
+_configure_entry_logging()
+logger = logging.getLogger(__name__)
 
 # Configuration
 PORTFOLIO_VALUE = get_default_portfolio_usd()
@@ -109,7 +124,7 @@ def get_options_chain(ticker, dte_target=35):
         stock = yf.Ticker(ticker)
         options_dates = stock.options
         if not options_dates:
-            logging.warning(f"{ticker}: No options data available")
+            logger.warning(f"{ticker}: No options data available")
             return None
 
         # Choose the expiration closest to the target DTE (with a broad fallback).
@@ -123,7 +138,7 @@ def get_options_chain(ticker, dte_target=35):
                 continue
 
         if not parsed:
-            logging.warning(f"{ticker}: Could not parse option expirations")
+            logger.warning(f"{ticker}: Could not parse option expirations")
             return None
 
         # Prefer "nearby" expirations; if none exist in that band, pick nearest overall.
@@ -139,7 +154,7 @@ def get_options_chain(ticker, dte_target=35):
             return None
         return calls, expiration_date
     except Exception as e:
-        logging.error(f"Error fetching options chain for {ticker}: {type(e).__name__}: {str(e)}")
+        logger.error(f"Error fetching options chain for {ticker}: {type(e).__name__}: {str(e)}")
         return None
 
 def find_atm_option(ticker, current_price, dte=35):
@@ -270,19 +285,19 @@ def evaluate_option_trade(ticker, current_price, stock_confidence):
     Returns:
         Decision dict with action, reason, position_size, contracts, option details
     """
-    logging.info(f"Evaluating options entry for {ticker}")
+    logger.info(f"Evaluating options entry for {ticker}")
     
     # Fetch options chain
     stock = yf.Ticker(ticker)
     options_dates = stock.options
     if not options_dates:
-        logging.warning(f"{ticker}: No options data available")
+        logger.warning(f"{ticker}: No options data available")
         return create_skip_decision(ticker, "No options data available")
     
     # Select expiration date 30-45 days out
     expiration_date = next((date for date in options_dates if 30 <= (datetime.strptime(date, '%Y-%m-%d') - datetime.now()).days <= 45), None)
     if not expiration_date:
-        logging.warning(f"{ticker}: No suitable expiration date found")
+        logger.warning(f"{ticker}: No suitable expiration date found")
         return create_skip_decision(ticker, "No suitable expiration date found")
     
     options_chain = stock.option_chain(expiration_date)
@@ -304,7 +319,7 @@ def evaluate_option_trade(ticker, current_price, stock_confidence):
     calls = calls[calls['impliedVolatility'] < 0.5]
     
     if calls.empty:
-        logging.warning(f"{ticker}: No suitable options found")
+        logger.warning(f"{ticker}: No suitable options found")
         return create_skip_decision(ticker, "No suitable options found")
     
     # Select the best option based on criteria
@@ -323,7 +338,7 @@ def evaluate_option_trade(ticker, current_price, stock_confidence):
         max_premium = 500
         contracts = int(max_premium / premium)
         
-        logging.info(f"{ticker}: Option trade selected - Strike: {strike}, Expiration: {expiration_date}, Premium: {premium}, Contracts: {contracts}")
+        logger.info(f"{ticker}: Option trade selected - Strike: {strike}, Expiration: {expiration_date}, Premium: {premium}, Contracts: {contracts}")
         
         return {
             'ticker': ticker,
@@ -339,7 +354,7 @@ def evaluate_option_trade(ticker, current_price, stock_confidence):
             'timestamp': datetime.now().isoformat()
         }
     else:
-        logging.info(f"{ticker}: Stock trade selected over option")
+        logger.info(f"{ticker}: Stock trade selected over option")
         return create_skip_decision(ticker, "Stock trade selected over option")
 def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
     """
@@ -352,8 +367,8 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
     Returns:
         List of entry decisions with BUY/SKIP and reasoning
     """
-    logging.info(f"Starting entry evaluation for {len(candidates)} candidates")
-    logging.info(f"Portfolio value: ${portfolio_value:,.2f}")
+    logger.info(f"Starting entry evaluation for {len(candidates)} candidates")
+    logger.info(f"Portfolio value: ${portfolio_value:,.2f}")
 
     try:
         from agents.performance_analyzer import load_current_params
@@ -383,7 +398,7 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
     
     for candidate in candidates:
         ticker = candidate['ticker']
-        logging.info(f"Evaluating entry for {ticker}")
+        logger.info(f"Evaluating entry for {ticker}")
         
         try:
             current_price = candidate['current_price']
@@ -401,7 +416,7 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                 signal_mode = "agentic_signal_boost"
                 if isinstance(candidate.get("analysis"), dict):
                     candidate["analysis"]["confidence"] = stock_confidence
-                logging.info(
+                logger.info(
                     "%s: agentic_signal_boost applied (analyst BUY, consensus_score=%s, confidence %.2f -> %.2f)",
                     ticker,
                     ar.get("consensus_score"),
@@ -409,7 +424,7 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                     stock_confidence,
                 )
             else:
-                logging.info("%s: deterministic_only path (analyst recommendation=%s)", ticker, rec or "N/A")
+                logger.info("%s: deterministic_only path (analyst recommendation=%s)", ticker, rec or "N/A")
             
             stock_roi = stock_confidence * 0.05
             option_trade = evaluate_option_trade(ticker, current_price, stock_confidence)
@@ -427,14 +442,14 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                             f"window: 14:30-{eh:02d}:{em:02d} ET)"
                         )
                         decision = create_skip_decision(ticker, reason)
-                        logging.info(f"{ticker}: OPTION gated by entry window - {decision}")
+                        logger.info(f"{ticker}: OPTION gated by entry window - {decision}")
                     elif not rth_open:
                         # Alpaca restricts OPTION *market* orders to regular market hours.
                         decision = create_skip_decision(
                             ticker,
                             "options market orders are only allowed during market hours",
                         )
-                        logging.info(f"{ticker}: OPTION gated by RTH market-hours - {decision}")
+                        logger.info(f"{ticker}: OPTION gated by RTH market-hours - {decision}")
                     else:
                         decision = {
                             'ticker': ticker,
@@ -452,7 +467,7 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                             'reason': 'Option trade offers better ROI'
                         }
                         decision["signal_mode"] = signal_mode
-                        logging.info(f"{ticker}: OPTION decision - {decision}")
+                        logger.info(f"{ticker}: OPTION decision - {decision}")
                 else:
                     decision = evaluate_single_entry(candidate, portfolio_value, rsi_threshold=rsi_effective)
                     decision['trade_type'] = 'STOCK'
@@ -460,20 +475,20 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                     if decision.get("action") == "BUY":
                         decision["reason"] = "Stock trade offers better ROI"
                     decision["signal_mode"] = signal_mode
-                    logging.info(f"{ticker}: STOCK decision - {decision}")
+                    logger.info(f"{ticker}: STOCK decision - {decision}")
             else:
                 decision = evaluate_single_entry(candidate, portfolio_value, rsi_threshold=rsi_effective)
                 decision['trade_type'] = 'STOCK'
                 if decision.get("action") == "BUY":
                     decision["reason"] = "No suitable option found (stock path)"
                 decision["signal_mode"] = signal_mode
-                logging.info(f"{ticker}: STOCK decision - {decision}")
+                logger.info(f"{ticker}: STOCK decision - {decision}")
             
             if isinstance(decision, dict):
                 decision.setdefault("signal_mode", signal_mode)
             decisions.append(decision)
         except Exception as e:
-            logging.error(f"Error evaluating {ticker}: {type(e).__name__}: {str(e)}")
+            logger.error(f"Error evaluating {ticker}: {type(e).__name__}: {str(e)}")
             decisions.append({
                 'ticker': ticker,
                 'action': 'SKIP',
@@ -485,7 +500,7 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
             })
     
     buy_count = sum(1 for d in decisions if d['action'] == 'BUY')
-    logging.info(f"Entry evaluation complete: {buy_count} BUY, {len(decisions) - buy_count} SKIP")
+    logger.info(f"Entry evaluation complete: {buy_count} BUY, {len(decisions) - buy_count} SKIP")
     
     return decisions
 
@@ -593,12 +608,12 @@ def evaluate_single_entry(candidate, portfolio_value, *, rsi_threshold: float | 
         )
     
     # Fetch current intraday data
-    logging.info(f"{ticker}: Fetching intraday data...")
+    logger.info(f"{ticker}: Fetching intraday data...")
     stock = yf.Ticker(ticker)
     intraday_data = stock.history(period="1d", interval="1m")
     
     if len(intraday_data) == 0:
-        logging.warning(f"{ticker}: No intraday data available")
+        logger.warning(f"{ticker}: No intraday data available")
         return create_skip_decision(ticker, "No intraday data available")
     
     # Get current price and day's low
@@ -606,35 +621,35 @@ def evaluate_single_entry(candidate, portfolio_value, *, rsi_threshold: float | 
     day_low = intraday_data['Low'].min()
     day_high = intraday_data['High'].max()
     
-    logging.info(f"{ticker}: Current price: ${current_price:.2f}, Day low: ${day_low:.2f}, Day high: ${day_high:.2f}")
+    logger.info(f"{ticker}: Current price: ${current_price:.2f}, Day low: ${day_low:.2f}, Day high: ${day_high:.2f}")
     
     # Check 1: RSI must be extra oversold
     if screener_rsi >= rsi_cap:
         reason = f"RSI not oversold enough ({screener_rsi:.1f} >= {rsi_cap})"
-        logging.info(f"{ticker}: {reason}")
+        logger.info(f"{ticker}: {reason}")
         return create_skip_decision(ticker, reason)
     
-    logging.info(f"{ticker}: ✓ RSI check passed ({screener_rsi:.1f} < {rsi_cap})")
+    logger.info(f"{ticker}: ✓ RSI check passed ({screener_rsi:.1f} < {rsi_cap})")
     
     # Check 2: Price stabilization (current price > low * 1.02)
     stabilization_price = day_low * STABILIZATION_FACTOR
     if current_price <= stabilization_price:
         reason = f"Price not stabilized (${current_price:.2f} <= ${stabilization_price:.2f})"
-        logging.info(f"{ticker}: {reason}")
+        logger.info(f"{ticker}: {reason}")
         return create_skip_decision(ticker, reason)
     
-    logging.info(f"{ticker}: ✓ Price stabilization check passed (${current_price:.2f} > ${stabilization_price:.2f})")
+    logger.info(f"{ticker}: ✓ Price stabilization check passed (${current_price:.2f} > ${stabilization_price:.2f})")
     
     # Check 3: Time of day (2:30-3:45 PM ET, optional extension via ENTRY_WINDOW_EXTEND_END_MINUTES)
     if not is_entry_window():
         current_time_et = get_current_time_et()
         eh, em = _entry_window_end_with_extension()
         reason = f"Outside entry window (current: {current_time_et.strftime('%H:%M')} ET, window: 14:30-{eh:02d}:{em:02d} ET)"
-        logging.info(f"{ticker}: {reason}")
+        logger.info(f"{ticker}: {reason}")
         return create_skip_decision(ticker, reason)
     
     current_time_et = get_current_time_et()
-    logging.info(f"{ticker}: ✓ Time window check passed ({current_time_et.strftime('%H:%M')} ET)")
+    logger.info(f"{ticker}: ✓ Time window check passed ({current_time_et.strftime('%H:%M')} ET)")
     
     # Size within policy max_position_size_pct, absolute MAX_POSITION_SIZE, and confidence tilt
     policy_cap = _max_new_position_usd_from_policy(portfolio_value)
@@ -646,12 +661,12 @@ def evaluate_single_entry(candidate, portfolio_value, *, rsi_threshold: float | 
     # Ensure at least 1 share
     if shares < 1:
         reason = f"Position size too small (${position_size:.2f} < 1 share at ${current_price:.2f})"
-        logging.info(f"{ticker}: {reason}")
+        logger.info(f"{ticker}: {reason}")
         return create_skip_decision(ticker, reason)
     
     actual_position_size = shares * current_price
     
-    logging.info(f"{ticker}: Position sizing - Base: ${base_position:.2f}, Confidence: {confidence:.2f}, Adjusted: ${adjusted_position:.2f}, Final: ${actual_position_size:.2f} ({shares} shares)")
+    logger.info(f"{ticker}: Position sizing - Base: ${base_position:.2f}, Confidence: {confidence:.2f}, Adjusted: ${adjusted_position:.2f}, Final: ${actual_position_size:.2f} ({shares} shares)")
     
     # All checks passed - BUY decision
     return {
@@ -685,11 +700,11 @@ def is_entry_window():
         in_window = start_minutes <= current_minutes <= end_minutes
         
         if not in_window:
-            logging.info(f"Outside entry window: {current_time.strftime('%H:%M')} ET (window: {start_hour:02d}:{start_min:02d}-{end_hour:02d}:{end_min:02d} ET)")
+            logger.info(f"Outside entry window: {current_time.strftime('%H:%M')} ET (window: {start_hour:02d}:{start_min:02d}-{end_hour:02d}:{end_min:02d} ET)")
         
         return in_window
     except Exception as e:
-        logging.error(f"Error checking entry window: {type(e).__name__}: {str(e)}")
+        logger.error(f"Error checking entry window: {type(e).__name__}: {str(e)}")
         return False
 
 def get_current_time_et():
