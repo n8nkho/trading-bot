@@ -9,16 +9,35 @@ import os
 import threading
 import time
 from collections import deque
+from pathlib import Path
 from typing import Literal
 
 from utils.cost_calculator import track_api_cost
 from utils.runtime_config import get_llm_config
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_DOTENV_LOADED = False
 
 _MAX_PER_MINUTE = 10
 _WINDOW_SEC = 60.0
 _DEFAULT_TIMEOUT = 30
 _lock = threading.Lock()
 _call_times: deque[float] = deque()
+
+
+def _load_repo_dotenv() -> None:
+    """Load repo .env files before reading API keys (cron-safe: no rely on `export` in shell)."""
+    global _DOTENV_LOADED
+    if _DOTENV_LOADED:
+        return
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(_REPO_ROOT / ".env", override=False)
+        load_dotenv(_REPO_ROOT / ".env.fortress", override=False)
+    except Exception:
+        pass
+    _DOTENV_LOADED = True
 
 
 def _acquire_rate_slot() -> None:
@@ -89,6 +108,7 @@ def _openai_style_chat(
 
 class LLMRouter:
     def call_deepseek(self, prompt: str, system_prompt: str = "", *, max_tokens: int = 1000) -> str:
+        _load_repo_dotenv()
         cfg = get_llm_config() or {}
         key = str(cfg.get("deepseek_api_key") or os.getenv("DEEPSEEK_API_KEY") or "").strip()
         if not key:
@@ -107,6 +127,7 @@ class LLMRouter:
         )
 
     def call_xai(self, prompt: str, system_prompt: str = "", *, max_tokens: int = 1000) -> str:
+        _load_repo_dotenv()
         key = str(os.getenv("XAI_API_KEY") or "").strip()
         if not key:
             return "Error: Missing XAI_API_KEY"
