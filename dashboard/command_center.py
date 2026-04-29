@@ -557,6 +557,29 @@ def _tail(path, lines=50):
     return ""
 
 
+def _activity_line_usable(line: str) -> bool:
+    """Drop mid-JSON / Python-repr fragments so AGENT ACTIVITY shows a real log line when possible."""
+    s = line.strip()
+    if len(s) < 6:
+        return False
+    if s[0] in "{[":
+        return False
+    if s.startswith("'") and "': " in s and not re.match(r"^\d{4}-\d{2}-\d{2}", s):
+        return False
+    if re.match(r"^\.\d+,", s):
+        return False
+    return True
+
+
+def _agent_activity_snippet(log_path: Path, max_chars: int = 200) -> str:
+    raw = _tail(log_path, 45)
+    lines = [ln.rstrip() for ln in raw.splitlines() if ln.strip()]
+    for ln in reversed(lines):
+        if _activity_line_usable(ln):
+            return ln[-max_chars:]
+    return lines[-1][-max_chars:] if lines else ""
+
+
 # Substrings that indicate trading-bot jobs in crontab (user and/or /etc/cron.d).
 _CRON_JOB_MARKERS = (
     "orchestrator.py",
@@ -908,14 +931,15 @@ def get_agent_activity():
             age_h = (now - mtime).total_seconds() / 3600
             last_run = mtime.isoformat()
             status = "fresh" if age_h <= max_h else "stale"
-            raw = _tail(log_path, 1)
-            if raw:
-                last_line = raw.strip().split("\n")[-1][-200:]
+            last_line = _agent_activity_snippet(log_path)
             # Keep Screener row focused on screening activity, not ops_autofix runs.
             if key == "screener" and "ops_autofix" in last_line.lower():
                 recent = _tail(log_path, 120).splitlines()
                 for ln in reversed(recent):
-                    if "ops_autofix" not in ln.lower():
+                    ln = ln.rstrip()
+                    if "ops_autofix" in ln.lower():
+                        continue
+                    if _activity_line_usable(ln):
                         last_line = ln[-200:]
                         break
             low = last_line.lower()
@@ -4075,14 +4099,29 @@ def api_morning_briefing():
 
 @app.route("/api/alerts_feed")
 def api_alerts_feed():
-    out = {"total_alerts": 0, "exit_risk_count": 0, "recent": []}
+    out = {"total_alerts": 0, "exit_risk_count": 0, "recent": [], "alert_line_count": 0, "distinct_recent_alerts": 0}
     try:
         p = LOGS_DIR / "alerts.log"
         lines = _safe_tail(p, 5000)
-        out["total_alerts"] = len(lines)
+        out["alert_line_count"] = len(lines)
+
+        def _alert_body(ln: str) -> str:
+            s = re.sub(r"^\[[^\]]*\]\s*", "", ln).strip()
+            return s[:280]
+
+        tail = lines[-120:] if lines else []
+        bodies = {_alert_body(x) for x in tail if _alert_body(x)}
+        out["distinct_recent_alerts"] = len(bodies)
+        # Banner count: distinct messages in trailing window (avoids "35 alerts" for duplicate HOLD lines).
+        out["total_alerts"] = out["distinct_recent_alerts"]
         out["exit_risk_count"] = sum(1 for ln in lines if "EXIT_RISK" in ln.upper())
-        recent = []
-        for ln in lines[-20:]:
+        recent: list[dict] = []
+        seen_body: set[str] = set()
+        for ln in reversed(lines[-80:] if lines else []):
+            b = _alert_body(ln)
+            if not b or b in seen_body:
+                continue
+            seen_body.add(b)
             up = ln.upper()
             typ = "ALERT"
             for t in ["EXIT_RISK", "PROMPT_ALERT", "REGIME", "OPTIONS", "EARNINGS", "SENTIMENT"]:
@@ -4094,7 +4133,10 @@ def api_alerts_feed():
             if m:
                 sym = m.group(0)
             recent.append({"timestamp": "", "type": typ, "symbol": sym, "message": ln})
-        out["recent"] = recent[-20:]
+            if len(recent) >= 16:
+                break
+        recent.reverse()
+        out["recent"] = recent
     except Exception:
         pass
     return jsonify(out)
@@ -4265,6 +4307,11 @@ def api_feed():
         for line in raw.split("\n"):
             line = line.strip()
             if not line:
+                continue
+            # Skip JSON pretty-print fragments cron accidentally captured into agent logs.
+            if len(line) <= 2 and line in "{}[]":
+                continue
+            if line in {'"', "'", '},', '{', '}', ']', '["entries"', '"entries":'}:
                 continue
             # RED/Amber only when there are unresolved errors/warnings (otherwise neutral)
             level = "info"
