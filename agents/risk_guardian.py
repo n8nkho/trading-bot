@@ -65,6 +65,10 @@ position_size_reduction = 1.0  # multiplier for position sizing
 
 STATE_FILE = Path("data") / "risk_guardian_state.json"
 
+# Avoid INFO spam when dashboard/API imports risk_guardian dozens of times per page load.
+_POLICY_RISK_LIMITS_CACHE: dict | None = None
+_POLICY_RISK_LIMITS_SIG: str | None = None
+
 # If enabled, automatically clears persisted circuit-breaker state after a time window,
 # so a single losing streak doesn't permanently require operator intervention.
 #
@@ -105,7 +109,12 @@ def _policy_risk_limits() -> dict:
     Source-of-truth profile limits from config/policy_profiles.json.
     These are the configured policy limits (without volatility adaptation).
     """
+    global _POLICY_RISK_LIMITS_CACHE, _POLICY_RISK_LIMITS_SIG
     bundle = _policy_bundle()
+    sig = json.dumps(bundle, sort_keys=True, default=str)
+    if _POLICY_RISK_LIMITS_CACHE is not None and sig == _POLICY_RISK_LIMITS_SIG:
+        return _POLICY_RISK_LIMITS_CACHE
+
     risk_cfg = bundle.get("risk") or {}
     profile_name = bundle.get("active_profile") or "balanced"
     out = {
@@ -123,6 +132,8 @@ def _policy_risk_limits() -> dict:
         out["max_position_size_pct"],
         out["max_total_risk_pct"],
     )
+    _POLICY_RISK_LIMITS_CACHE = out
+    _POLICY_RISK_LIMITS_SIG = sig
     return out
 
 
