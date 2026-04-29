@@ -2063,7 +2063,7 @@
       })();
       const critiquesRow = ((ex.agents && ex.agents.agents) || []).find(a => a && a.id === 'critique_loop');
       const regimeRow = ((ex.agents && ex.agents.agents) || []).find(a => a && a.id === 'regime_detector');
-      const svRow = ((ex.agents && ex.agents.agents) || []).find(a => a && a.id === 'sentiment_velocity');
+      const svRow = ((ex.agents && ex.agents.agents) || []).find(a => a && a.id === 'sentiment_velocity_agent');
       const isFreshRow = (r) => !!(r && (r.status === 'fresh' || r.ui_status === 'fresh'));
       const deepChecks = [
         { ok: !!((regimeDt && ((now - regimeDt) / 3600000) < 3) || isFreshRow(regimeRow)), text: 'Regime detector: last run < 3 hours ago' },
