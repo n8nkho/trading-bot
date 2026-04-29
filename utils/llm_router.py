@@ -6,6 +6,7 @@ API keys from environment only.
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 from collections import deque
@@ -23,6 +24,18 @@ _WINDOW_SEC = 60.0
 _DEFAULT_TIMEOUT = 30
 _lock = threading.Lock()
 _call_times: deque[float] = deque()
+
+
+def normalize_xai_api_key(raw: str) -> str:
+    """xAI Grok keys are issued as `xai-…`; `.env` sometimes stores only the bare segment."""
+    k = (raw or "").strip().strip('"').strip("'")
+    if not k:
+        return ""
+    if k.lower().startswith("xai-"):
+        return k
+    if len(k) >= 20 and re.fullmatch(r"[A-Za-z0-9_-]+", k):
+        return "xai-" + k
+    return k
 
 
 def _load_repo_dotenv() -> None:
@@ -138,7 +151,7 @@ class LLMRouter:
 
     def call_xai(self, prompt: str, system_prompt: str = "", *, max_tokens: int = 1000) -> str:
         _load_repo_dotenv()
-        key = str(os.getenv("XAI_API_KEY") or "").strip()
+        key = normalize_xai_api_key(str(os.getenv("XAI_API_KEY") or ""))
         if not key:
             return "Error: Missing XAI_API_KEY"
         model = str(os.getenv("XAI_MODEL") or "grok-3").strip()
