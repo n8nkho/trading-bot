@@ -59,7 +59,10 @@ class TestEntryAgentParams(unittest.TestCase):
                     from datetime import datetime
 
                     tmock.return_value = datetime(2026, 3, 25, 15, 0, tzinfo=entry_agent.pytz.timezone("US/Eastern"))
-                    with mock.patch.object(entry_agent, "evaluate_option_trade", return_value=None):
+                    with mock.patch.object(entry_agent, "evaluate_option_trade", return_value=None), mock.patch.object(
+                        entry_agent, "_get_llm_engine"
+                    ) as eng_mock:
+                        eng_mock.return_value.evaluate_trade_opportunity.return_value = {"llm_available": False}
                         decisions = entry_agent.evaluate_entry([cand], portfolio_value=50000)
         self.assertEqual(len(decisions), 1)
         self.assertEqual(decisions[0].get("action"), "BUY")

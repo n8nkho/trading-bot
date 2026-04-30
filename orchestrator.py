@@ -2852,6 +2852,101 @@ def _uplift_gate_check() -> dict:
     return {"ok": len(issues) == 0, "current_phase": st.get("current_phase"), "flag_issues": issues}
 
 
+def _recent_daily_signals(limit: int = 20) -> list[dict]:
+    pattern = str(_ORCHESTRATOR_ROOT / "data" / "daily_signals_*.json")
+    paths = [Path(p) for p in glob.glob(pattern)]
+    paths = sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)[: max(1, int(limit))]
+    rows: list[dict] = []
+    for p in paths:
+        try:
+            doc = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(doc, dict):
+                doc["_path"] = str(p)
+                rows.append(doc)
+        except Exception:
+            continue
+    return rows
+
+
+def _is_clean_soak_session(row: dict) -> tuple[bool, str]:
+    rg = row.get("risk_gate_summary") if isinstance(row.get("risk_gate_summary"), dict) else {}
+    eg = row.get("entry_gate_summary") if isinstance(row.get("entry_gate_summary"), dict) else {}
+    failures = row.get("execution_failures")
+    if not isinstance(failures, list):
+        failures = []
+    if int(rg.get("rejected_count") or 0) > 0:
+        return False, "risk_rejections"
+    if len(failures) > 0:
+        return False, "execution_failures"
+    if int(eg.get("skip_count") or 0) > 0 and int(eg.get("buy_count") or 0) == 0:
+        return False, "all_skipped"
+    return True, "clean"
+
+
+def _promote_next_uplift_module(*, required_clean_sessions: int = 5, apply: bool = False) -> dict:
+    st = load_uplift_status()
+    rp = st.get("rollout_plan") if isinstance(st.get("rollout_plan"), dict) else {}
+    seq = rp.get("sequence") if isinstance(rp.get("sequence"), list) else []
+    active = str(rp.get("active_module") or "").strip()
+    nxt = str(rp.get("next_module") or "").strip()
+    if not seq or not active:
+        return {"ok": False, "error": "rollout_plan_missing_or_invalid"}
+
+    runs = _recent_daily_signals(limit=25)
+    clean = 0
+    reasons: list[dict] = []
+    for r in runs:
+        ok, reason = _is_clean_soak_session(r)
+        reasons.append({"timestamp": r.get("timestamp"), "ok": ok, "reason": reason})
+        if ok:
+            clean += 1
+        else:
+            break
+        if clean >= int(required_clean_sessions):
+            break
+
+    key_map = {
+        "convergence": "FORTRESS_UPLIFT_CONVERGENCE_MODE",
+        "adaptive_sizing": "FORTRESS_UPLIFT_ADAPTIVE_SIZING_MODE",
+        "throughput": "FORTRESS_UPLIFT_THROUGHPUT_MODE",
+        "execution_advisor": "FORTRESS_UPLIFT_EXECUTION_ADVISOR_MODE",
+    }
+    if nxt and nxt not in key_map:
+        return {"ok": False, "error": "invalid_next_module", "next_module": nxt}
+    ready = clean >= int(required_clean_sessions) and bool(nxt)
+    out = {
+        "ok": True,
+        "ready": ready,
+        "required_clean_sessions": int(required_clean_sessions),
+        "clean_sessions_observed": clean,
+        "active_module": active,
+        "next_module": nxt or None,
+        "recent_checks": reasons[: int(required_clean_sessions)],
+        "applied": False,
+    }
+    if not ready or not apply:
+        return out
+
+    ff = st.get("feature_flags") if isinstance(st.get("feature_flags"), dict) else {}
+    ff[key_map[nxt]] = 2
+    st["feature_flags"] = ff
+    try:
+        idx = seq.index(nxt)
+    except ValueError:
+        idx = -1
+    next_next = seq[idx + 1] if idx >= 0 and idx + 1 < len(seq) else None
+    rp["active_module"] = nxt
+    rp["next_module"] = next_next
+    st["rollout_plan"] = rp
+    st["updated_at"] = datetime.now().isoformat()
+    _save_uplift_status(st)
+    out["applied"] = True
+    out["new_active_module"] = nxt
+    out["new_next_module"] = next_next
+    out["path"] = str(_uplift_status_path())
+    return out
+
+
 if __name__ == "__main__":
     import sys
     
@@ -2887,6 +2982,7 @@ if __name__ == "__main__":
         print("  python orchestrator.py uplift_gate_check          - Validate uplift flag semantics")
         print("  python orchestrator.py uplift_advance_phase --to <PHASE> - Update uplift phase")
         print("  python orchestrator.py uplift_rollback --module <convergence|adaptive_sizing|throughput|execution_advisor> - Set module flag to shadow")
+        print("  python orchestrator.py uplift_auto_promote [--apply] [--required-clean-sessions N] - Promote next module after clean soak")
         print("  python orchestrator.py ops_autofix [--dry-run] [--stale-hours N] [--no-log-dedupe] [--force-log-dedupe] - Run safe ops auto-healing")
         print("  python orchestrator.py ops_recovery [--no-fortress] [--no-screen] [--no-pending] [portfolio_value]")
         print("  python orchestrator.py regime_check               - Print fortress + hedging file snapshot")
@@ -3097,6 +3193,23 @@ if __name__ == "__main__":
         st["updated_at"] = datetime.now().isoformat()
         _save_uplift_status(st)
         print(json.dumps({"ok": True, "module": module, "flag": key_map[module], "mode": 1}, indent=2))
+        sys.exit(0)
+
+    if command in ("uplift_auto_promote", "uplift-auto-promote"):
+        ensure_repo_root_cwd()
+        args = sys.argv[2:]
+        apply = "--apply" in args
+        required = 5
+        if "--required-clean-sessions" in args:
+            try:
+                i = args.index("--required-clean-sessions")
+                required = max(1, int(args[i + 1]))
+            except Exception:
+                required = 5
+        out = _promote_next_uplift_module(required_clean_sessions=required, apply=apply)
+        print(json.dumps(out, indent=2, default=str))
+        if not out.get("ok"):
+            sys.exit(2)
         sys.exit(0)
 
     # Cron/systemd often starts with wrong cwd; keep data/ + logs/ under repo root.
