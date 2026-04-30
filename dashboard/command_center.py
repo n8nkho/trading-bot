@@ -75,6 +75,24 @@ _DASH_PUBLIC_PATHS = frozenset({
     "/api/billing/proof_links_status",
 })
 _DASH_PUBLIC_PREFIXES = ("/static/",)
+_SETUP_MUTATION_PATHS = frozenset({
+    "/api/setup/save_keys",
+    "/api/setup/test_connection",
+})
+
+
+def _dashboard_basic_auth_matches() -> bool:
+    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
+    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
+    auth = request.authorization
+    return bool(user and pw and auth and auth.username == user and auth.password == pw)
+
+
+def _setup_mutation_allowed() -> bool:
+    """Setup credential writes are public only before first-run setup is complete."""
+    if not _setup_status().get("setup_complete"):
+        return True
+    return _dashboard_basic_auth_matches()
 
 
 @app.before_request
@@ -84,10 +102,15 @@ def _fortress_dashboard_basic_auth():
     if not user or not pw:
         return None
     path = request.path or ""
+    if path in _SETUP_MUTATION_PATHS and not _setup_mutation_allowed():
+        return Response(
+            "Authentication required",
+            401,
+            {"WWW-Authenticate": 'Basic realm="Fortress Command Center"'},
+        )
     if path in _DASH_PUBLIC_PATHS or any(path.startswith(p) for p in _DASH_PUBLIC_PREFIXES):
         return None
-    auth = request.authorization
-    if auth and auth.username == user and auth.password == pw:
+    if _dashboard_basic_auth_matches():
         return None
     return Response(
         "Authentication required",
