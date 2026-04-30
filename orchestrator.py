@@ -87,6 +87,7 @@ from utils.cost_calculator import (
     generate_cost_report
 )
 from utils.execution_mode import get_execution_mode
+from utils.uplift_runtime import load_uplift_status
 
 
 def _order_is_filled(order_result: dict) -> bool:
@@ -2829,6 +2830,28 @@ def run_ops_recovery(raw_argv: list[str]) -> int:
     return 0
 
 
+def _uplift_status_path() -> Path:
+    return _ORCHESTRATOR_ROOT / "uplift_status.json"
+
+
+def _save_uplift_status(doc: dict) -> None:
+    _uplift_status_path().write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+
+def _uplift_gate_check() -> dict:
+    st = load_uplift_status()
+    ff = st.get("feature_flags") if isinstance(st.get("feature_flags"), dict) else {}
+    issues: list[str] = []
+    for k, v in ff.items():
+        try:
+            iv = int(v)
+            if iv < 0 or iv > 2:
+                issues.append(f"{k}={iv}")
+        except Exception:
+            issues.append(f"{k}=invalid")
+    return {"ok": len(issues) == 0, "current_phase": st.get("current_phase"), "flag_issues": issues}
+
+
 if __name__ == "__main__":
     import sys
     
@@ -2860,6 +2883,10 @@ if __name__ == "__main__":
         print("  python orchestrator.py generate_intelligence_brief - Generate daily self-QA intelligence brief")
         print("  python orchestrator.py evolve - Run recursive self-improvement cycle")
         print("  python orchestrator.py verify_learning            - LLM provider + recursive-learning file status")
+        print("  python orchestrator.py uplift_status              - Print uplift phase/flags/limits")
+        print("  python orchestrator.py uplift_gate_check          - Validate uplift flag semantics")
+        print("  python orchestrator.py uplift_advance_phase --to <PHASE> - Update uplift phase")
+        print("  python orchestrator.py uplift_rollback --module <convergence|adaptive_sizing|throughput|execution_advisor> - Set module flag to shadow")
         print("  python orchestrator.py ops_autofix [--dry-run] [--stale-hours N] [--no-log-dedupe] [--force-log-dedupe] - Run safe ops auto-healing")
         print("  python orchestrator.py ops_recovery [--no-fortress] [--no-screen] [--no-pending] [portfolio_value]")
         print("  python orchestrator.py regime_check               - Print fortress + hedging file snapshot")
@@ -3014,6 +3041,62 @@ if __name__ == "__main__":
     if command in ("verify_learning", "verify-learning"):
         ensure_repo_root_cwd()
         print(json.dumps(verify_learning(), indent=2, default=str))
+        sys.exit(0)
+
+    if command in ("uplift_status", "uplift-status"):
+        ensure_repo_root_cwd()
+        print(json.dumps(load_uplift_status(), indent=2, default=str))
+        sys.exit(0)
+
+    if command in ("uplift_gate_check", "uplift-gate-check"):
+        ensure_repo_root_cwd()
+        print(json.dumps(_uplift_gate_check(), indent=2, default=str))
+        sys.exit(0 if _uplift_gate_check().get("ok") else 1)
+
+    if command in ("uplift_advance_phase", "uplift-advance-phase"):
+        ensure_repo_root_cwd()
+        args = sys.argv[2:]
+        phase = None
+        if "--to" in args:
+            try:
+                phase = str(args[args.index("--to") + 1]).strip().upper()
+            except Exception:
+                phase = None
+        if not phase:
+            print(json.dumps({"ok": False, "error": "missing --to <PHASE>"}))
+            sys.exit(2)
+        st = load_uplift_status()
+        st["current_phase"] = phase
+        st["updated_at"] = datetime.now().isoformat()
+        _save_uplift_status(st)
+        print(json.dumps({"ok": True, "current_phase": phase, "path": str(_uplift_status_path())}, indent=2))
+        sys.exit(0)
+
+    if command in ("uplift_rollback", "uplift-rollback"):
+        ensure_repo_root_cwd()
+        args = sys.argv[2:]
+        module = None
+        if "--module" in args:
+            try:
+                module = str(args[args.index("--module") + 1]).strip().lower()
+            except Exception:
+                module = None
+        key_map = {
+            "convergence": "FORTRESS_UPLIFT_CONVERGENCE_MODE",
+            "adaptive_sizing": "FORTRESS_UPLIFT_ADAPTIVE_SIZING_MODE",
+            "throughput": "FORTRESS_UPLIFT_THROUGHPUT_MODE",
+            "execution_advisor": "FORTRESS_UPLIFT_EXECUTION_ADVISOR_MODE",
+        }
+        if module not in key_map:
+            print(json.dumps({"ok": False, "error": "invalid --module", "allowed": sorted(key_map.keys())}, indent=2))
+            sys.exit(2)
+        st = load_uplift_status()
+        ff = st.get("feature_flags") if isinstance(st.get("feature_flags"), dict) else {}
+        ff[key_map[module]] = 1
+        st["feature_flags"] = ff
+        st["updated_at"] = datetime.now().isoformat()
+        _save_uplift_status(st)
+        print(json.dumps({"ok": True, "module": module, "flag": key_map[module], "mode": 1}, indent=2))
         sys.exit(0)
 
     # Cron/systemd often starts with wrong cwd; keep data/ + logs/ under repo root.

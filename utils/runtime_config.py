@@ -39,6 +39,8 @@ def _builtin_defaults() -> dict[str, Any]:
         },
         "defaults": {
             "portfolio_value_usd": _DEFAULT_PORTFOLIO_USD,
+            "allow_overnight_holds": True,
+            "universe_expansion_d_plus": "us_equities_options",
         },
         "llm": {
             "provider": "none",
