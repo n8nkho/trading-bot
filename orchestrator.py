@@ -3207,6 +3207,19 @@ if __name__ == "__main__":
             except Exception:
                 required = 5
         out = _promote_next_uplift_module(required_clean_sessions=required, apply=apply)
+        try:
+            logger.info(
+                "UPLIFT_AUTO_PROMOTE apply=%s ready=%s applied=%s clean=%s/%s active=%s next=%s",
+                apply,
+                out.get("ready"),
+                out.get("applied"),
+                out.get("clean_sessions_observed"),
+                out.get("required_clean_sessions"),
+                out.get("active_module"),
+                out.get("next_module"),
+            )
+        except Exception:
+            pass
         print(json.dumps(out, indent=2, default=str))
         if not out.get("ok"):
             sys.exit(2)
