@@ -1,9 +1,9 @@
 {
   "version": "2.0",
-  "updated_at": "2026-04-29T23:40:00",
-  "current_phase": "PLANNING",
+  "updated_at": "2026-04-30T14:42:00",
+  "current_phase": "TELEMETRY",
   "feature_flags": {
-    "FORTRESS_UPLIFT_CONVERGENCE_MODE": 1,
+    "FORTRESS_UPLIFT_CONVERGENCE_MODE": 2,
     "FORTRESS_UPLIFT_ADAPTIVE_SIZING_MODE": 1,
     "FORTRESS_UPLIFT_THROUGHPUT_MODE": 1,
     "FORTRESS_UPLIFT_EXECUTION_ADVISOR_MODE": 0
@@ -21,5 +21,16 @@
   "targets": {
     "candidate_band_per_session": [2, 5],
     "drawdown_halt_base_pct": -6.0
+  },
+  "rollout_plan": {
+    "sequence": [
+      "convergence",
+      "adaptive_sizing",
+      "throughput",
+      "execution_advisor"
+    ],
+    "active_module": "convergence",
+    "next_module": "adaptive_sizing",
+    "soak_min_sessions_per_step": 5
   }
 }
