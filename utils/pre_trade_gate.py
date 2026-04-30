@@ -14,6 +14,19 @@ from typing import Any
 from utils.operator_halt import is_trading_halted
 
 
+_EQUITY_SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
+_OCC_OPTION_SYMBOL_RE = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
+
+
+def _is_valid_symbol(symbol: str, order_class: str) -> bool:
+    sym = (symbol or "").strip().upper()
+    cls = (order_class or "").strip().lower()
+    if cls == "option":
+        # OCC-form option symbols, e.g. ET260605C00020000
+        return bool(_OCC_OPTION_SYMBOL_RE.match(sym))
+    return bool(_EQUITY_SYMBOL_RE.match(sym))
+
+
 def _is_in_blackout_window_et() -> tuple[bool, str]:
     """
     Returns (in_blackout, window_label). Format:
@@ -79,7 +92,7 @@ def evaluate_pre_trade_submission(
     sym = (symbol or "").strip().upper()
     if not sym:
         reasons.append("missing_symbol")
-    elif not re.match(r"^[A-Z][A-Z0-9.\-]{0,9}$", sym):
+    elif not _is_valid_symbol(sym, order_class):
         reasons.append("invalid_symbol_format")
 
     sd = (side or "").strip().upper()

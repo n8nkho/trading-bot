@@ -48,6 +48,27 @@ class TestGuardrailExtensions(unittest.TestCase):
         finally:
             os.environ.pop("FORTRESS_ENTRY_BLACKOUT_WINDOWS_ET", None)
 
+    def test_pre_trade_allows_occ_option_symbol(self):
+        gate = evaluate_pre_trade_submission(
+            side="BUY",
+            symbol="ET260605C00020000",
+            qty=1,
+            estimated_notional_usd=150.0,
+            order_class="option",
+        )
+        self.assertTrue(gate["allowed"], gate.get("reasons"))
+
+    def test_pre_trade_rejects_malformed_option_symbol(self):
+        gate = evaluate_pre_trade_submission(
+            side="BUY",
+            symbol="ET26C00020000",
+            qty=1,
+            estimated_notional_usd=150.0,
+            order_class="option",
+        )
+        self.assertFalse(gate["allowed"])
+        self.assertIn("invalid_symbol_format", gate.get("reasons") or [])
+
 
 if __name__ == "__main__":
     unittest.main()
