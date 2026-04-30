@@ -6,7 +6,14 @@ from __future__ import annotations
 import base64
 import os
 import tempfile
+import sys
+import types
 from pathlib import Path
+
+backtest_stub = types.ModuleType("utils.simple_daily_backtest")
+backtest_stub.read_backtest_snapshot = lambda: {}
+backtest_stub.run_daily_momentum_backtest = lambda ticker: {"ticker": ticker}
+sys.modules["utils.simple_daily_backtest"] = backtest_stub
 
 from dashboard import command_center as cc
 
