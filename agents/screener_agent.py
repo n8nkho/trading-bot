@@ -16,6 +16,9 @@ from utils.local_llm import analyze_stock_drop
 from agents.vision_analyst import analyze_chart_patterns, pattern_to_signal
 from utils.policy_profile import get_profile_bundle
 from utils.runtime_config import get_llm_config
+from agents.convergence_engine import score_candidate
+from utils.uplift_runtime import get_flag_mode
+from utils.throughput_controller import recommend_thresholds
 
 # Load current parameters
 DATA_DIR = Path("data")
@@ -388,6 +391,8 @@ def run_screener():
             "volume_ratio": float(volume_ratio),
         }
 
+    convergence_mode = get_flag_mode("FORTRESS_UPLIFT_CONVERGENCE_MODE")
+    throughput_mode = get_flag_mode("FORTRESS_UPLIFT_THROUGHPUT_MODE")
     for tier_idx, tier_stocks in enumerate(tiers[:max_tiers_to_scan], start=1):
         tier_start_ts = time.time()
         if time.time() - start_ts > max_runtime_seconds:
@@ -509,6 +514,9 @@ def run_screener():
                     "vision_signal": vision_signal,
                     "signal_source": source_label,
                 }
+                if convergence_mode >= 1:
+                    conv = score_candidate(cand, regime_label="UNKNOWN")
+                    cand["convergence"] = conv
                 if source_label == "agentic":
                     cand["agentic_meta"] = agentic_meta
                 candidates.append(cand)
@@ -546,6 +554,25 @@ def run_screener():
         screening_duration_seconds = round(time.time() - start_ts, 3)
         Path("data").mkdir(parents=True, exist_ok=True)
         meta_path = Path("data") / "last_screening_meta.json"
+        convergence_scores = []
+        if convergence_mode >= 1:
+            for c in candidates:
+                try:
+                    convergence_scores.append(float(((c.get("convergence") or {}).get("convergence_score"))))
+                except Exception:
+                    pass
+        throughput = recommend_thresholds(
+            current_params=params,
+            candidates_found=len(candidates),
+            target_min=2,
+            target_max=5,
+        )
+        if throughput_mode >= 2 and throughput.get("changed"):
+            try:
+                with open(CURRENT_PARAMS_FILE, "w", encoding="utf-8") as f:
+                    json.dump(throughput.get("recommended_params") or params, f, indent=2)
+            except Exception:
+                pass
         meta = {
             "timestamp": datetime.now().isoformat(),
             "policy_profile": policy.get("active_profile"),
@@ -565,6 +592,15 @@ def run_screener():
             "prefilter_workers": prefilter_workers,
             "max_screening_runtime_seconds": max_runtime_seconds,
             "tier_telemetry": tier_telemetry,
+            "uplift": {
+                "convergence_mode": convergence_mode,
+                "convergence_scored_count": len(convergence_scores),
+                "convergence_score_avg": round(sum(convergence_scores) / len(convergence_scores), 3)
+                if convergence_scores
+                else None,
+                "throughput_mode": throughput_mode,
+                "throughput_controller": throughput,
+            },
             "agentic": {
                 "scout_timestamp": agentic_pack.get("scout_timestamp"),
                 "analyst_timestamp": agentic_pack.get("analyst_timestamp"),
@@ -581,7 +617,13 @@ def run_screener():
     except Exception:
         pass
 
-    return sorted(candidates, key=lambda x: x['analysis']['confidence'], reverse=True)
+    if convergence_mode >= 1:
+        return sorted(
+            candidates,
+            key=lambda x: float(((x.get("convergence") or {}).get("convergence_score")) or 0.0),
+            reverse=True,
+        )
+    return sorted(candidates, key=lambda x: x["analysis"]["confidence"], reverse=True)
 
 def calculate_rsi(prices, n=14):
     """Calculate the Relative Strength Index (RSI)"""

@@ -1277,6 +1277,7 @@ def get_trading_performance():
                     screening_meta["filter_counts"] = latest_meta.get("filter_counts") or {}
                     # Ensure the UI's "Candidates" reflects the newest screener telemetry.
                     screening_meta["candidates_found"] = latest_meta.get("candidates_found")
+                    screening_meta["uplift"] = latest_meta.get("uplift") or {}
 
                     # Tier telemetry (keep orchestration-derived strict/hedge gate fields intact).
                     for k in [
@@ -1361,6 +1362,7 @@ def get_trading_performance():
             "execution_gate_summary": latest.get("execution_gate_summary") or {},
             "top_prefilter_reasons": top_prefilter_reasons,
             "top_candidates": top_candidates,
+            "uplift": screening_meta.get("uplift") or {},
         }
         try:
             from agents.risk_guardian import get_risk_status

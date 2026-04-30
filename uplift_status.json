@@ -1,0 +1,25 @@
+{
+  "version": "2.0",
+  "updated_at": "2026-04-29T23:40:00",
+  "current_phase": "PLANNING",
+  "feature_flags": {
+    "FORTRESS_UPLIFT_CONVERGENCE_MODE": 1,
+    "FORTRESS_UPLIFT_ADAPTIVE_SIZING_MODE": 1,
+    "FORTRESS_UPLIFT_THROUGHPUT_MODE": 1,
+    "FORTRESS_UPLIFT_EXECUTION_ADVISOR_MODE": 0
+  },
+  "flag_semantics": {
+    "0": "off",
+    "1": "shadow",
+    "2": "enforce"
+  },
+  "limits": {
+    "max_total_deployed_usd": 25000.0,
+    "max_overnight_exposure_ratio": 0.3,
+    "max_position_equity_ratio": 0.1
+  },
+  "targets": {
+    "candidate_band_per_session": [2, 5],
+    "drawdown_halt_base_pct": -6.0
+  }
+}

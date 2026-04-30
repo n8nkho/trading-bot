@@ -1137,10 +1137,14 @@
         const topPrefilter = (screen.top_prefilter_reasons && screen.top_prefilter_reasons.length)
           ? ` | Top prefilter rejects: ${screen.top_prefilter_reasons.slice(0,3).map(r => `${r.reason} (${r.count})`).join(', ')}`
           : '';
+        const uplift = screen.uplift || {};
+        const convLine = (uplift.convergence_mode != null)
+          ? ` | Uplift convergence mode: ${uplift.convergence_mode} · scored: ${uplift.convergence_scored_count ?? 0} · avg: ${uplift.convergence_score_avg ?? 'n/a'}`
+          : '';
         screenEl.innerHTML =
           `Date: ${screen.date}${timePart}` +
           `<br>Candidates: ${screen.candidates_found || 0} | Approved: ${screen.approved || 0} | Auto: ${screen.auto_executed || 0}${universe}${prefilterPassed}${prefilterFiltered}${tierLine}${screenPerfLine}${workersLine}${runtimeLine}${durationLine}${startTsLine}${finishTsLine}${entryGate}${riskGate}${strictLine}${hedgeLine}` +
-          `<br>${topSkip}${topPrefilter}` +
+          `<br>${topSkip}${topPrefilter}${convLine}` +
           candPart;
       }
 
