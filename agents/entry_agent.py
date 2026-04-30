@@ -16,6 +16,7 @@ from utils.market_calendar import is_us_equity_rth_open
 from utils.trading_guardrails import validate_llm_trade_output
 from utils.adaptive_growth_sizing import recommend_size
 from utils.uplift_runtime import get_flag_mode
+from utils.execution_advisor import advise_execution
 from agents.llm_reasoning_engine import LLMReasoningEngine
 from utils.llm_decision_tracker import get_llm_decision_tracker
 
@@ -391,6 +392,7 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
     
     decisions = []
     adaptive_mode = get_flag_mode("FORTRESS_UPLIFT_ADAPTIVE_SIZING_MODE")
+    execution_advisor_mode = get_flag_mode("FORTRESS_UPLIFT_EXECUTION_ADVISOR_MODE")
     deployed_so_far = 0.0
     overnight_so_far = 0.0
     analyst_index = _load_analyst_consensus_index(Path("data"))
@@ -481,12 +483,19 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                         )
                         decision["adaptive_sizing"] = adaptive
                         decision["overnight_candidate"] = True
+                        decision["execution_advisor"] = advise_execution(
+                            confidence=float(stock_confidence),
+                            volume_ratio=float(candidate.get("volume_ratio") or 1.0),
+                            regime_label="UNKNOWN",
+                        )
                         if adaptive_mode >= 2:
                             contracts = max(0, int(adaptive.get("recommended_shares") or 0) // 100)
                             decision["contracts"] = contracts
                             decision["position_size"] = round(
                                 contracts * float(option_trade["premium"]) * 100.0, 2
                             )
+                        if execution_advisor_mode >= 2:
+                            decision["order_hint"] = (decision.get("execution_advisor") or {}).get("tactic")
                         decision["signal_mode"] = signal_mode
                         logger.info(f"{ticker}: OPTION decision - {decision}")
                 else:
@@ -497,6 +506,7 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                         deployed_usd=deployed_so_far,
                         overnight_exposure_usd=overnight_so_far,
                         adaptive_mode=adaptive_mode,
+                        execution_advisor_mode=execution_advisor_mode,
                     )
                     decision['trade_type'] = 'STOCK'
                     # Do not overwrite SKIP reasons (RSI, window, stabilization, etc.).
@@ -512,6 +522,7 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                     deployed_usd=deployed_so_far,
                     overnight_exposure_usd=overnight_so_far,
                     adaptive_mode=adaptive_mode,
+                    execution_advisor_mode=execution_advisor_mode,
                 )
                 decision['trade_type'] = 'STOCK'
                 if decision.get("action") == "BUY":
@@ -567,6 +578,7 @@ def evaluate_single_entry(
     deployed_usd: float = 0.0,
     overnight_exposure_usd: float = 0.0,
     adaptive_mode: int = 0,
+    execution_advisor_mode: int = 0,
 ):
     """
     Evaluate a single candidate for entry.
@@ -663,6 +675,11 @@ def evaluate_single_entry(
                 "llm_decision_id": llm_decision_id,
                 "adaptive_sizing": adaptive,
                 "overnight_candidate": overnight_candidate,
+                "execution_advisor": advise_execution(
+                    confidence=float(llm_conf),
+                    volume_ratio=float(candidate.get("volume_ratio") or 1.0),
+                    regime_label="UNKNOWN",
+                ),
             }
         # LLM explicitly SKIPs or low-confidence BUY => skip.
         return create_skip_decision(
@@ -744,7 +761,7 @@ def evaluate_single_entry(
     logger.info(f"{ticker}: Position sizing - Base: ${base_position:.2f}, Confidence: {confidence:.2f}, Adjusted: ${adjusted_position:.2f}, Final: ${actual_position_size:.2f} ({shares} shares)")
     
     # All checks passed - BUY decision
-    return {
+    decision = {
         'ticker': ticker,
         'action': 'BUY',
         'reason': f'All entry criteria met: RSI={screener_rsi:.1f} (<{rsi_cap}), Price stabilized at ${current_price:.2f}, Time={current_time_et.strftime("%H:%M")} ET',
@@ -754,6 +771,11 @@ def evaluate_single_entry(
         'confidence': confidence,
         'adaptive_sizing': adaptive,
         'overnight_candidate': overnight_candidate,
+        'execution_advisor': advise_execution(
+            confidence=float(confidence),
+            volume_ratio=float(candidate.get("volume_ratio") or 1.0),
+            regime_label="UNKNOWN",
+        ),
         'screener_data': {
             'drop_pct': candidate.get('drop_pct'),
             'rsi': screener_rsi,
@@ -762,6 +784,9 @@ def evaluate_single_entry(
         },
         'timestamp': datetime.now().isoformat()
     }
+    if execution_advisor_mode >= 2:
+        decision["order_hint"] = (decision.get("execution_advisor") or {}).get("tactic")
+    return decision
 
 def is_entry_window():
     """Check if current time is within entry window (2:30 PM ET through end, optionally extended)."""
