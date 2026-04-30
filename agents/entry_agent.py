@@ -14,6 +14,8 @@ from utils.runtime_config import get_default_portfolio_usd
 from utils.policy_profile import get_profile_bundle
 from utils.market_calendar import is_us_equity_rth_open
 from utils.trading_guardrails import validate_llm_trade_output
+from utils.adaptive_growth_sizing import recommend_size
+from utils.uplift_runtime import get_flag_mode
 from agents.llm_reasoning_engine import LLMReasoningEngine
 from utils.llm_decision_tracker import get_llm_decision_tracker
 
@@ -388,6 +390,9 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
             pass
     
     decisions = []
+    adaptive_mode = get_flag_mode("FORTRESS_UPLIFT_ADAPTIVE_SIZING_MODE")
+    deployed_so_far = 0.0
+    overnight_so_far = 0.0
     analyst_index = _load_analyst_consensus_index(Path("data"))
     # Entry-window gating must apply to both stock and option decisions.
     # The stock path already enforces this inside `evaluate_single_entry()`;
@@ -466,10 +471,33 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                             'confidence': stock_confidence,
                             'reason': 'Option trade offers better ROI'
                         }
+                        adaptive = recommend_size(
+                            equity_usd=float(portfolio_value),
+                            current_price=float(option_trade['premium']) * 100.0,
+                            confidence=float(stock_confidence),
+                            deployed_usd=float(deployed_so_far),
+                            overnight_exposure_usd=float(overnight_so_far),
+                            overnight_candidate=True,
+                        )
+                        decision["adaptive_sizing"] = adaptive
+                        decision["overnight_candidate"] = True
+                        if adaptive_mode >= 2:
+                            contracts = max(0, int(adaptive.get("recommended_shares") or 0) // 100)
+                            decision["contracts"] = contracts
+                            decision["position_size"] = round(
+                                contracts * float(option_trade["premium"]) * 100.0, 2
+                            )
                         decision["signal_mode"] = signal_mode
                         logger.info(f"{ticker}: OPTION decision - {decision}")
                 else:
-                    decision = evaluate_single_entry(candidate, portfolio_value, rsi_threshold=rsi_effective)
+                    decision = evaluate_single_entry(
+                        candidate,
+                        portfolio_value,
+                        rsi_threshold=rsi_effective,
+                        deployed_usd=deployed_so_far,
+                        overnight_exposure_usd=overnight_so_far,
+                        adaptive_mode=adaptive_mode,
+                    )
                     decision['trade_type'] = 'STOCK'
                     # Do not overwrite SKIP reasons (RSI, window, stabilization, etc.).
                     if decision.get("action") == "BUY":
@@ -477,7 +505,14 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                     decision["signal_mode"] = signal_mode
                     logger.info(f"{ticker}: STOCK decision - {decision}")
             else:
-                decision = evaluate_single_entry(candidate, portfolio_value, rsi_threshold=rsi_effective)
+                decision = evaluate_single_entry(
+                    candidate,
+                    portfolio_value,
+                    rsi_threshold=rsi_effective,
+                    deployed_usd=deployed_so_far,
+                    overnight_exposure_usd=overnight_so_far,
+                    adaptive_mode=adaptive_mode,
+                )
                 decision['trade_type'] = 'STOCK'
                 if decision.get("action") == "BUY":
                     decision["reason"] = "No suitable option found (stock path)"
@@ -486,6 +521,13 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
             
             if isinstance(decision, dict):
                 decision.setdefault("signal_mode", signal_mode)
+                if decision.get("action") == "BUY":
+                    try:
+                        deployed_so_far += float(decision.get("position_size") or 0.0)
+                        if bool(decision.get("overnight_candidate", True)):
+                            overnight_so_far += float(decision.get("position_size") or 0.0)
+                    except Exception:
+                        pass
             decisions.append(decision)
         except Exception as e:
             logger.error(f"Error evaluating {ticker}: {type(e).__name__}: {str(e)}")
@@ -517,7 +559,15 @@ def create_skip_decision(ticker, reason, **extra: Any):
     out.update(extra)
     return out
 
-def evaluate_single_entry(candidate, portfolio_value, *, rsi_threshold: float | None = None):
+def evaluate_single_entry(
+    candidate,
+    portfolio_value,
+    *,
+    rsi_threshold: float | None = None,
+    deployed_usd: float = 0.0,
+    overnight_exposure_usd: float = 0.0,
+    adaptive_mode: int = 0,
+):
     """
     Evaluate a single candidate for entry.
     
@@ -533,6 +583,7 @@ def evaluate_single_entry(candidate, portfolio_value, *, rsi_threshold: float | 
     screener_rsi = candidate.get('rsi', 100)
     rsi_cap = float(rsi_threshold) if rsi_threshold is not None else float(RSI_THRESHOLD)
     confidence = candidate.get('analysis', {}).get('confidence', 0.5)
+    overnight_candidate = bool(candidate.get("overnight_eligible", True))
 
     # LLM-first reasoning path (replaces deterministic gating when provider is enabled).
     llm_decision = _get_llm_engine().evaluate_trade_opportunity(candidate)
@@ -581,6 +632,17 @@ def evaluate_single_entry(candidate, portfolio_value, *, rsi_threshold: float | 
             policy_cap = _max_new_position_usd_from_policy(portfolio_value)
             position_size = min(base_position * multiplier, MAX_POSITION_SIZE, policy_cap)
             shares = int(position_size / current_price)
+            adaptive = recommend_size(
+                equity_usd=float(portfolio_value),
+                current_price=float(current_price),
+                confidence=float(llm_conf),
+                deployed_usd=float(deployed_usd),
+                overnight_exposure_usd=float(overnight_exposure_usd),
+                overnight_candidate=overnight_candidate,
+            )
+            if adaptive_mode >= 2:
+                shares = int(adaptive.get("recommended_shares") or shares)
+                position_size = float(adaptive.get("recommended_position_usd") or position_size)
             if shares < 1:
                 return create_skip_decision(
                     ticker, "LLM BUY but position size below 1 share", llm_decision_id=llm_decision_id
@@ -599,6 +661,8 @@ def evaluate_single_entry(candidate, portfolio_value, *, rsi_threshold: float | 
                 "llm_risks": llm_decision.get("risks") or [],
                 "llm_learning_hypothesis": llm_decision.get("learning_hypothesis") or "",
                 "llm_decision_id": llm_decision_id,
+                "adaptive_sizing": adaptive,
+                "overnight_candidate": overnight_candidate,
             }
         # LLM explicitly SKIPs or low-confidence BUY => skip.
         return create_skip_decision(
@@ -657,6 +721,17 @@ def evaluate_single_entry(candidate, portfolio_value, *, rsi_threshold: float | 
     adjusted_position = base_position * confidence
     position_size = min(adjusted_position, MAX_POSITION_SIZE, policy_cap)
     shares = int(position_size / current_price)
+    adaptive = recommend_size(
+        equity_usd=float(portfolio_value),
+        current_price=float(current_price),
+        confidence=float(confidence),
+        deployed_usd=float(deployed_usd),
+        overnight_exposure_usd=float(overnight_exposure_usd),
+        overnight_candidate=overnight_candidate,
+    )
+    if adaptive_mode >= 2:
+        shares = int(adaptive.get("recommended_shares") or shares)
+        position_size = float(adaptive.get("recommended_position_usd") or position_size)
     
     # Ensure at least 1 share
     if shares < 1:
@@ -677,6 +752,8 @@ def evaluate_single_entry(candidate, portfolio_value, *, rsi_threshold: float | 
         'shares': shares,
         'entry_price': current_price,
         'confidence': confidence,
+        'adaptive_sizing': adaptive,
+        'overnight_candidate': overnight_candidate,
         'screener_data': {
             'drop_pct': candidate.get('drop_pct'),
             'rsi': screener_rsi,
