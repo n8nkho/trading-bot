@@ -1894,12 +1894,10 @@ def get_recommendations():
 
 
 def _operator_halt_post_allowed() -> bool:
-    """If FORTRESS_OPERATOR_TOKEN is set, require token header or valid dashboard Basic auth."""
+    """Require an explicit operator token or valid configured dashboard Basic auth."""
     token = (os.environ.get("FORTRESS_OPERATOR_TOKEN") or "").strip()
-    if not token:
-        return True
     hdr = (request.headers.get("X-Operator-Token") or "").strip()
-    if hdr == token:
+    if token and hdr == token:
         return True
     user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
     pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
