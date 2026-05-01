@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import os
+import sys
+import types
 from contextlib import contextmanager
 
 
@@ -37,6 +39,13 @@ def main() -> int:
         "FORTRESS_DASHBOARD_PASS": None,
         "FORTRESS_ALERT_WEBHOOK_URL": None,
     }):
+        # Keep this smoke focused on the halt route; the dashboard imports
+        # analytics helpers that may need heavier optional packages.
+        backtest_stub = types.ModuleType("utils.simple_daily_backtest")
+        backtest_stub.read_backtest_snapshot = lambda *args, **kwargs: {}
+        backtest_stub.run_daily_momentum_backtest = lambda *args, **kwargs: {}
+        sys.modules.setdefault("utils.simple_daily_backtest", backtest_stub)
+
         import dashboard.command_center as cc
 
         writes: list[tuple[bool, str, str]] = []
