@@ -2014,6 +2014,8 @@ def api_setup_status():
 def api_setup_save_keys():
     """Save Alpaca API key and secret to .env. Never logged or echoed."""
     try:
+        if _setup_status()["setup_complete"]:
+            return jsonify({"ok": False, "error": "Setup is already complete; refusing to overwrite Alpaca keys."}), 409
         data = request.get_json(force=True, silent=True) or {}
         api_key = (data.get("api_key") or "").strip()
         secret_key = (data.get("secret_key") or "").strip()
