@@ -110,11 +110,14 @@ class TestRecursiveSystem(unittest.TestCase):
             old_cwd = os.getcwd()
             try:
                 os.chdir(root)
+                # Writes apply only when approval is off; default REQUIRE_APPROVAL=1 queues changes.
                 os.environ["FORTRESS_EVOLUTION_ALLOW_WRITES"] = "1"
+                os.environ["FORTRESS_EVOLUTION_REQUIRE_APPROVAL"] = "0"
                 out = revo.run_recursive_evolution(data_dir=data_dir)
             finally:
                 os.chdir(old_cwd)
                 os.environ.pop("FORTRESS_EVOLUTION_ALLOW_WRITES", None)
+                os.environ.pop("FORTRESS_EVOLUTION_REQUIRE_APPROVAL", None)
 
             self.assertTrue(out["phase4_autonomous_changes"]["applied"])
             self.assertTrue((data_dir / "current_params.json").exists())
