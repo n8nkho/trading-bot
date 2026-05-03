@@ -175,6 +175,7 @@ def _normalize_stock_tiers_sold(position: dict) -> dict:
 
 # In-memory cache for option chains to avoid repeated network calls.
 _OPTION_CHAIN_CACHE = {}
+_INVALID_OPTION_EXPIRATIONS = set()
 
 
 def _get_option_chain(underlying_ticker: str, expiration_date: str):
@@ -209,7 +210,9 @@ def monitor_positions(positions):
     logging.info(f"Starting exit monitoring for {len(positions)} positions")
     
     decisions = []
-    
+    normalized_positions = []
+    option_rollups: dict[tuple[str, str, float, bool], dict] = {}
+
     for pos in positions:
         # Canonicalize any option-shaped positions so exit logic doesn't crash.
         try:
@@ -219,6 +222,24 @@ def monitor_positions(positions):
             # Fail safe: if normalization fails, treat as HOLD (exit monitor should never crash).
             pos = dict(pos)
             pos['type'] = 'STOCK'
+        if pos.get("type") == "OPTION":
+            key = (
+                str(pos.get("ticker") or "").upper(),
+                str(pos.get("expiration_date") or ""),
+                float(pos.get("strike") or 0.0),
+                bool(pos.get("call", True)),
+            )
+            if key in option_rollups:
+                prev_qty = int(option_rollups[key].get("qty") or 0)
+                option_rollups[key]["qty"] = prev_qty + int(pos.get("qty") or 0)
+                continue
+            option_rollups[key] = dict(pos)
+            continue
+        normalized_positions.append(pos)
+
+    normalized_positions.extend(option_rollups.values())
+
+    for pos in normalized_positions:
         ticker = pos['ticker']
         logging.info(f"Monitoring position: {ticker} ({pos.get('type', 'STOCK')})")
         
@@ -276,10 +297,35 @@ def check_option_exit(position):
     # Calculate days to expiration (DTE)
     dte = (expiration_date - datetime.now()).days
     logging.info(f"{option_symbol}: Days to expiration (DTE): {dte}")
+    if dte < 0:
+        # Expired contracts can remain in positions.json briefly until broker sync catches up.
+        # Skip chain fetch to avoid repeated noisy ValueError lookups for unavailable expirations.
+        reason = f"Expired option contract ({dte} DTE); awaiting position sync cleanup"
+        logging.info(f"{option_symbol}: {reason}")
+        return create_hold_decision(option_symbol, reason, None, None)
     
     # Fetch current option premium from the options chain.
     logging.info(f"{option_symbol}: Fetching current option premium from chain...")
-    chain = _get_option_chain(underlying_ticker, position["expiration_date"])
+    chain_key = (str(underlying_ticker), str(position["expiration_date"]))
+    if chain_key in _INVALID_OPTION_EXPIRATIONS:
+        return create_hold_decision(
+            option_symbol,
+            f"Expiration unavailable in chain ({position['expiration_date']}); awaiting position sync cleanup",
+            None,
+            None,
+        )
+    try:
+        chain = _get_option_chain(underlying_ticker, position["expiration_date"])
+    except ValueError as exc:
+        msg = str(exc)
+        if "cannot be found" in msg and "Available expirations" in msg:
+            _INVALID_OPTION_EXPIRATIONS.add(chain_key)
+            reason = (
+                f"Expiration unavailable in chain ({position['expiration_date']}); awaiting position sync cleanup"
+            )
+            logging.warning("%s: %s", option_symbol, reason)
+            return create_hold_decision(option_symbol, reason, None, None)
+        raise
     rows = chain.calls if call else chain.puts
 
     if rows is None or rows.empty:

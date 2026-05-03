@@ -617,7 +617,7 @@ def run_screener():
     except Exception:
         pass
 
-    if convergence_mode >= 1:
+    if convergence_mode >= 2:
         return sorted(
             candidates,
             key=lambda x: float(((x.get("convergence") or {}).get("convergence_score")) or 0.0),

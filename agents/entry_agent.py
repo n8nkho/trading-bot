@@ -483,11 +483,12 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
                         )
                         decision["adaptive_sizing"] = adaptive
                         decision["overnight_candidate"] = True
-                        decision["execution_advisor"] = advise_execution(
-                            confidence=float(stock_confidence),
-                            volume_ratio=float(candidate.get("volume_ratio") or 1.0),
-                            regime_label="UNKNOWN",
-                        )
+                        if execution_advisor_mode >= 1:
+                            decision["execution_advisor"] = advise_execution(
+                                confidence=float(stock_confidence),
+                                volume_ratio=float(candidate.get("volume_ratio") or 1.0),
+                                regime_label="UNKNOWN",
+                            )
                         if adaptive_mode >= 2:
                             contracts = max(0, int(adaptive.get("recommended_shares") or 0) // 100)
                             decision["contracts"] = contracts
@@ -659,7 +660,7 @@ def evaluate_single_entry(
                 return create_skip_decision(
                     ticker, "LLM BUY but position size below 1 share", llm_decision_id=llm_decision_id
                 )
-            return {
+            decision = {
                 "ticker": ticker,
                 "action": "BUY",
                 "reason": f"LLM reasoning BUY: {llm_decision.get('reasoning')}",
@@ -675,12 +676,16 @@ def evaluate_single_entry(
                 "llm_decision_id": llm_decision_id,
                 "adaptive_sizing": adaptive,
                 "overnight_candidate": overnight_candidate,
-                "execution_advisor": advise_execution(
+            }
+            if execution_advisor_mode >= 1:
+                decision["execution_advisor"] = advise_execution(
                     confidence=float(llm_conf),
                     volume_ratio=float(candidate.get("volume_ratio") or 1.0),
                     regime_label="UNKNOWN",
-                ),
-            }
+                )
+            if execution_advisor_mode >= 2:
+                decision["order_hint"] = (decision.get("execution_advisor") or {}).get("tactic")
+            return decision
         # LLM explicitly SKIPs or low-confidence BUY => skip.
         return create_skip_decision(
             ticker,
@@ -771,11 +776,6 @@ def evaluate_single_entry(
         'confidence': confidence,
         'adaptive_sizing': adaptive,
         'overnight_candidate': overnight_candidate,
-        'execution_advisor': advise_execution(
-            confidence=float(confidence),
-            volume_ratio=float(candidate.get("volume_ratio") or 1.0),
-            regime_label="UNKNOWN",
-        ),
         'screener_data': {
             'drop_pct': candidate.get('drop_pct'),
             'rsi': screener_rsi,
@@ -784,6 +784,12 @@ def evaluate_single_entry(
         },
         'timestamp': datetime.now().isoformat()
     }
+    if execution_advisor_mode >= 1:
+        decision["execution_advisor"] = advise_execution(
+            confidence=float(confidence),
+            volume_ratio=float(candidate.get("volume_ratio") or 1.0),
+            regime_label="UNKNOWN",
+        )
     if execution_advisor_mode >= 2:
         decision["order_hint"] = (decision.get("execution_advisor") or {}).get("tactic")
     return decision

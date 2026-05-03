@@ -92,6 +92,68 @@ class TestEntryAgentParams(unittest.TestCase):
         self.assertIsInstance(out[0], dict)
         self.assertEqual(out[0].get("action"), "SKIP")
 
+    def test_execution_advisor_mode_off_does_not_attach_payload(self):
+        cand = {
+            "ticker": "TEST",
+            "rsi": 20.0,
+            "current_price": 100.0,
+            "analysis": {"confidence": 0.9},
+            "volume_ratio": 1.2,
+        }
+        with mock.patch.object(entry_agent, "yf") as yf_mock:
+            import pandas as pd
+
+            idx = pd.date_range("2026-03-25 14:00", periods=5, freq="min", tz="US/Eastern")
+            yf_mock.Ticker.return_value.history.return_value = pd.DataFrame(
+                {"Close": [100.0] * 5, "Low": [98.0] * 5, "High": [101.0] * 5},
+                index=idx,
+            )
+            with mock.patch.object(entry_agent, "get_current_time_et") as tmock, mock.patch.object(
+                entry_agent, "advise_execution"
+            ) as advisor_mock:
+                from datetime import datetime
+
+                tmock.return_value = datetime(2026, 3, 25, 15, 0, tzinfo=entry_agent.pytz.timezone("US/Eastern"))
+                with mock.patch.object(entry_agent, "_get_llm_engine") as eng_mock:
+                    eng_mock.return_value.evaluate_trade_opportunity.return_value = {"llm_available": False}
+                    d = entry_agent.evaluate_single_entry(
+                        cand, 50000, rsi_threshold=40.0, execution_advisor_mode=0
+                    )
+        self.assertEqual(d.get("action"), "BUY")
+        self.assertNotIn("execution_advisor", d)
+        advisor_mock.assert_not_called()
+
+    def test_execution_advisor_mode_shadow_attaches_payload_without_order_hint(self):
+        cand = {
+            "ticker": "TEST",
+            "rsi": 20.0,
+            "current_price": 100.0,
+            "analysis": {"confidence": 0.9},
+            "volume_ratio": 1.2,
+        }
+        with mock.patch.object(entry_agent, "yf") as yf_mock:
+            import pandas as pd
+
+            idx = pd.date_range("2026-03-25 14:00", periods=5, freq="min", tz="US/Eastern")
+            yf_mock.Ticker.return_value.history.return_value = pd.DataFrame(
+                {"Close": [100.0] * 5, "Low": [98.0] * 5, "High": [101.0] * 5},
+                index=idx,
+            )
+            with mock.patch.object(entry_agent, "get_current_time_et") as tmock, mock.patch.object(
+                entry_agent, "advise_execution", return_value={"tactic": "limit_mid"}
+            ):
+                from datetime import datetime
+
+                tmock.return_value = datetime(2026, 3, 25, 15, 0, tzinfo=entry_agent.pytz.timezone("US/Eastern"))
+                with mock.patch.object(entry_agent, "_get_llm_engine") as eng_mock:
+                    eng_mock.return_value.evaluate_trade_opportunity.return_value = {"llm_available": False}
+                    d = entry_agent.evaluate_single_entry(
+                        cand, 50000, rsi_threshold=40.0, execution_advisor_mode=1
+                    )
+        self.assertEqual(d.get("action"), "BUY")
+        self.assertIn("execution_advisor", d)
+        self.assertNotIn("order_hint", d)
+
 
 if __name__ == "__main__":
     unittest.main()
