@@ -100,6 +100,8 @@ DATA_DIR = _ROOT / "data"
 LOGS_DIR = _ROOT / "logs"
 CONFIG_DIR = _ROOT / "config"
 FORTRESS_REPORT_MAX_AGE_HOURS = float(os.getenv("FORTRESS_REPORT_MAX_AGE_HOURS", "30"))
+HEADLINE_STATUS_TAIL_BYTES = int(os.getenv("HEADLINE_EVENT_STATUS_TAIL_BYTES", str(1024 * 1024)))
+_HEADLINE_STATUS_COUNT_CACHE: dict[str, tuple[int, int, int]] = {}
 
 # Fortress hedging output is routed to either `logs/fortress.log` or (on some builds)
 # `logs/fortress_dashboard.log`. Use whichever exists so agent activity has a real last_run.
@@ -1270,6 +1272,61 @@ def _strict_mode_live(risk: dict) -> tuple[bool, str]:
     return False, "normal"
 
 
+def _jsonl_nonempty_line_count(path: Path) -> int:
+    """Count non-empty JSONL rows without loading the append-only ledger into memory."""
+    try:
+        st = path.stat()
+    except OSError:
+        return 0
+
+    cache_key = str(path)
+    cached = _HEADLINE_STATUS_COUNT_CACHE.get(cache_key)
+    if cached and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
+        return cached[2]
+
+    count = 0
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.strip():
+                    count += 1
+    except OSError:
+        return 0
+
+    _HEADLINE_STATUS_COUNT_CACHE[cache_key] = (st.st_mtime_ns, st.st_size, count)
+    return count
+
+
+def _tail_nonempty_lines(path: Path, limit: int, max_bytes: int = HEADLINE_STATUS_TAIL_BYTES) -> list[str]:
+    """Return the last non-empty lines from a file using a bounded tail window."""
+    if limit <= 0:
+        return []
+    try:
+        size = path.stat().st_size
+        start = max(0, size - max(1, max_bytes))
+        with open(path, "rb") as f:
+            f.seek(start)
+            if start > 0:
+                # Drop a partial first line so malformed fragments are not parsed as JSON.
+                f.readline()
+            text = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    lines = [line for line in text.splitlines() if line.strip()]
+    return lines[-limit:]
+
+
+def _latest_jsonl_object(path: Path, search_lines: int = 200) -> dict | None:
+    for line in reversed(_tail_nonempty_lines(path, search_lines)):
+        try:
+            obj = json.loads(line)
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
 def get_safety_status():
     risk = {}
     try:
@@ -1360,17 +1417,8 @@ def get_headline_event_status() -> dict:
 
     ev_path = data_dir / "headline_events.jsonl"
     if ev_path.is_file():
-        try:
-            lines = [x for x in ev_path.read_text(encoding="utf-8", errors="replace").splitlines() if x.strip()]
-            out["events_line_count"] = len(lines)
-            for line in reversed(lines):
-                try:
-                    out["last_event"] = json.loads(line)
-                    break
-                except json.JSONDecodeError:
-                    continue
-        except OSError:
-            pass
+        out["events_line_count"] = _jsonl_nonempty_line_count(ev_path)
+        out["last_event"] = _latest_jsonl_object(ev_path)
 
     shadow_files = sorted(glob.glob(str(data_dir / "headline_event_shadow_*.jsonl")), reverse=True)
     if shadow_files:
@@ -1378,8 +1426,7 @@ def get_headline_event_status() -> dict:
         out["shadow_latest_name"] = sp.name
         try:
             out["shadow_latest_mtime"] = datetime.fromtimestamp(sp.stat().st_mtime).isoformat()
-            raw_lines = [x for x in sp.read_text(encoding="utf-8", errors="replace").splitlines() if x.strip()]
-            for line in raw_lines[-12:]:
+            for line in _tail_nonempty_lines(sp, 12):
                 try:
                     out["shadow_preview"].append(json.loads(line))
                 except json.JSONDecodeError:
