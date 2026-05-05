@@ -7,6 +7,7 @@ import os
 import re
 import sys
 import getpass
+import hmac
 import json
 import subprocess
 import shutil
@@ -77,6 +78,15 @@ _DASH_PUBLIC_PATHS = frozenset({
 _DASH_PUBLIC_PREFIXES = ("/static/",)
 
 
+def _dashboard_basic_auth_valid() -> bool:
+    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
+    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
+    auth = request.authorization
+    if not user or not pw or not auth:
+        return False
+    return hmac.compare_digest(auth.username or "", user) and hmac.compare_digest(auth.password or "", pw)
+
+
 @app.before_request
 def _fortress_dashboard_basic_auth():
     user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
@@ -86,8 +96,7 @@ def _fortress_dashboard_basic_auth():
     path = request.path or ""
     if path in _DASH_PUBLIC_PATHS or any(path.startswith(p) for p in _DASH_PUBLIC_PREFIXES):
         return None
-    auth = request.authorization
-    if auth and auth.username == user and auth.password == pw:
+    if _dashboard_basic_auth_valid():
         return None
     return Response(
         "Authentication required",
@@ -1901,10 +1910,7 @@ def _operator_halt_post_allowed() -> bool:
     hdr = (request.headers.get("X-Operator-Token") or "").strip()
     if hdr == token:
         return True
-    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
-    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
-    auth = request.authorization
-    if user and pw and auth and auth.username == user and auth.password == pw:
+    if _dashboard_basic_auth_valid():
         return True
     return False
 
@@ -1997,6 +2003,16 @@ def _env_upsert_alpaca(api_key: str, secret_key: str) -> None:
         pass
 
 
+def _setup_write_allowed() -> bool:
+    """
+    Allow unauthenticated setup writes only during first-run setup.
+    After credentials exist, changing broker keys requires dashboard auth.
+    """
+    if not _setup_status()["setup_complete"]:
+        return True
+    return _dashboard_basic_auth_valid()
+
+
 @app.route("/setup")
 def setup_page():
     """First-run wizard: enter Alpaca keys and test connection."""
@@ -2014,6 +2030,8 @@ def api_setup_status():
 def api_setup_save_keys():
     """Save Alpaca API key and secret to .env. Never logged or echoed."""
     try:
+        if not _setup_write_allowed():
+            return jsonify({"ok": False, "error": "dashboard_auth_required"}), 403
         data = request.get_json(force=True, silent=True) or {}
         api_key = (data.get("api_key") or "").strip()
         secret_key = (data.get("secret_key") or "").strip()
@@ -2033,6 +2051,8 @@ def api_setup_save_keys():
 def api_setup_test_connection():
     """Test Alpaca connection. On success, mark setup complete."""
     try:
+        if not _setup_write_allowed():
+            return jsonify({"ok": False, "error": "dashboard_auth_required"}), 403
         from alpaca.trading.client import TradingClient
         os.environ.pop("ALPACA_API_KEY", None)
         os.environ.pop("ALPACA_SECRET_KEY", None)
