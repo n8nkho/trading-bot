@@ -1,7 +1,14 @@
 import os
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+
+simple_daily_backtest = types.ModuleType("utils.simple_daily_backtest")
+simple_daily_backtest.read_backtest_snapshot = lambda *args, **kwargs: {}
+simple_daily_backtest.run_daily_momentum_backtest = lambda *args, **kwargs: {}
+sys.modules.setdefault("utils.simple_daily_backtest", simple_daily_backtest)
 
 import dashboard.command_center as cc
 
