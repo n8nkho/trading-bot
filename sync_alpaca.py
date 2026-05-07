@@ -42,7 +42,9 @@ def main() -> int:
     data_dir = ROOT / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     out_path = data_dir / "positions.json"
-    out_path.write_text(json.dumps(positions, indent=2), encoding="utf-8")
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(positions, indent=2), encoding="utf-8")
+    tmp_path.replace(out_path)
     mode = "paper" if is_alpaca_paper() else "live"
     print(f"✅ Synced {len(positions)} positions from Alpaca ({mode}) -> {out_path}")
     return 0

@@ -292,6 +292,20 @@ def _read_json(path, default=None):
     return default
 
 
+def _normalize_positions_payload(raw):
+    """Return only dict positions from supported positions.json shapes."""
+    if isinstance(raw, dict):
+        payload = raw.get("positions")
+        if not isinstance(payload, list):
+            payload = raw.get("positions_list")
+        raw = payload
+        if not isinstance(raw, list):
+            raw = []
+    if not isinstance(raw, list):
+        return []
+    return [p for p in raw if isinstance(p, dict)]
+
+
 def _read_jsonl(path, limit=500):
     out = []
     try:
@@ -675,11 +689,7 @@ def get_trading_performance():
         "policy_profile": get_profile_bundle().get("active_profile"),
     }
     # Positions: prefer Alpaca broker truth; fall back to positions.json; surface file/broker drift
-    file_positions = _read_json(DATA_DIR / "positions.json", default=[])
-    if isinstance(file_positions, dict):
-        file_positions = file_positions.get("positions", [])
-    if not isinstance(file_positions, list):
-        file_positions = []
+    file_positions = _normalize_positions_payload(_read_json(DATA_DIR / "positions.json", default=[]))
 
     broker_list: list | None = None
     broker_err: str | None = None
@@ -687,6 +697,8 @@ def get_trading_performance():
         from utils.alpaca_broker import fetch_broker_positions
 
         broker_list, broker_err = fetch_broker_positions()
+        if broker_list is not None:
+            broker_list = _normalize_positions_payload(broker_list)
     except Exception as e:
         broker_list, broker_err = None, f"{type(e).__name__}:{e}"
 
@@ -1115,10 +1127,12 @@ def get_news_and_impact():
     candidates = []  # (priority, ticker, headline, source, url)
 
     # 1) Positions
-    positions = _read_json(DATA_DIR / "positions.json", default=[])
-    if not isinstance(positions, list):
-        positions = positions.get("positions", positions.get("positions_list", []))
-    position_tickers = [(p.get("ticker") or p.get("symbol") or "").strip().upper() for p in positions[:10] if (p.get("ticker") or p.get("symbol"))]
+    positions = _normalize_positions_payload(_read_json(DATA_DIR / "positions.json", default=[]))
+    position_tickers = []
+    for p in positions[:10]:
+        ticker = str(p.get("ticker") or p.get("symbol") or "").strip().upper()
+        if ticker:
+            position_tickers.append(ticker)
     for ticker in position_tickers[:5]:
         for title, url in _fetch_news_for_ticker(ticker, limit=2):
             key = _normalize_headline(title)
@@ -2677,20 +2691,18 @@ def get_live_positions():
         import yfinance as yf
         from datetime import datetime
 
-        positions = []
+        positions = None
         try:
             from utils.alpaca_broker import fetch_broker_positions
 
             bl, _err = fetch_broker_positions()
             if bl is not None:
-                positions = bl
+                positions = _normalize_positions_payload(bl)
         except Exception:
-            positions = []
-        if not positions:
-            positions = _read_json(DATA_DIR / "positions.json", default=[])
-            if isinstance(positions, dict):
-                positions = positions.get("positions", [])
-        tickers = list({p.get("ticker") for p in positions if p.get("ticker")})
+            positions = None
+        if positions is None:
+            positions = _normalize_positions_payload(_read_json(DATA_DIR / "positions.json", default=[]))
+        tickers = list({str(p.get("ticker") or "").strip().upper() for p in positions if p.get("ticker")})
         # Batch fetch current prices
         prices = {}
         if tickers:
