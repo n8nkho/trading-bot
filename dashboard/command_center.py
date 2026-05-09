@@ -86,14 +86,21 @@ def _fortress_dashboard_basic_auth():
     path = request.path or ""
     if path in _DASH_PUBLIC_PATHS or any(path.startswith(p) for p in _DASH_PUBLIC_PREFIXES):
         return None
-    auth = request.authorization
-    if auth and auth.username == user and auth.password == pw:
+    if _dashboard_basic_auth_valid():
         return None
     return Response(
         "Authentication required",
         401,
         {"WWW-Authenticate": 'Basic realm="Fortress Command Center"'},
     )
+
+
+def _dashboard_basic_auth_valid() -> bool:
+    """True when the request presents the configured dashboard Basic auth credentials."""
+    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
+    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
+    auth = request.authorization
+    return bool(user and pw and auth and auth.username == user and auth.password == pw)
 
 
 DATA_DIR = _ROOT / "data"
@@ -1901,10 +1908,7 @@ def _operator_halt_post_allowed() -> bool:
     hdr = (request.headers.get("X-Operator-Token") or "").strip()
     if hdr == token:
         return True
-    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
-    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
-    auth = request.authorization
-    if user and pw and auth and auth.username == user and auth.password == pw:
+    if _dashboard_basic_auth_valid():
         return True
     return False
 
@@ -1977,6 +1981,26 @@ def _setup_status():
     return {"setup_complete": done or has_keys, "has_alpaca_keys": has_keys}
 
 
+def _setup_complete_marker_exists() -> bool:
+    try:
+        return SETUP_COMPLETE_FILE.exists()
+    except Exception:
+        return False
+
+
+def _setup_mutation_allowed() -> bool:
+    """
+    Keep the first-run wizard public until it finishes, then require dashboard auth.
+
+    The setup routes are intentionally on the public-path list so a fresh install can
+    be configured before credentials exist. After the completion marker is written,
+    they can rotate broker keys and therefore must not remain anonymously writable.
+    """
+    if not _setup_complete_marker_exists():
+        return True
+    return _dashboard_basic_auth_valid()
+
+
 def _env_upsert_alpaca(api_key: str, secret_key: str) -> None:
     """Update or add ALPACA_API_KEY and ALPACA_SECRET_KEY in .env. Preserve other vars. Never log keys."""
     lines = []
@@ -2014,6 +2038,8 @@ def api_setup_status():
 def api_setup_save_keys():
     """Save Alpaca API key and secret to .env. Never logged or echoed."""
     try:
+        if not _setup_mutation_allowed():
+            return jsonify({"ok": False, "error": "dashboard_auth_required_after_setup"}), 403
         data = request.get_json(force=True, silent=True) or {}
         api_key = (data.get("api_key") or "").strip()
         secret_key = (data.get("secret_key") or "").strip()
@@ -2033,6 +2059,8 @@ def api_setup_save_keys():
 def api_setup_test_connection():
     """Test Alpaca connection. On success, mark setup complete."""
     try:
+        if not _setup_mutation_allowed():
+            return jsonify({"ok": False, "error": "dashboard_auth_required_after_setup"}), 403
         from alpaca.trading.client import TradingClient
         os.environ.pop("ALPACA_API_KEY", None)
         os.environ.pop("ALPACA_SECRET_KEY", None)
