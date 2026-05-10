@@ -2677,7 +2677,7 @@ def get_live_positions():
         import yfinance as yf
         from datetime import datetime
 
-        positions = []
+        positions = None
         try:
             from utils.alpaca_broker import fetch_broker_positions
 
@@ -2685,11 +2685,13 @@ def get_live_positions():
             if bl is not None:
                 positions = bl
         except Exception:
-            positions = []
-        if not positions:
+            positions = None
+        if positions is None:
             positions = _read_json(DATA_DIR / "positions.json", default=[])
             if isinstance(positions, dict):
                 positions = positions.get("positions", [])
+        if not isinstance(positions, list):
+            positions = []
         tickers = list({p.get("ticker") for p in positions if p.get("ticker")})
         # Batch fetch current prices
         prices = {}
