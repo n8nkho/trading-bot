@@ -52,41 +52,54 @@ def _parse_expires(raw: Any) -> Optional[datetime]:
 
 def _load_license_file(path: Path) -> dict[str, Any]:
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("license file must contain a JSON object")
+    return data
+
+
+def _invalid_plan(name: str = "Invalid license") -> Plan:
+    return Plan(
+        tier="starter",
+        name=name,
+        valid=False,
+    )
 
 
 def get_plan() -> Plan:
     """
     Resolution order:
-    1. If FORTRESS_LICENSE_PATH points to a readable JSON file, use it (tier, valid, expires).
-       Missing tier in file falls back to FORTRESS_LICENSE_TIER, then master.
+    1. If FORTRESS_LICENSE_PATH is set, use that readable JSON file (tier, valid, expires).
+       Missing/unreadable/malformed file data is invalid unless FORTRESS_LICENSE_TIER is
+       explicitly set as a break-glass override.
     2. Else: FORTRESS_LICENSE_TIER env, else master (preserves existing installs).
     """
     path_str = os.environ.get("FORTRESS_LICENSE_PATH", "").strip()
     tier_from_env = os.environ.get("FORTRESS_LICENSE_TIER", "").strip().lower()
 
     data: dict[str, Any] = {}
-    loaded_from_file = False
     if path_str:
         p = Path(path_str).expanduser()
-        if p.is_file():
+        if not p.is_file():
+            if not tier_from_env:
+                return _invalid_plan()
+        else:
             try:
                 data = _load_license_file(p)
-                loaded_from_file = True
-            except (OSError, json.JSONDecodeError):
+            except (OSError, json.JSONDecodeError, ValueError):
+                if not tier_from_env:
+                    return _invalid_plan()
                 data = {}
 
-    if loaded_from_file and data:
-        tier = str(data.get("tier") or tier_from_env or "master").strip().lower()
+    if path_str:
+        tier = str(data.get("tier") or tier_from_env).strip().lower()
+        if not tier:
+            return _invalid_plan()
     else:
         tier = (tier_from_env or "master").strip().lower()
 
     if tier not in VALID_TIERS:
-        return Plan(
-            tier="starter",
-            name="Invalid tier",
-            valid=False,
-        )
+        return _invalid_plan("Invalid tier")
 
     explicit_valid = data.get("valid") if data else None
     if explicit_valid is not None:
