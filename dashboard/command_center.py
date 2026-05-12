@@ -2677,16 +2677,19 @@ def get_live_positions():
         import yfinance as yf
         from datetime import datetime
 
-        positions = []
+        broker_positions = None
         try:
             from utils.alpaca_broker import fetch_broker_positions
 
             bl, _err = fetch_broker_positions()
             if bl is not None:
-                positions = bl
+                broker_positions = bl
         except Exception:
-            positions = []
-        if not positions:
+            broker_positions = None
+
+        if broker_positions is not None:
+            positions = broker_positions
+        else:
             positions = _read_json(DATA_DIR / "positions.json", default=[])
             if isinstance(positions, dict):
                 positions = positions.get("positions", [])
