@@ -14,9 +14,32 @@ def _module(name, **attrs):
     return mod
 
 
+class _FakeFlask:
+    def __init__(self, *args, **kwargs):
+        self.config = {}
+
+    def before_request(self, func):
+        return func
+
+    def route(self, *args, **kwargs):
+        return lambda func: func
+
+
 def _install_command_center_import_stubs():
+    fake_flask = _module(
+        "flask",
+        Flask=_FakeFlask,
+        render_template=lambda *args, **kwargs: "",
+        jsonify=lambda obj=None, *args, **kwargs: obj,
+        make_response=lambda *args, **kwargs: args[0] if args else None,
+        request=types.SimpleNamespace(path="", authorization=None, headers={}),
+        redirect=lambda *args, **kwargs: None,
+        url_for=lambda *args, **kwargs: "",
+        Response=lambda *args, **kwargs: None,
+    )
     fake_cors = _module("flask_cors", CORS=lambda app, *args, **kwargs: app)
     module_stubs = {
+        "flask": fake_flask,
         "flask_cors": fake_cors,
         "utils.market_assets": _module("utils.market_assets", require_market_assets=lambda: {}),
         "utils.policy_profile": _module("utils.policy_profile", get_profile_bundle=lambda: {}),

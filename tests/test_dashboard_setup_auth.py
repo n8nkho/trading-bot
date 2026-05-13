@@ -14,9 +14,104 @@ def _module(name, **attrs):
     return mod
 
 
+class _FakeResponse:
+    def __init__(self, body=None, status_code=200):
+        self.body = body
+        self.status_code = status_code
+
+    def get_json(self):
+        return self.body
+
+
+class _FakeRequest:
+    path = ""
+    authorization = None
+    headers = {}
+    _json = None
+
+    def get_json(self, *args, **kwargs):
+        return self._json
+
+
+def _as_response(value):
+    if isinstance(value, _FakeResponse):
+        return value
+    if isinstance(value, tuple):
+        body = value[0] if value else None
+        status = value[1] if len(value) > 1 else 200
+        return _FakeResponse(body, status)
+    return _FakeResponse(value, 200)
+
+
+class _FakeFlask:
+    def __init__(self, *args, **kwargs):
+        self.config = {}
+        self._routes = {}
+        self._before_request = []
+        self._request = _FakeRequest()
+
+    def before_request(self, func):
+        self._before_request.append(func)
+        return func
+
+    def route(self, path, methods=None, **kwargs):
+        route_methods = methods or ["GET"]
+
+        def decorator(func):
+            for method in route_methods:
+                self._routes[(method.upper(), path)] = func
+            return func
+
+        return decorator
+
+    def test_client(self):
+        app = self
+
+        class _Client:
+            def post(self, path, json=None, auth=None, headers=None):
+                app._request.path = path
+                app._request._json = json
+                app._request.headers = headers or {}
+                app._request.authorization = (
+                    types.SimpleNamespace(username=auth[0], password=auth[1]) if auth else None
+                )
+                try:
+                    for func in app._before_request:
+                        early = func()
+                        if early is not None:
+                            return _as_response(early)
+                    return _as_response(app._routes[("POST", path)]())
+                finally:
+                    app._request.path = ""
+                    app._request._json = None
+                    app._request.headers = {}
+                    app._request.authorization = None
+
+        return _Client()
+
+
 def _install_command_center_import_stubs():
+    request_obj = _FakeRequest()
+
+    class FakeFlask(_FakeFlask):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._request = request_obj
+
+    fake_flask = _module(
+        "flask",
+        Flask=FakeFlask,
+        render_template=lambda *args, **kwargs: "",
+        jsonify=lambda obj=None, *args, **kwargs: obj,
+        make_response=lambda *args, **kwargs: args[0] if args else None,
+        request=request_obj,
+        redirect=lambda *args, **kwargs: None,
+        url_for=lambda *args, **kwargs: "",
+        Response=lambda body=None, status=200, *args, **kwargs: _FakeResponse(body, status),
+    )
     fake_cors = _module("flask_cors", CORS=lambda app, *args, **kwargs: app)
     module_stubs = {
+        "flask": fake_flask,
         "flask_cors": fake_cors,
         "utils.market_assets": _module("utils.market_assets", require_market_assets=lambda: {}),
         "utils.policy_profile": _module("utils.policy_profile", get_profile_bundle=lambda: {}),
