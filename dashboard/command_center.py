@@ -8,6 +8,7 @@ import re
 import sys
 import getpass
 import json
+import hmac
 import subprocess
 import shutil
 import glob
@@ -77,17 +78,30 @@ _DASH_PUBLIC_PATHS = frozenset({
 _DASH_PUBLIC_PREFIXES = ("/static/",)
 
 
+def _dashboard_basic_auth_credentials() -> tuple[str, str]:
+    return (
+        (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip(),
+        (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip(),
+    )
+
+
+def _request_has_valid_dashboard_basic_auth() -> bool:
+    user, pw = _dashboard_basic_auth_credentials()
+    auth = request.authorization
+    if not (user and pw and auth):
+        return False
+    return hmac.compare_digest(auth.username or "", user) and hmac.compare_digest(auth.password or "", pw)
+
+
 @app.before_request
 def _fortress_dashboard_basic_auth():
-    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
-    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
+    user, pw = _dashboard_basic_auth_credentials()
     if not user or not pw:
         return None
     path = request.path or ""
     if path in _DASH_PUBLIC_PATHS or any(path.startswith(p) for p in _DASH_PUBLIC_PREFIXES):
         return None
-    auth = request.authorization
-    if auth and auth.username == user and auth.password == pw:
+    if _request_has_valid_dashboard_basic_auth():
         return None
     return Response(
         "Authentication required",
@@ -1894,17 +1908,12 @@ def get_recommendations():
 
 
 def _operator_halt_post_allowed() -> bool:
-    """If FORTRESS_OPERATOR_TOKEN is set, require token header or valid dashboard Basic auth."""
+    """Authorize mutating operator endpoints via token or configured dashboard Basic auth."""
     token = (os.environ.get("FORTRESS_OPERATOR_TOKEN") or "").strip()
-    if not token:
-        return True
     hdr = (request.headers.get("X-Operator-Token") or "").strip()
-    if hdr == token:
+    if token and hmac.compare_digest(hdr, token):
         return True
-    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
-    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
-    auth = request.authorization
-    if user and pw and auth and auth.username == user and auth.password == pw:
+    if _request_has_valid_dashboard_basic_auth():
         return True
     return False
 
@@ -2570,6 +2579,8 @@ def api_referral():
 
 @app.route("/api/policy/clear_rollback", methods=["POST"])
 def api_policy_clear_rollback():
+    if not _operator_halt_post_allowed():
+        return jsonify({"ok": False, "error": "operator_token_or_auth_required"}), 403
     try:
         from utils.policy_guardrails import clear_forced_rollback
 
