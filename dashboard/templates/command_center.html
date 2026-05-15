@@ -1448,27 +1448,43 @@
       }).join('');
     }
 
+    async function fetchJsonSafe(url, fallback) {
+      const safeFallback = fallback || {};
+      try {
+        const r = await fetch(url);
+        const text = await r.text();
+        if (!r.ok || !text.trim()) return safeFallback;
+        try {
+          return JSON.parse(text);
+        } catch (e) {
+          return safeFallback;
+        }
+      } catch (e) {
+        return safeFallback;
+      }
+    }
+
     async function loadAll() {
       try {
         const [health, agents, performance, news, recommendations, safetyStatus, headlineEvent, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, drift, trustReport, feed, positions, orders, tvSignals] = await Promise.all([
-          fetch(API.health).then(r => r.json()),
-          fetch(API.agents).then(r => r.json()),
-          fetch(API.performance).then(r => r.json()),
-          fetch(API.news).then(r => r.json()),
-          fetch(API.recommendations).then(r => r.json()),
-          fetch(API.safetyStatus).then(r => r.json()),
-          fetch(API.headlineEvent).then(function (r) { return r.ok ? r.json() : { error: true }; }).catch(function () { return { error: true }; }),
-          fetch(API.actionQueue).then(r => r.json()),
-          fetch(API.operatorRuns).then(r => r.json()),
-          fetch(API.trustLedger).then(r => r.json()),
-          fetch(API.whyTrade).then(r => r.json()),
-          fetch(API.runbooks).then(r => r.json()),
-          fetch(API.drift).then(r => r.json()),
-          fetch(API.trustReport).then(r => r.json()),
-          fetch(API.feed).then(r => r.json()),
-          fetch('/api/positions').then(r => r.json()),
-          fetch('/api/orders').then(r => r.json()),
-          fetch('/api/tradingview_signals?limit=25').then(function (r) { return r.ok ? r.json() : { items: [] }; }).catch(function () { return { items: [] }; })
+          fetchJsonSafe(API.health, {}),
+          fetchJsonSafe(API.agents, { agents: [] }),
+          fetchJsonSafe(API.performance, {}),
+          fetchJsonSafe(API.news, {}),
+          fetchJsonSafe(API.recommendations, { items: [] }),
+          fetchJsonSafe(API.safetyStatus, {}),
+          fetchJsonSafe(API.headlineEvent, { error: true }),
+          fetchJsonSafe(API.actionQueue, { items: [] }),
+          fetchJsonSafe(API.operatorRuns, { runs: [] }),
+          fetchJsonSafe(API.trustLedger, { items: [] }),
+          fetchJsonSafe(API.whyTrade, { items: [] }),
+          fetchJsonSafe(API.runbooks, { items: [] }),
+          fetchJsonSafe(API.drift, {}),
+          fetchJsonSafe(API.trustReport, {}),
+          fetchJsonSafe(API.feed, { items: [] }),
+          fetchJsonSafe('/api/positions', { positions: [] }),
+          fetchJsonSafe('/api/orders', { orders: [] }),
+          fetchJsonSafe('/api/tradingview_signals?limit=25', { items: [] })
         ]);
         renderOperatorBrief(await fetchOperatorBriefSafe());
         renderTradingViewSignals(tvSignals);

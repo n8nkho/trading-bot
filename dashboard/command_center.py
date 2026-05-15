@@ -292,6 +292,15 @@ def _read_json(path, default=None):
     return default
 
 
+def _coerce_positions_list(raw):
+    """Return a list of position dicts from the persisted positions payload."""
+    if isinstance(raw, dict):
+        raw = raw.get("positions") or raw.get("positions_list") or []
+    if not isinstance(raw, list):
+        return []
+    return [p for p in raw if isinstance(p, dict)]
+
+
 def _read_jsonl(path, limit=500):
     out = []
     try:
@@ -675,11 +684,7 @@ def get_trading_performance():
         "policy_profile": get_profile_bundle().get("active_profile"),
     }
     # Positions: prefer Alpaca broker truth; fall back to positions.json; surface file/broker drift
-    file_positions = _read_json(DATA_DIR / "positions.json", default=[])
-    if isinstance(file_positions, dict):
-        file_positions = file_positions.get("positions", [])
-    if not isinstance(file_positions, list):
-        file_positions = []
+    file_positions = _coerce_positions_list(_read_json(DATA_DIR / "positions.json", default=[]))
 
     broker_list: list | None = None
     broker_err: str | None = None
@@ -1115,9 +1120,7 @@ def get_news_and_impact():
     candidates = []  # (priority, ticker, headline, source, url)
 
     # 1) Positions
-    positions = _read_json(DATA_DIR / "positions.json", default=[])
-    if not isinstance(positions, list):
-        positions = positions.get("positions", positions.get("positions_list", []))
+    positions = _coerce_positions_list(_read_json(DATA_DIR / "positions.json", default=[]))
     position_tickers = [(p.get("ticker") or p.get("symbol") or "").strip().upper() for p in positions[:10] if (p.get("ticker") or p.get("symbol"))]
     for ticker in position_tickers[:5]:
         for title, url in _fetch_news_for_ticker(ticker, limit=2):
@@ -2687,9 +2690,7 @@ def get_live_positions():
         except Exception:
             positions = []
         if not positions:
-            positions = _read_json(DATA_DIR / "positions.json", default=[])
-            if isinstance(positions, dict):
-                positions = positions.get("positions", [])
+            positions = _coerce_positions_list(_read_json(DATA_DIR / "positions.json", default=[]))
         tickers = list({p.get("ticker") for p in positions if p.get("ticker")})
         # Batch fetch current prices
         prices = {}
