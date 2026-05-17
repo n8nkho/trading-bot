@@ -1328,13 +1328,23 @@ def get_headline_event_status() -> dict:
     """
     Summarize headline_event_agent outputs for Command Center (shadow ledger + latest shadow file).
     """
-    data_dir = DATA_DIR
+    cfg = {}
+    try:
+        from agents.headline_event_agent import EVENTS_FILE, load_config
+
+        cfg = load_config()
+    except Exception:
+        EVENTS_FILE = "headline_events.jsonl"
+    shadow_cfg = (cfg.get("shadow") or {}) if isinstance(cfg, dict) else {}
+    data_dir = _ROOT / str(shadow_cfg.get("output_dir", "data"))
+    shadow_prefix = str(shadow_cfg.get("file_prefix", "headline_event_shadow_"))
+    ev_path = data_dir / EVENTS_FILE
     out: dict = {
         "timestamp": datetime.now().isoformat(),
         "enabled": os.getenv("HEADLINE_EVENT_AGENT_ENABLED", "1").strip().lower()
         not in ("0", "false", "no"),
         "mode": "shadow_only",
-        "events_path": str(data_dir / "headline_events.jsonl"),
+        "events_path": str(ev_path),
         "events_line_count": 0,
         "last_event": None,
         "shadow_latest_name": None,
@@ -1358,7 +1368,6 @@ def get_headline_event_status() -> dict:
         except Exception:
             continue
 
-    ev_path = data_dir / "headline_events.jsonl"
     if ev_path.is_file():
         try:
             lines = [x for x in ev_path.read_text(encoding="utf-8", errors="replace").splitlines() if x.strip()]
@@ -1372,7 +1381,7 @@ def get_headline_event_status() -> dict:
         except OSError:
             pass
 
-    shadow_files = sorted(glob.glob(str(data_dir / "headline_event_shadow_*.jsonl")), reverse=True)
+    shadow_files = sorted(glob.glob(str(data_dir / f"{shadow_prefix}*.jsonl")), reverse=True)
     if shadow_files:
         sp = Path(shadow_files[0])
         out["shadow_latest_name"] = sp.name
