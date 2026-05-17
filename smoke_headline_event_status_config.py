@@ -30,6 +30,35 @@ def _write_unique_fixture(tmpdir: Path) -> Path:
 
 def _install_dashboard_import_stubs() -> None:
     """Keep this smoke focused when the cloud image has not installed web deps."""
+    module_attrs = {
+        "utils.market_assets": {"require_market_assets": lambda *args, **kwargs: None},
+        "utils.policy_profile": {"get_profile_bundle": lambda *args, **kwargs: {}},
+        "utils.trust_ledger": {
+            "append_trust_event": lambda *args, **kwargs: None,
+            "enrich_trust_ledger_items": lambda items, *args, **kwargs: items,
+            "read_recent_trust_events": lambda *args, **kwargs: [],
+        },
+        "utils.operator_halt": {
+            "get_halt_state": lambda *args, **kwargs: {},
+            "set_trading_halt": lambda *args, **kwargs: {},
+        },
+        "utils.alerts": {"send_operator_alert": lambda *args, **kwargs: None},
+        "utils.simple_daily_backtest": {
+            "read_backtest_snapshot": lambda *args, **kwargs: {},
+            "run_daily_momentum_backtest": lambda *args, **kwargs: {},
+        },
+        "utils.run_registry": {"summarize_screening_runs": lambda *args, **kwargs: {}},
+        "utils.alpaca_env": {"is_alpaca_paper": lambda *args, **kwargs: True},
+        "agents.drift_detector": {"analyze_drift": lambda *args, **kwargs: {}},
+    }
+    for module_name, attrs in module_attrs.items():
+        if module_name in sys.modules:
+            continue
+        module = types.ModuleType(module_name)
+        for attr, value in attrs.items():
+            setattr(module, attr, value)
+        sys.modules[module_name] = module
+
     if "flask" not in sys.modules:
         flask = types.ModuleType("flask")
 
