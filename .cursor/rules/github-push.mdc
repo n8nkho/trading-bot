@@ -1,0 +1,16 @@
+---
+description: GitHub push auth on the Oracle VM (SSH deploy key or gh token).
+alwaysApply: true
+---
+
+# GitHub push from this host
+
+See `/home/ubuntu/fortress-ai/scripts/setup_github_push.sh` and `/home/ubuntu/fortress-ai/.cursor/rules/github-push.mdc` for the shared VM setup.
+
+**trading-bot** default branch: `master`. **fortress-ai** default branch: `main`.
+
+```bash
+cd /home/ubuntu/trading-bot && git push origin master
+```
+
+Do not commit `.env`. Run `./scripts/e2e_before_deploy.sh` before push when code changed.
