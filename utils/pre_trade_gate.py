@@ -138,6 +138,44 @@ def evaluate_pre_trade_submission(
     if dq_issues and dq_enforce:
         reasons.extend([f"data_quality:{i}" for i in dq_issues])
 
+    signal_adjustments: dict[str, Any] = {
+        "sentiment_confidence_multiplier": 1.0,
+    }
+    try:
+        from utils.regime_freshness import sentiment_pipeline_meta
+
+        sm = sentiment_pipeline_meta()
+        signal_adjustments["sentiment_confidence_multiplier"] = float(sm.get("confidence_multiplier") or 1.0)
+        signal_adjustments["sentiment_pipeline"] = sm
+    except Exception:
+        pass
+
+    if sd == "BUY":
+        try:
+            from utils.runtime_safety import hedging_error_blocks_entries
+
+            hb, why = hedging_error_blocks_entries()
+            if hb:
+                reasons.append(f"hedging_execution_error:{why}")
+        except Exception:
+            pass
+
+        regime_block = str(os.getenv("FORTRESS_REGIME_STALE_BLOCK_RTH", "1")).strip().lower() not in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+        if regime_block:
+            try:
+                from utils.regime_freshness import regime_is_stale_for_rth
+
+                stale, why = regime_is_stale_for_rth()
+                if stale:
+                    reasons.append(f"regime_stale_rth:{why}")
+            except Exception:
+                pass
+
     return {
         "allowed": len(reasons) == 0,
         "reasons": reasons,
@@ -146,6 +184,7 @@ def evaluate_pre_trade_submission(
         "symbol": sym,
         "side": sd,
         "qty": qty,
+        "signal_adjustments": signal_adjustments,
     }
 
 

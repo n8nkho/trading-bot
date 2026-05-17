@@ -388,6 +388,7 @@
       </div>
     </header>
     <div id="haltStrip" class="halt-strip" role="alert" aria-live="polite"></div>
+    <div id="freshnessBanner" role="note" style="display:none;margin:0 0 0.75rem;padding:0.55rem 0.75rem;border-radius:6px;border:1px solid var(--amber);background:rgba(255,193,7,0.08);color:var(--amber);font-size:12px;line-height:1.45;"></div>
     <div id="licenseUpgradeBanner" role="note"></div>
     <div class="panel col-12" style="margin-bottom:0.9rem;">
       <div class="panel-title">ALERTS FEED</div>
@@ -569,6 +570,11 @@
   <script>
     const API = { health: '/api/health', agents: '/api/agents', performance: '/api/performance', news: '/api/news', recommendations: '/api/recommendations', safetyStatus: '/api/safety_status', headlineEvent: '/api/headline_event_status', actionQueue: '/api/action_queue', operatorRuns: '/api/operator_runs', trustLedger: '/api/trust_ledger?limit=20', whyTrade: '/api/why_trade', runbooks: '/api/runbooks', drift: '/api/drift', trustReport: '/api/trust_report', feed: '/api/feed', pristine: '/api/pristine', botAudit: '/api/bot_audit', intelligenceBrief: '/api/intelligence_brief', evolutionStatus: '/api/evolution_status', llmUsage: '/api/llm_usage', llmCredits: '/api/llm_credits', critiqueStats: '/api/critique_stats', regimeStatus: '/api/regime_status', sentimentVelocity: '/api/sentiment_velocity', optionsFlow: '/api/options_flow', earningsIntel: '/api/earnings_intel', crossAsset: '/api/cross_asset', promptEvolution: '/api/prompt_evolution', reflectionTrend: '/api/reflection_trend', backtestLatest: '/api/backtest_latest', morningBriefing: '/api/morning_briefing', alertsFeed: '/api/alerts_feed' };
     const NO_CACHE = { cache: 'no-store' };
+    const FORTRESS_POLL_CORE_MS = {{ poll_core_ms | default(180000) }};
+    const FORTRESS_POLL_HEAVY_MS = {{ poll_heavy_ms | default(600000) }};
+    let _pollCoreTimer = null;
+    let _pollHeavyTimer = null;
+    let _dashboardState = {};
 
     let _chartRedraw = null;
     let _chartResizeDebounce = null;
@@ -753,6 +759,30 @@
       document.getElementById('lastUpdate').textContent = 'Updated ' + new Date().toLocaleTimeString();
     }
 
+    function renderFreshnessBanner(health, performance) {
+      const el = document.getElementById('freshnessBanner');
+      if (!el) return;
+      const parts = [];
+      const df = health && health.data_freshness;
+      if (df && df.warnings && df.warnings.length) {
+        parts.push(df.warnings.slice(0, 4).join(' · '));
+      }
+      const screen = performance && performance.latest_screening;
+      if (screen && screen.stale) {
+        parts.push('Screening data stale (' + (screen.age_hours != null ? screen.age_hours + 'h' : '?') + ' old, file ' + (screen.source_file || screen.date || '—') + ')');
+      }
+      if (health && health.cpu && health.cpu.pct > 90) {
+        parts.push('Host CPU saturated (load1=' + Number(health.cpu.load1).toFixed(1) + ') — check for duplicate cron health monitors');
+      }
+      if (!parts.length) {
+        el.style.display = 'none';
+        el.textContent = '';
+        return;
+      }
+      el.style.display = 'block';
+      el.innerHTML = '<strong>Data freshness:</strong> ' + parts.map(function (p) { return String(p).replace(/</g, '&lt;'); }).join(' · ');
+    }
+
     function renderHealth(data) {
       const el = document.getElementById('health');
       if (!data || !data.services) { el.innerHTML = '<span class="empty">No data</span>'; return; }
@@ -800,6 +830,9 @@
       } else {
         const banner = document.getElementById('licenseUpgradeBanner');
         if (banner) banner.style.display = 'none';
+      }
+      if (data.data_freshness && data.data_freshness.overall_stale) {
+        items.push({ label: 'Artifacts', value: 'Stale — see banner', cls: 'warn' });
       }
     }
 
@@ -883,11 +916,12 @@
         const enabled = a.flag_enabled === true ? 'ENABLED' : (a.flag_enabled === false ? 'DISABLED' : 'N/A');
         const enabledColor = a.flag_enabled === true ? 'var(--green)' : (a.flag_enabled === false ? 'var(--red)' : 'var(--text-muted)');
         const dot = a.ui_status || a.status || 'stale';
+        const src = a.last_run_source === 'cron_heartbeat' ? ' <span style="color:var(--cyan);font-size:9px;">cron</span>' : '';
         return `<div class="agent-row">
           <span class="agent-dot ${dot}"></span>
           <span>${a.name} <span style="color:${tierColor};font-size:10px;letter-spacing:0.04em;">${tier}</span><br><span class="text-muted" style="font-size:10px;">${flag ? flag.replace(/</g, '&lt;') : '—'} · <span style="color:${enabledColor};">${enabled}</span></span></span>
           <span class="agent-activity" title="${activity}">${activity || '—'}</span>
-          <span class="text-muted">${time}</span>
+          <span class="text-muted">${time}${src}</span>
         </div>`;
       }).join('');
     }
@@ -1141,8 +1175,11 @@
         const convLine = (uplift.convergence_mode != null)
           ? ` | Uplift convergence mode: ${uplift.convergence_mode} · scored: ${uplift.convergence_scored_count ?? 0} · avg: ${uplift.convergence_score_avg ?? 'n/a'}`
           : '';
+        const staleLine = screen.stale
+          ? `<br><span style="color:var(--amber);">⚠ Stale screening artifact (${screen.age_hours != null ? screen.age_hours + 'h' : '?'} old · ${screen.source_file || 'daily_signals'})</span>`
+          : '';
         screenEl.innerHTML =
-          `Date: ${screen.date}${timePart}` +
+          `Date: ${screen.date}${timePart}${staleLine}` +
           `<br>Candidates: ${screen.candidates_found || 0} | Approved: ${screen.approved || 0} | Auto: ${screen.auto_executed || 0}${universe}${prefilterPassed}${prefilterFiltered}${tierLine}${screenPerfLine}${workersLine}${runtimeLine}${durationLine}${startTsLine}${finishTsLine}${entryGate}${riskGate}${strictLine}${hedgeLine}` +
           `<br>${topSkip}${topPrefilter}${convLine}` +
           candPart;
@@ -1510,6 +1547,8 @@
       const of = optionsFlow || {};
       const ei = earningsIntel || {};
       const critRows = (crit.recent || []).slice(-5).map(r => '<tr><td>' + String(r.timestamp || '').replace(/</g,'&lt;') + '</td><td>' + String(r.symbol || '').replace(/</g,'&lt;') + '</td><td>' + String(r.pass1 || '').replace(/</g,'&lt;') + '</td><td>' + String(r.pass2_verdict || '').replace(/</g,'&lt;') + '</td><td>' + String(r.action || '').replace(/</g,'&lt;') + '</td></tr>').join('');
+      const flowEmpty = !(of.signals || []).length;
+      const flowEmptyMsg = (of.generated_at && !of.stale) ? 'No unusual options flow (scan OK)' : 'No flow data yet';
       const flowRows = (of.signals || []).slice(-5).map(s => '<tr><td>' + String(s.symbol || '').replace(/</g,'&lt;') + '</td><td>' + String(s.direction || '').replace(/</g,'&lt;') + '</td><td>' + String(s.classification || '').replace(/</g,'&lt;') + '</td><td>' + String(s.conviction || '').replace(/</g,'&lt;') + '</td><td>' + String(s.timestamp || '').replace(/</g,'&lt;') + '</td></tr>').join('');
       const earnRows = (ei.entries || []).slice(-5).map(s => '<tr><td>' + String(s.symbol || '').replace(/</g,'&lt;') + '</td><td>' + String(s.verdict || '').replace(/</g,'&lt;') + '</td><td>' + String(s.recommended_action || '').replace(/</g,'&lt;') + '</td><td>' + String(s.ceo_tone || '').replace(/</g,'&lt;') + '</td><td>' + String(s.processed_at || '').replace(/</g,'&lt;') + '</td></tr>').join('');
       const svCards = Object.keys(sv.symbols || {}).map(k => { const v = sv.symbols[k] || {}; return '<div class="rec-item low"><div class="title">' + k + ' · ' + String(v.classification || 'UNKNOWN').replace(/</g,'&lt;') + '</div><div class="body">velocity: ' + String(v.velocity ?? '0') + ' | signal: ' + String(v.signal || '').replace(/</g,'&lt;') + '</div></div>'; }).join('');
@@ -1521,7 +1560,7 @@
           <div class="rec-item low"><div class="title">Cross-Asset Intelligence</div><div class="body">Bias: ${String(ca.overall_bias || 'NEUTRAL').replace(/</g,'&lt;')} · Confidence: ${ca.confidence || 0}/10 · Signal: ${String(ca.key_signal || '').replace(/</g,'&lt;')}</div></div>
         </div>
         <div class="panel-scroll" style="margin-top:0.6rem;"><table class="trade-table"><thead><tr><th>Time</th><th>Symbol</th><th>Pass1</th><th>Pass2</th><th>Action</th></tr></thead><tbody>${critRows || '<tr><td colspan="5" class="empty">No critiques yet</td></tr>'}</tbody></table></div>
-        <div class="panel-scroll" style="margin-top:0.6rem;"><table class="trade-table"><thead><tr><th>Symbol</th><th>Direction</th><th>Type</th><th>Conviction</th><th>Time</th></tr></thead><tbody>${flowRows || '<tr><td colspan="5" class="empty">No flow data yet</td></tr>'}</tbody></table></div>
+        <div class="panel-scroll" style="margin-top:0.6rem;"><table class="trade-table"><thead><tr><th>Symbol</th><th>Direction</th><th>Type</th><th>Conviction</th><th>Time</th></tr></thead><tbody>${flowRows || '<tr><td colspan="5" class="empty">' + flowEmptyMsg + '</td></tr>'}</tbody></table></div>
         <div class="panel-scroll" style="margin-top:0.6rem;"><table class="trade-table"><thead><tr><th>Symbol</th><th>Verdict</th><th>Action</th><th>CEO Tone</th><th>Processed</th></tr></thead><tbody>${earnRows || '<tr><td colspan="5" class="empty">No earnings processed yet</td></tr>'}</tbody></table></div>
       `;
     }
@@ -2095,9 +2134,12 @@
       const regimeRow = ((ex.agents && ex.agents.agents) || []).find(a => a && a.id === 'regime_detector');
       const svRow = ((ex.agents && ex.agents.agents) || []).find(a => a && a.id === 'sentiment_velocity_agent');
       const isFreshRow = (r) => !!(r && (r.status === 'fresh' || r.ui_status === 'fresh'));
+      const isWeekend = now.getDay() === 0 || now.getDay() === 6;
+      const briefOk = !!(ex.morningBriefing && ex.morningBriefing.found && briefDate === today);
+      const briefWeekendOk = !!(ex.morningBriefing && ex.morningBriefing.found && isWeekend);
       const deepChecks = [
         { ok: !!((regimeDt && ((now - regimeDt) / 3600000) < 3) || isFreshRow(regimeRow)), text: 'Regime detector: last run < 3 hours ago' },
-        { ok: !!(ex.morningBriefing && ex.morningBriefing.found && briefDate === today), text: "Morning briefing: today's file exists" },
+        { ok: briefOk || briefWeekendOk, text: briefOk ? "Morning briefing: today's log exists" : (briefWeekendOk ? 'Morning briefing: last run on file (weekend — next RTH 08:45 ET)' : "Morning briefing: missing today's log (run agents.briefing_agent)") },
         { ok: !!((svDt && ((now - svDt) / 3600000) < 1) || isFreshRow(svRow)), text: 'Sentiment velocity: data < 1 hour old' },
         { ok: !!(critiquesRow && critiquesRow.flag_enabled === true), text: 'Critique loop: enabled (FORTRESS_CRITIQUE_LOOP_ENABLED)' },
         { ok: !((ex.reflectionTrend && Number(ex.reflectionTrend.alert_count || 0) > 0)), text: 'Prompt evolution: no degradation alert' },
@@ -2161,90 +2203,154 @@
       }).join('');
     }
 
-    async function loadAll() {
-      try {
-        const [health, agents, performance, news, recommendations, safetyStatus, botAudit, intelligenceBrief, evolutionStatus, llmUsage, headlineEvent, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, drift, trustReport, feed, positions, orders, tvSignals, critiqueStats, regimeStatus, sentimentVelocity, optionsFlow, earningsIntel, crossAsset, promptEvolution, reflectionTrend, backtestLatest, morningBriefing, alertsFeed] = await Promise.all([
-          fetch(API.health, NO_CACHE).then(r => r.json()),
-          fetch(API.agents, NO_CACHE).then(r => r.json()),
-          fetch(API.performance, NO_CACHE).then(r => r.json()),
-          fetch(API.news, NO_CACHE).then(r => r.json()),
-          fetch(API.recommendations, NO_CACHE).then(r => r.json()),
-          fetch(API.safetyStatus, NO_CACHE).then(r => r.json()),
-          fetch(API.botAudit, NO_CACHE).then(r => r.json()).catch(() => ({})),
-          fetch(API.intelligenceBrief, NO_CACHE).then(r => r.json()).catch(() => ({})),
-          fetch(API.evolutionStatus, NO_CACHE).then(r => r.json()).catch(() => ({})),
-          fetch(API.llmUsage, NO_CACHE).then(r => r.json()).catch(() => ({})),
-          fetch(API.headlineEvent, NO_CACHE).then(function (r) { return r.ok ? r.json() : { error: true }; }).catch(function () { return { error: true }; }),
-          fetch(API.actionQueue, NO_CACHE).then(r => r.json()),
-          fetch(API.operatorRuns, NO_CACHE).then(r => r.json()),
-          fetch(API.trustLedger, NO_CACHE).then(r => r.json()),
-          fetch(API.whyTrade, NO_CACHE).then(r => r.json()),
-          fetch(API.runbooks, NO_CACHE).then(r => r.json()),
-          fetch(API.drift, NO_CACHE).then(r => r.json()),
-          fetch(API.trustReport, NO_CACHE).then(r => r.json()),
-          fetch(API.feed, NO_CACHE).then(r => r.json()),
-          fetch('/api/positions').then(r => r.json()),
-          fetch('/api/orders').then(r => r.json()),
-          fetch('/api/tradingview_signals?limit=25').then(function (r) { return r.ok ? r.json() : { items: [] }; }).catch(function () { return { items: [] }; }),
-          fetch(API.critiqueStats, NO_CACHE).then(r => r.json()).catch(() => ({})),
-          fetch(API.regimeStatus, NO_CACHE).then(r => r.json()).catch(() => ({})),
-          fetch(API.sentimentVelocity, NO_CACHE).then(r => r.json()).catch(() => ({})),
-          fetch(API.optionsFlow, NO_CACHE).then(r => r.json()).catch(() => ({})),
-          fetch(API.earningsIntel, NO_CACHE).then(r => r.json()).catch(() => ({})),
-          fetch(API.crossAsset, NO_CACHE).then(r => r.json()).catch(() => ({})),
-          fetch(API.promptEvolution, NO_CACHE).then(r => r.json()).catch(() => ({})),
-          fetch(API.reflectionTrend, NO_CACHE).then(r => r.json()).catch(() => ({})),
-          fetch(API.backtestLatest, NO_CACHE).then(r => r.json()).catch(() => ({})),
-          fetch(API.morningBriefing, NO_CACHE).then(r => r.json()).catch(() => ({})),
-          fetch(API.alertsFeed, NO_CACHE).then(r => r.json()).catch(() => ({}))
-        ]);
-        renderOperatorBrief(await fetchOperatorBriefSafe(), {
-          regimeStatus,
-          sentimentVelocity,
-          morningBriefing,
-          reflectionTrend,
-          agents
-        });
-        renderTradingViewSignals(tvSignals);
-        renderHealth(health);
-        renderAgents(agents);
-        renderPerformance(performance);
-        renderNews(news);
-        renderRecommendations(recommendations);
-        renderSafetyStatus(safetyStatus);
-        renderBotAudit(botAudit);
-        renderIntelligenceBrief(intelligenceBrief);
-        renderEvolutionStatus(evolutionStatus);
-        renderLlmUsage(llmUsage);
-        renderHeadlineEventStatus(headlineEvent);
-        renderActionQueue(actionQueue);
-        renderOperatorRuns(operatorRuns);
-        renderTrustLedger(trustLedger);
-        renderWhyTrade(whyTrade);
-        renderRunbooks(runbooks);
-        renderDrift(drift);
-        renderTrustReport(trustReport);
+    function _jsonFetch(url) {
+      return fetch(url, NO_CACHE).then(function (r) { return r.json(); });
+    }
+
+    function renderDashboardFromState() {
+      const s = _dashboardState;
+      renderOperatorBrief(s.operatorBrief || {}, {
+        regimeStatus: s.regimeStatus,
+        sentimentVelocity: s.sentimentVelocity,
+        morningBriefing: s.morningBriefing,
+        reflectionTrend: s.reflectionTrend,
+        agents: s.agents
+      });
+      if (s.tvSignals) renderTradingViewSignals(s.tvSignals);
+      if (s.health) { renderHealth(s.health); renderFreshnessBanner(s.health, s.performance); }
+      if (s.agents) renderAgents(s.agents);
+      if (s.performance) renderPerformance(s.performance);
+      if (s.news) renderNews(s.news);
+      if (s.recommendations) {
         const recEl = document.getElementById('recCount');
-        if (recEl && recommendations && recommendations.items) recEl.textContent = '(' + recommendations.items.length + ')';
-        renderFeed(feed);
-        renderPositions(positions);
-        renderOrders(orders);
-        renderAlertsFeedTop(alertsFeed);
-        renderRecursiveStack(regimeStatus, critiqueStats, sentimentVelocity, crossAsset, optionsFlow, earningsIntel);
-        renderPromptReflection(reflectionTrend, promptEvolution);
-        renderMorningBriefing(morningBriefing);
-        setUpdated();
-        setTimeout(loadPriceChart, 120);
+        if (recEl && s.recommendations.items) recEl.textContent = '(' + s.recommendations.items.length + ')';
+        renderRecommendations(s.recommendations);
+      }
+      if (s.safetyStatus) renderSafetyStatus(s.safetyStatus);
+      if (s.botAudit) renderBotAudit(s.botAudit);
+      if (s.intelligenceBrief) renderIntelligenceBrief(s.intelligenceBrief);
+      if (s.evolutionStatus) renderEvolutionStatus(s.evolutionStatus);
+      if (s.llmUsage) renderLlmUsage(s.llmUsage);
+      if (s.headlineEvent) renderHeadlineEventStatus(s.headlineEvent);
+      if (s.actionQueue) renderActionQueue(s.actionQueue);
+      if (s.operatorRuns) renderOperatorRuns(s.operatorRuns);
+      if (s.trustLedger) renderTrustLedger(s.trustLedger);
+      if (s.whyTrade) renderWhyTrade(s.whyTrade);
+      if (s.runbooks) renderRunbooks(s.runbooks);
+      if (s.drift) renderDrift(s.drift);
+      if (s.trustReport) renderTrustReport(s.trustReport);
+      if (s.feed) renderFeed(s.feed);
+      if (s.positions) renderPositions(s.positions);
+      if (s.orders) renderOrders(s.orders);
+      if (s.alertsFeed) renderAlertsFeedTop(s.alertsFeed);
+      renderRecursiveStack(s.regimeStatus, s.critiqueStats, s.sentimentVelocity, s.crossAsset, s.optionsFlow, s.earningsIntel);
+      renderPromptReflection(s.reflectionTrend, s.promptEvolution);
+      if (s.morningBriefing) renderMorningBriefing(s.morningBriefing);
+      setUpdated();
+    }
+
+    async function loadCore() {
+      if (document.hidden) return;
+      try {
+        const [health, agents, performance, news, recommendations, safetyStatus, actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, feed, positions, orders, tvSignals, regimeStatus, sentimentVelocity, optionsFlow, earningsIntel, crossAsset, critiqueStats, alertsFeed] = await Promise.all([
+          _jsonFetch(API.health),
+          _jsonFetch(API.agents),
+          _jsonFetch(API.performance),
+          _jsonFetch(API.news),
+          _jsonFetch(API.recommendations),
+          _jsonFetch(API.safetyStatus),
+          _jsonFetch(API.actionQueue),
+          _jsonFetch(API.operatorRuns),
+          _jsonFetch(API.trustLedger),
+          _jsonFetch(API.whyTrade),
+          _jsonFetch(API.runbooks),
+          _jsonFetch(API.feed),
+          _jsonFetch('/api/positions'),
+          _jsonFetch('/api/orders'),
+          fetch('/api/tradingview_signals?limit=25', NO_CACHE).then(function (r) { return r.ok ? r.json() : { items: [] }; }).catch(function () { return { items: [] }; }),
+          _jsonFetch(API.regimeStatus).catch(function () { return {}; }),
+          _jsonFetch(API.sentimentVelocity).catch(function () { return {}; }),
+          _jsonFetch(API.optionsFlow).catch(function () { return {}; }),
+          _jsonFetch(API.earningsIntel).catch(function () { return {}; }),
+          _jsonFetch(API.crossAsset).catch(function () { return {}; }),
+          _jsonFetch(API.critiqueStats).catch(function () { return {}; }),
+          _jsonFetch(API.alertsFeed).catch(function () { return {}; })
+        ]);
+        Object.assign(_dashboardState, {
+          health, agents, performance, news, recommendations, safetyStatus,
+          actionQueue, operatorRuns, trustLedger, whyTrade, runbooks, feed,
+          positions, orders, tvSignals, regimeStatus, sentimentVelocity,
+          optionsFlow, earningsIntel, crossAsset, critiqueStats, alertsFeed
+        });
+        _dashboardState.operatorBrief = await fetchOperatorBriefSafe();
+        renderDashboardFromState();
       } catch (e) {
         console.error(e);
-        document.querySelectorAll('.loading').forEach(el => { if (el.classList.contains('loading')) el.innerHTML = '<span class="empty">Error loading</span>'; });
       }
     }
 
+    async function loadHeavy() {
+      if (document.hidden) return;
+      try {
+        const [botAudit, intelligenceBrief, evolutionStatus, llmUsage, headlineEvent, drift, trustReport, promptEvolution, reflectionTrend, backtestLatest, morningBriefing] = await Promise.all([
+          _jsonFetch(API.botAudit).catch(function () { return {}; }),
+          _jsonFetch(API.intelligenceBrief).catch(function () { return {}; }),
+          _jsonFetch(API.evolutionStatus).catch(function () { return {}; }),
+          _jsonFetch(API.llmUsage).catch(function () { return {}; }),
+          fetch(API.headlineEvent, NO_CACHE).then(function (r) { return r.ok ? r.json() : { error: true }; }).catch(function () { return { error: true }; }),
+          _jsonFetch(API.drift),
+          _jsonFetch(API.trustReport),
+          _jsonFetch(API.promptEvolution).catch(function () { return {}; }),
+          _jsonFetch(API.reflectionTrend).catch(function () { return {}; }),
+          _jsonFetch(API.backtestLatest).catch(function () { return {}; }),
+          _jsonFetch(API.morningBriefing).catch(function () { return {}; })
+        ]);
+        Object.assign(_dashboardState, {
+          botAudit, intelligenceBrief, evolutionStatus, llmUsage, headlineEvent,
+          drift, trustReport, promptEvolution, reflectionTrend, backtestLatest, morningBriefing
+        });
+        renderDashboardFromState();
+        setTimeout(loadPriceChart, 120);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function loadAll() {
+      await Promise.all([loadCore(), loadHeavy()]);
+    }
+
+    function clearPollTimers() {
+      if (_pollCoreTimer) { clearTimeout(_pollCoreTimer); _pollCoreTimer = null; }
+      if (_pollHeavyTimer) { clearTimeout(_pollHeavyTimer); _pollHeavyTimer = null; }
+    }
+
+    function schedulePollTimers() {
+      clearPollTimers();
+      if (document.hidden) return;
+      _pollCoreTimer = setTimeout(async function () {
+        await loadCore();
+        schedulePollTimers();
+      }, FORTRESS_POLL_CORE_MS);
+      function scheduleHeavy() {
+        _pollHeavyTimer = setTimeout(async function () {
+          await loadHeavy();
+          if (!document.hidden) scheduleHeavy();
+        }, FORTRESS_POLL_HEAVY_MS);
+      }
+      scheduleHeavy();
+    }
+
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) {
+        clearPollTimers();
+      } else {
+        loadCore();
+        schedulePollTimers();
+      }
+    });
+
     document.getElementById('btnRefresh').addEventListener('click', loadAll);
-    setInterval(async () => {
-      try { renderAlertsFeedTop(await fetch(API.alertsFeed, NO_CACHE).then(r => r.json())); } catch (e) {}
-    }, 60000);
     const btnPristine = document.getElementById('btnPristine');
     if (btnPristine) btnPristine.addEventListener('click', runPristine);
     const btnBotAudit = document.getElementById('btnBotAudit');
@@ -2335,7 +2441,7 @@
     })();
 
     loadAll();
-    setInterval(loadAll, 30000);
+    schedulePollTimers();
   </script>
   <footer class="app-footer">
     <p class="disclaimer">For educational and research use only. You are solely responsible for your own trading and risk. No guarantee of profit; software provided as-is.</p>

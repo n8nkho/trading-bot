@@ -12,6 +12,7 @@ from typing import Any
 
 from utils.atomic_json import read_json, write_json_atomic
 from utils.fortress_logger import append_alerts_log, append_log
+from utils.llm_resilience import exponential_backoff_retry
 from utils.llm_router import LLMRouter
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -28,12 +29,18 @@ class SentimentVelocityAgent:
             f"Provide up to 8 recent headlines for {symbol} in the last {window_hours} hours. "
             "Return JSON only: {\"headlines\": [\"...\"]}"
         )
-        raw = LLMRouter().call_xai(prompt)
+
+        @exponential_backoff_retry()
+        def _call():
+            return LLMRouter().call_xai(prompt)
+
         try:
+            raw = _call()
             obj = json.loads(str(raw).replace("```json", "").replace("```", "").strip())
             h = obj.get("headlines", [])
             return [str(x) for x in h][:8] if isinstance(h, list) else []
-        except Exception:
+        except Exception as exc:
+            append_log("sentiment_velocity.log", f"{symbol} fetch_news_window error: {exc}")
             return []
 
     def _score_sentiment(self, symbol: str, headlines: list[str], dry_run: bool = False) -> dict[str, Any]:
@@ -44,15 +51,21 @@ class SentimentVelocityAgent:
             "-1.0 to +1.0. Return JSON only {\"score\": float, \"confidence\": float, \"key_themes\": []}\n"
             f"{json.dumps(headlines, default=str)}"
         )
-        raw = LLMRouter().call_deepseek(prompt)
+
+        @exponential_backoff_retry()
+        def _call():
+            return LLMRouter().call_deepseek(prompt)
+
         try:
+            raw = _call()
             obj = json.loads(str(raw).replace("```json", "").replace("```", "").strip())
             return {
                 "score": float(obj.get("score", 0.0) or 0.0),
                 "confidence": float(obj.get("confidence", 0.5) or 0.5),
                 "key_themes": obj.get("key_themes", []),
             }
-        except Exception:
+        except Exception as exc:
+            append_log("sentiment_velocity.log", f"{symbol} score_sentiment error: {exc}")
             return {"score": 0.0, "confidence": 0.0, "key_themes": []}
 
     def _calculate_velocity(self, scores_by_window: dict[str, float]) -> dict[str, float]:
@@ -119,8 +132,16 @@ class SentimentVelocityAgent:
             if signal == "EXIT_RISK":
                 append_alerts_log(f"EXIT_RISK sentiment collapse for {sym} velocity={rec['velocity']:.3f}")
 
-        out = {"generated_at": datetime.now(timezone.utc).isoformat(), "symbols": out_symbols}
-        if not dry_run and _ENABLED:
+        gen_at = datetime.now(timezone.utc).isoformat()
+        out = {
+            "generated_at": gen_at,
+            "symbols": out_symbols,
+            "pipeline_meta": {
+                "last_full_run_at": gen_at,
+                "last_updated_display": gen_at,
+            },
+        }
+        if not dry_run:
             write_json_atomic(_OUT, out)
         return out
 

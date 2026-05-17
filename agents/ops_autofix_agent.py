@@ -160,6 +160,31 @@ def dedupe_consecutive_log_lines(
     }
 
 
+def ops_autofix_self_check() -> dict[str, Any]:
+    """Verify minimal filesystem layout before mutating logs/runs."""
+    issues: list[str] = []
+    if not DATA_DIR.exists():
+        issues.append("data_dir_missing")
+    if not LOGS_DIR.exists():
+        issues.append("logs_dir_missing")
+    try:
+        summarize_screening_runs(read_recent_operational_events(2))
+    except Exception as exc:
+        issues.append(f"run_registry_read:{type(exc).__name__}")
+    ok = len(issues) == 0
+    status = {
+        "timestamp": datetime.now().isoformat(),
+        "self_check_ok": ok,
+        "issues": issues,
+    }
+    try:
+        LATEST_STATUS = DATA_DIR / "ops_autofix_status.json"
+        LATEST_STATUS.write_text(json.dumps(status, indent=2), encoding="utf-8")
+    except Exception:
+        logger.exception("failed writing ops_autofix_status.json")
+    return status
+
+
 def run_ops_autofix(
     *,
     dry_run: bool = False,
@@ -170,9 +195,14 @@ def run_ops_autofix(
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
+    sc = ops_autofix_self_check()
+    if not sc.get("self_check_ok"):
+        logger.error("ops_autofix self-check failed: %s", sc.get("issues"))
+
     report: dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
         "dry_run": dry_run,
+        "self_check": sc,
         "actions": {},
         "summary": {},
     }
@@ -221,3 +251,25 @@ def run_ops_autofix(
     )
     return report
 
+
+def main() -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Ops autofix (cron / CLI)")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--no-log-dedupe", action="store_true")
+    ap.add_argument("--force-log-dedupe", action="store_true")
+    ap.add_argument("--stale-hours", type=float, default=2.0)
+    args = ap.parse_args()
+    out = run_ops_autofix(
+        dry_run=args.dry_run,
+        stale_after_hours=args.stale_hours,
+        dedupe_logs=not args.no_log_dedupe,
+        force_log_dedupe=args.force_log_dedupe,
+    )
+    print(json.dumps(out, indent=2, default=str))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

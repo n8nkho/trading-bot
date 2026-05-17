@@ -124,6 +124,17 @@ def maybe_trigger_rollback_on_drift(drift_report: dict) -> dict | None:
     if not drift_report.get("drift_alert"):
         return None
 
+    if str(drift_report.get("reason") or "") == "no_recent_trading_activity":
+        return None
+
+    try:
+        from utils.trading_activity import has_recent_trading_activity
+
+        if not has_recent_trading_activity():
+            return None
+    except Exception:
+        pass
+
     target = (guard.get("rollback_target_profile") or "capital_preservation").strip().lower()
     hours = int(guard.get("rollback_duration_hours") or 168)
 

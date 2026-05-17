@@ -3,13 +3,19 @@ Drift detector for strategy stability monitoring.
 Compares recent realized P&L average against prior window.
 """
 
+from __future__ import annotations
+
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
-LEDGER = Path("data") / "pnl_ledger.jsonl"
-OUT = Path("data") / "drift_report.json"
+LEDGER = _ROOT / "data" / "pnl_ledger.jsonl"
+OUT = _ROOT / "data" / "drift_report.json"
 
 
 def _load_pnls() -> list[float]:
@@ -45,7 +51,16 @@ def analyze_drift() -> dict:
 
     drift_alert = False
     reason = "insufficient_history"
-    if len(recent) >= 10 and len(prior) >= 10:
+    try:
+        from utils.trading_activity import has_recent_trading_activity
+
+        recent_activity = has_recent_trading_activity()
+    except Exception:
+        recent_activity = True
+
+    if not recent_activity:
+        reason = "no_recent_trading_activity"
+    elif len(recent) >= 10 and len(prior) >= 10:
         reason = "stable"
         if drift_ratio is not None and drift_ratio < -0.35:
             drift_alert = True

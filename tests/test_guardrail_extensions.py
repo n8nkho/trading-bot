@@ -14,6 +14,15 @@ from utils.trading_guardrails import compute_loss_metrics, validate_llm_trade_ou
 
 
 class TestGuardrailExtensions(unittest.TestCase):
+    def setUp(self):
+        # Pre-trade tests assert legacy gate behavior; disable new RTH regime + hedge latches in unit tests.
+        os.environ["FORTRESS_REGIME_STALE_BLOCK_RTH"] = "0"
+        os.environ["FORTRESS_HEDGE_ERROR_BLOCK_ENTRIES"] = "0"
+
+    def tearDown(self):
+        os.environ.pop("FORTRESS_REGIME_STALE_BLOCK_RTH", None)
+        os.environ.pop("FORTRESS_HEDGE_ERROR_BLOCK_ENTRIES", None)
+
     def test_llm_trade_output_validation(self):
         ok, reason = validate_llm_trade_output("AAPL", "Momentum improving, support held.")
         self.assertTrue(ok)

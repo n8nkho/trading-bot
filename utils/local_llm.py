@@ -35,6 +35,12 @@ def call_deepseek(prompt: str, *, timeout: int = 60) -> str:
     """
     Call DeepSeek using OpenAI-compatible chat endpoint.
     """
+    try:
+        from utils.llm_router import ensure_llm_env_loaded
+
+        ensure_llm_env_loaded()
+    except Exception:
+        pass
     cfg = get_llm_config() or {}
     api_key = cfg.get("deepseek_api_key") or None
     if not api_key:
@@ -110,6 +116,12 @@ Is this UNFAIR (overreaction) or FAIR (legitimate)?
 Return JSON: {{"classification": "UNFAIR/FAIR", "confidence": 0.8, "reasoning": "why"}}"""
 
     response = call_llm(prompt, timeout=90)
+    if str(response or "").strip().startswith("Error:"):
+        return {
+            "classification": "UNCERTAIN",
+            "confidence": 0.5,
+            "reasoning": str(response).strip()[:200],
+        }
 
     try:
         match = re.search(r"\{[^{}]*\}", response, re.DOTALL)
@@ -118,4 +130,8 @@ Return JSON: {{"classification": "UNFAIR/FAIR", "confidence": 0.8, "reasoning": 
     except Exception:
         pass
 
-    return {"classification": "UNCERTAIN", "confidence": 0.5, "reasoning": "Parse error"}
+    return {
+        "classification": "UNCERTAIN",
+        "confidence": 0.5,
+        "reasoning": f"Parse error (LLM response not JSON: {(response or '')[:120]})",
+    }

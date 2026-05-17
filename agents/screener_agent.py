@@ -12,6 +12,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import yfinance as yf
+
+try:
+    from utils.llm_router import ensure_llm_env_loaded
+
+    ensure_llm_env_loaded()
+except Exception:
+    pass
+
 from utils.local_llm import analyze_stock_drop
 from agents.vision_analyst import analyze_chart_patterns, pattern_to_signal
 from utils.policy_profile import get_profile_bundle
@@ -293,6 +301,17 @@ def run_screener():
     prefilter_workers = int(watchlist_payload.get("prefilter_workers") or os.getenv("SCREENER_PREFILTER_WORKERS") or 6)
     max_runtime_seconds = float(watchlist_payload.get("max_screening_runtime_seconds") or os.getenv("SCREENER_MAX_RUNTIME_SECONDS") or 180)
 
+    risk_doc = _read_daily_risk_params(DATA_DIR)
+    market_regime = str(risk_doc.get("regime") or "").strip().upper() or "RANGING"
+    ranging_extremes = str(os.getenv("FORTRESS_SCREENER_REGIME_RSI_EXTREMES", "1")).strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+    reject_samples: list[dict[str, Any]] = []
+
     def _tier_params(tier_idx: int) -> dict:
         """
         Step-wise relaxation of numeric prefilter thresholds by tier.
@@ -370,14 +389,38 @@ def run_screener():
 
         # Check if stock meets ALL criteria before calling heavier analysis
         meets_drop_criteria = params_for_tier["drop_min"] <= drop_pct <= params_for_tier["drop_max"]
-        meets_rsi_criteria = rsi < params_for_tier["rsi_threshold"]
+        if ranging_extremes and market_regime == "RANGING":
+            meets_rsi_criteria = (rsi < 35) or (rsi > 65)
+        else:
+            meets_rsi_criteria = rsi < params_for_tier["rsi_threshold"]
         meets_volume_criteria = volume_ratio > params_for_tier["volume_ratio_min"]
 
+        def _sample(reason: str) -> None:
+            if len(reject_samples) >= 64:
+                return
+            reject_samples.append(
+                {
+                    "ticker": ticker,
+                    "reason": reason,
+                    "rsi": round(float(rsi), 4),
+                    "drop_pct": round(float(drop_pct), 4),
+                    "volume_ratio": round(float(volume_ratio), 4),
+                    "rsi_rule": "ranging_extremes_lt35_or_gt65"
+                    if (ranging_extremes and market_regime == "RANGING")
+                    else f"lt_{params_for_tier['rsi_threshold']}",
+                    "drop_band": [params_for_tier["drop_min"], params_for_tier["drop_max"]],
+                    "regime": market_regime,
+                }
+            )
+
         if not meets_drop_criteria:
+            _sample("drop_criteria")
             return {"status": "reject", "reason": "drop_criteria"}
         if not meets_rsi_criteria:
+            _sample("rsi_criteria")
             return {"status": "reject", "reason": "rsi_criteria"}
         if not meets_volume_criteria:
+            _sample("volume_criteria")
             return {"status": "reject", "reason": "volume_criteria"}
 
         return {
@@ -573,6 +616,13 @@ def run_screener():
                     json.dump(throughput.get("recommended_params") or params, f, indent=2)
             except Exception:
                 pass
+        try:
+            from utils.pipeline_health import record_screening_outcome
+
+            record_screening_outcome(candidates_found=len(candidates))
+        except Exception:
+            pass
+
         meta = {
             "timestamp": datetime.now().isoformat(),
             "policy_profile": policy.get("active_profile"),
@@ -585,6 +635,8 @@ def run_screener():
             "candidates_found": len(candidates),
             "passed_all_filters": passed_all_filters,
             "filter_counts": filter_counts,
+            "market_regime_at_screen": market_regime,
+            "prefilter_reject_samples": reject_samples[:40],
             "tiers_configured": tiers_configured,
             "tiers_scanned": tiers_scanned,
             "tier_stop_reason": tier_stop_reason,

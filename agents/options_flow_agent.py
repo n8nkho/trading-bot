@@ -117,7 +117,7 @@ class OptionsFlowAgent:
                 append_alerts_log(f"BEARISH options sweep on held symbol {sig['symbol']}")
 
         out = {"generated_at": datetime.now(timezone.utc).isoformat(), "signals": signals}
-        if not dry_run and _ENABLED:
+        if not dry_run:
             write_json_atomic(_OUT, out)
         return out
 

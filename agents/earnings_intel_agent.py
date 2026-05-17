@@ -14,16 +14,45 @@ from typing import Any
 
 from utils.atomic_json import read_json, write_json_atomic
 from utils.fortress_logger import append_alerts_log, append_log
+from utils.llm_resilience import TokenBucketLimiter, exponential_backoff_retry
 from utils.llm_router import LLMRouter
 
 _ROOT = Path(__file__).resolve().parent.parent
 _DATA = _ROOT / "data"
 _OUT = _DATA / "earnings_intel.json"
 _DEDUPE = _DATA / "earnings_intel_alert_dedupe.json"
+_HEALTH = _DATA / "earnings_llm_health.json"
 _ENABLED = os.getenv("FORTRESS_EARNINGS_INTEL_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+_LLM_RPM = float(os.getenv("FORTRESS_EARNINGS_LLM_RPM", "10") or 10.0)
+_LLM_LIMITER = TokenBucketLimiter(rate=max(0.5, _LLM_RPM), per_seconds=60.0)
 
 _MATERIAL_ACTIONS = frozenset({"BUY_OPPORTUNITY", "SELL_SIGNAL", "AVOID"})
 _STRONG_VERDICTS = frozenset({"STRONG_BEAT", "STRONG_MISS"})
+
+
+def _rules_based_earnings_score(symbol: str, transcript_text: str) -> dict[str, Any]:
+    """Deterministic fallback when LLM providers rate-limit or fail."""
+    t = (transcript_text or "").lower()
+    score = 0.0
+    if any(k in t for k in ("raised guidance", "raise guidance", "beat", "top line beat")):
+        score += 1.0
+    if any(k in t for k in ("lowered guidance", "miss", "shortfall", "weak demand")):
+        score -= 1.0
+    if "inline" in t or "in-line" in t:
+        score += 0.0
+    verdict = "IN_LINE"
+    if score >= 1.0:
+        verdict = "BEAT"
+    elif score <= -1.0:
+        verdict = "MISS"
+    return {
+        "symbol": symbol,
+        "verdict": verdict,
+        "recommended_action": "HOLD",
+        "rules_fallback": True,
+        "rules_score": score,
+        "reasoning": "rules_fallback_eps_guidance_heuristic",
+    }
 
 
 def _llm_upstream_failed(text: str) -> bool:
@@ -51,6 +80,48 @@ def _should_alert_held_symbol(analysis: dict[str, Any]) -> bool:
     return False
 
 
+def _touch_llm_health(
+    *,
+    ok: bool,
+    err: str | None = None,
+) -> None:
+    try:
+        doc = read_json(_HEALTH, default={})
+        if not isinstance(doc, dict):
+            doc = {}
+        now = datetime.now(timezone.utc).isoformat()
+        window = doc.get("error_events_1h")
+        if not isinstance(window, list):
+            window = []
+        if not ok and err:
+            window.append({"ts": now, "err": err[:400]})
+        cutoff = time.time() - 3600
+        pruned = []
+        for ev in window[-200:]:
+            try:
+                ts = str(ev.get("ts") or "")
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if dt.timestamp() >= cutoff:
+                    pruned.append(ev)
+            except Exception:
+                continue
+        errors_1h = len(pruned)
+        doc.update(
+            {
+                "updated_at": now,
+                "last_success_at": now if ok else doc.get("last_success_at"),
+                "last_error_at": now if not ok else doc.get("last_error_at"),
+                "last_error_excerpt": (err or "")[:400] if not ok else doc.get("last_error_excerpt"),
+                "error_events_1h": pruned,
+                "error_rate_1h": round(errors_1h / max(1.0, _LLM_RPM), 4),
+                "queue_depth_hint": _LLM_LIMITER.queue_depth_hint(),
+            }
+        )
+        write_json_atomic(_HEALTH, doc)
+    except Exception:
+        pass
+
+
 def _maybe_alert_api_failure(reason: str) -> None:
     """At most one Fortress Alerts line per ~6h for LLM/API outages (avoid spam)."""
     now = time.time()
@@ -68,6 +139,12 @@ def _maybe_alert_api_failure(reason: str) -> None:
 
 
 class EarningsIntelAgent:
+    def _llm_call_bucketed(self, fn_label: str, fn):
+        if not _LLM_LIMITER.acquire(1.0):
+            append_log("earnings_intel.log", f"{fn_label} skipped — LLM rate bucket saturated (rpm={_LLM_RPM})")
+            return None
+        return fn()
+
     def _universe_symbols(self) -> list[str]:
         positions = read_json(_DATA / "positions.json", default=[])
         if isinstance(positions, dict):
@@ -79,9 +156,24 @@ class EarningsIntelAgent:
     def _fetch_transcript(self, symbol: str, dry_run: bool = False) -> str:
         if dry_run:
             return f"{symbol} transcript mock: management raised guidance and highlighted margin expansion."
-        # Public transcript fetching is source-dependent; use LLM retrieval fallback.
         prompt = f"Provide a short excerpt of latest earnings call transcript for {symbol}. Return plain text."
-        return str(LLMRouter().call_xai(prompt))[:8000]
+
+        @exponential_backoff_retry()
+        def _call():
+            router = LLMRouter()
+            return str(
+                router.call_with_fallback(
+                    prompt,
+                    primary=os.getenv("FORTRESS_EARNINGS_LLM_PRIMARY", "deepseek"),
+                    max_tokens=800,
+                )
+            )
+
+        def _do():
+            return _call()[:8000]
+
+        out = self._llm_call_bucketed("fetch_transcript", _do)
+        return out or ""
 
     def _analyze_transcript(self, symbol: str, transcript_text: str, dry_run: bool = False) -> dict[str, Any]:
         if dry_run:
@@ -99,19 +191,41 @@ class EarningsIntelAgent:
             "(BUY_OPPORTUNITY/HOLD/SELL_SIGNAL/AVOID). Return JSON only.\n\n"
             f"{transcript_text[:12000]}"
         )
-        raw = LLMRouter().call_xai(prompt)
+
+        @exponential_backoff_retry()
+        def _call():
+            router = LLMRouter()
+            return router.call_with_fallback(
+                prompt,
+                primary=os.getenv("FORTRESS_EARNINGS_LLM_PRIMARY", "deepseek"),
+                max_tokens=500,
+            )
+
+        raw_holder: dict[str, Any] = {}
+
+        def _do():
+            raw_holder["raw"] = _call()
+            return raw_holder["raw"]
+
+        llm_out = self._llm_call_bucketed("analyze_transcript", _do)
+        raw = llm_out if llm_out is not None else ""
         if _llm_upstream_failed(str(raw)):
-            return {
-                "symbol": symbol,
-                "verdict": "IN_LINE",
-                "recommended_action": "HOLD",
-                "llm_error": True,
-                "raw_excerpt": str(raw)[:220],
-            }
+            fb = _rules_based_earnings_score(symbol, transcript_text)
+            append_log(
+                "earnings_intel.log",
+                f"{symbol} LLM analyze failed; rules_fallback verdict={fb.get('verdict')} ({str(raw)[:120]})",
+            )
+            _touch_llm_health(ok=False, err=str(raw))
+            return fb
         try:
-            return json.loads(str(raw).replace("```json", "").replace("```", "").strip())
+            parsed = json.loads(str(raw).replace("```json", "").replace("```", "").strip())
+            _touch_llm_health(ok=True)
+            return parsed
         except Exception:
-            return {"symbol": symbol, "verdict": "IN_LINE", "recommended_action": "HOLD", "parse_error": True, "raw_excerpt": str(raw)[:220]}
+            fb = _rules_based_earnings_score(symbol, transcript_text)
+            append_log("earnings_intel.log", f"{symbol} JSON parse failed; rules_fallback used")
+            _touch_llm_health(ok=False, err="parse_error")
+            return fb
 
     def run(self, symbol: str | None = None, dry_run: bool = False) -> dict[str, Any]:
         syms = [symbol.upper()] if symbol else self._universe_symbols()
@@ -121,19 +235,16 @@ class EarningsIntelAgent:
         entries = []
         held = set(self._universe_symbols())
         for sym in syms:
-            txt = self._fetch_transcript(sym, dry_run=dry_run)
+            txt = (self._fetch_transcript(sym, dry_run=dry_run) or "").strip()
             if not txt:
-                continue
-            if _llm_upstream_failed(txt):
-                append_log("earnings_intel.log", f"{sym} ERROR upstream LLM: {txt[:240]}")
-                _maybe_alert_api_failure(txt)
-                continue
-            analysis = self._analyze_transcript(sym, txt, dry_run=dry_run)
-            if analysis.get("llm_error"):
-                ex = str(analysis.get("raw_excerpt") or "")
-                append_log("earnings_intel.log", f"{sym} ERROR analyze LLM: {ex[:220]}")
-                _maybe_alert_api_failure(ex or "analyze phase LLM failure")
-                continue
+                append_log("earnings_intel.log", f"{sym} empty transcript — rules_fallback")
+                analysis = _rules_based_earnings_score(sym, "")
+            elif _llm_upstream_failed(txt):
+                append_log("earnings_intel.log", f"{sym} upstream LLM failure — using rules_fallback ({txt[:180]})")
+                # Rules fallback is acceptable; do not spam alerts.log (xAI 403/429 credits).
+                analysis = _rules_based_earnings_score(sym, txt)
+            else:
+                analysis = self._analyze_transcript(sym, txt, dry_run=dry_run)
             rec = {
                 "symbol": sym,
                 "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -145,7 +256,7 @@ class EarningsIntelAgent:
                 append_alerts_log(f"Earnings intel for held symbol {sym}: {analysis.get('recommended_action')} (verdict={analysis.get('verdict')})")
 
         out = {"entries": entries}
-        if not dry_run and _ENABLED:
+        if not dry_run:
             doc = read_json(_OUT, default={"entries": []})
             if not isinstance(doc, dict) or not isinstance(doc.get("entries"), list):
                 doc = {"entries": []}

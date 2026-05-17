@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,6 +16,8 @@ import yfinance as yf
 
 from utils.atomic_json import read_json, write_json_atomic
 from utils.fortress_logger import append_log
+
+logger = logging.getLogger("regime_detector")
 
 REGIMES = ["TRENDING_BULL", "TRENDING_BEAR", "RANGING", "VOLATILE", "CRISIS"]
 
@@ -124,32 +128,71 @@ class RegimeDetector:
         return dict(table.get(regime, table["RANGING"]))
 
     def detect_regime(self, dry_run: bool = False) -> dict[str, Any]:
-        data = self._fetch_regime_data(dry_run=dry_run)
-        regime, conf = self._classify(data)
-        params = self._get_regime_params(regime)
-        out = {
-            "regime": regime,
-            "regime_confidence": conf,
-            "regime_detected_at": datetime.now(timezone.utc).isoformat(),
-            "regime_params": params,
-            "inputs": data,
-            "dry_run": dry_run,
-        }
-        append_log("regime.log", f"{out['regime_detected_at']} regime={regime} conf={conf:.2f}")
-        if not dry_run and _ENABLED:
-            doc = read_json(_RISK, default={})
-            if not isinstance(doc, dict):
-                doc = {}
-            doc.update(
-                {
-                    "regime": regime,
-                    "regime_confidence": conf,
-                    "regime_detected_at": out["regime_detected_at"],
-                    "regime_params": params,
-                }
-            )
-            write_json_atomic(_RISK, doc)
-        return out
+        prev = read_json(_RISK, default={}) if not dry_run else {}
+        if not isinstance(prev, dict):
+            prev = {}
+        try:
+            data = self._fetch_regime_data(dry_run=dry_run)
+            regime, conf = self._classify(data)
+            params = self._get_regime_params(regime)
+            ts = datetime.now(timezone.utc).isoformat()
+            out = {
+                "regime": regime,
+                "regime_confidence": conf,
+                "regime_detected_at": ts,
+                "regime_params": params,
+                "inputs": data,
+                "dry_run": dry_run,
+                "regime_stale": False,
+                "regime_error": None,
+            }
+            append_log("regime.log", f"{ts} regime={regime} conf={conf:.2f}")
+            if not dry_run:
+                doc = dict(prev)
+                doc.update(
+                    {
+                        "regime": regime,
+                        "regime_confidence": conf,
+                        "regime_detected_at": ts,
+                        "regime_params": params,
+                        "regime_stale": False,
+                        "regime_last_error": None,
+                    }
+                )
+                write_json_atomic(_RISK, doc)
+            return out
+        except Exception as e:
+            logger.exception("regime detection failed; retaining last known regime with STALE flag")
+            append_log("regime.log", f"ERROR {datetime.now(timezone.utc).isoformat()} {e}")
+            ts = datetime.now(timezone.utc).isoformat()
+            regime = str(prev.get("regime") or "RANGING")
+            conf = float(prev.get("regime_confidence") or 0.5)
+            params = self._get_regime_params(regime)
+            out = {
+                "regime": regime,
+                "regime_confidence": conf,
+                "regime_detected_at": str(prev.get("regime_detected_at") or ts),
+                "regime_params": params,
+                "inputs": prev.get("inputs") or {},
+                "dry_run": dry_run,
+                "regime_stale": True,
+                "regime_error": str(e)[:500],
+                "regime_error_trace": traceback.format_exc()[:4000],
+            }
+            if not dry_run:
+                doc = dict(prev)
+                doc.update(
+                    {
+                        "regime": regime,
+                        "regime_confidence": conf,
+                        "regime_detected_at": doc.get("regime_detected_at") or ts,
+                        "regime_params": params,
+                        "regime_stale": True,
+                        "regime_last_error": str(e)[:800],
+                    }
+                )
+                write_json_atomic(_RISK, doc)
+            return out
 
 
 def main() -> int:

@@ -116,9 +116,9 @@ class CrossAssetAgent:
             "dry_run": dry_run,
         }
         append_log("cross_asset.log", f"{out['generated_at']} bias={out['overall_bias']} conf={out['confidence']}")
-        if not dry_run and _ENABLED:
+        if not dry_run:
             write_json_atomic(_OUT, out)
-            if out["overall_bias"] == "BEARISH" and out["confidence"] >= 7:
+            if _ENABLED and out["overall_bias"] == "BEARISH" and out["confidence"] >= 7:
                 risk = read_json(_RISK, default={})
                 if not isinstance(risk, dict):
                     risk = {}

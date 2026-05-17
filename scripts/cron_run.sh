@@ -1,20 +1,116 @@
 #!/usr/bin/env bash
-# Run orchestrator from repo root with the project venv (fixes wrong cwd in cron).
-# Usage in crontab:  $REPO/scripts/cron_run.sh screen >> $REPO/logs/orchestrator.log 2>&1
+# Run orchestrator or an arbitrary repo-root command under venv; writes cron heartbeats.
+#
+# Usage:
+#   cron_run.sh <job_name>                                  → orchestrator.py <job_name>
+#   cron_run.sh <job_name> --dry-run ...                   → orchestrator.py <job_name> ...
+#   cron_run.sh <job_name> python3 -m agents.some_module   → direct module run (heartbeat on exit)
+#
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
-PY="${REPO_ROOT}/venv/bin/python3"
-if [[ ! -x "$PY" ]]; then
-  PY="python3"
+
+# Load .env for agent modules (screener, etc.) — orchestrator loads its own; this covers direct -m runs.
+if [[ -x "${REPO_ROOT}/venv/bin/python3" ]]; then
+  "${REPO_ROOT}/venv/bin/python3" -c "from utils.llm_router import ensure_llm_env_loaded; ensure_llm_env_loaded()" 2>/dev/null || true
 fi
 
-if [[ "${1:-}" == "screen" && "${FORTRESS_UPLIFT_AUTO_PROMOTE_AFTER_SCREEN:-0}" == "1" ]]; then
+PY=""
+for cand in "${REPO_ROOT}/venv/bin/python3" "${REPO_ROOT}/.venv/bin/python3"; do
+  if [[ -x "$cand" ]]; then
+    PY="$cand"
+    break
+  fi
+done
+[[ -z "${PY}" ]] && PY="python3"
+
+JOB_NAME="${1:-unknown}"
+shift || true
+
+_hb_ok() {
+  "$PY" -u "${REPO_ROOT}/utils/cron_heartbeat.py" --job "$JOB_NAME" --ok || true
+}
+
+_hb_fail() {
+  local rc="$1"
+  local detail="${2:-non-zero exit}"
+  "$PY" -u "${REPO_ROOT}/utils/cron_heartbeat.py" --job "$JOB_NAME" --failure "$rc" --detail "$detail" || true
+}
+
+_is_python_invocation() {
+  local x="${1:-}"
+  [[ -z "$x" ]] && return 1
+  [[ "$x" == "python3" ]] || [[ "$x" == "python" ]] || [[ "$x" == "$PY" ]] || [[ "$(basename "$x")" == "python3" ]] || [[ "$(basename "$x")" == "python" ]]
+}
+
+_run_orchestrator() {
+  if [[ ! -f "${REPO_ROOT}/orchestrator.py" ]]; then
+    echo "cron_run.sh: orchestrator.py not found in ${REPO_ROOT}" >&2
+    _hb_fail 127 "no orchestrator.py"
+    exit 127
+  fi
+  set +e
   "$PY" -u "${REPO_ROOT}/orchestrator.py" "$@"
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    _hb_ok
+  else
+    _hb_fail "$rc" "orchestrator non-zero exit"
+  fi
+  exit "$rc"
+}
+
+_run_command() {
+  set +e
+  "$@"
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    _hb_ok
+  else
+    _hb_fail "$rc" "command non-zero exit"
+  fi
+  exit "$rc"
+}
+
+# Single-token quoted cron lines: entire shell command as one argument ("python3 -m …").
+if [[ "$#" -eq 1 ]] && [[ "$1" == *" "* ]] && [[ "$1" == python3\ * || "$1" == python\ * ]]; then
+  cmd="$1"
+  if [[ "$cmd" == python3\ * ]]; then
+    cmd="${PY} ${cmd#python3 }"
+  elif [[ "$cmd" == python\ * ]]; then
+    cmd="${PY} ${cmd#python }"
+  fi
+  _run_command bash -c "$cmd"
+fi
+
+if [[ "${JOB_NAME}" == "screen" && "${FORTRESS_UPLIFT_AUTO_PROMOTE_AFTER_SCREEN:-0}" == "1" ]]; then
+  set +e
+  "$PY" -u "${REPO_ROOT}/orchestrator.py" "$JOB_NAME" "$@"
   screen_rc=$?
-  # Cron-safe: never block daily screen completion due to auto-promotion checks.
+  set -e
   "$PY" -u "${REPO_ROOT}/orchestrator.py" uplift_auto_promote --apply --required-clean-sessions "${FORTRESS_UPLIFT_REQUIRED_CLEAN_SESSIONS:-5}" || true
+  if [[ "$screen_rc" -eq 0 ]]; then
+    _hb_ok
+  else
+    _hb_fail "$screen_rc" "orchestrator non-zero exit"
+  fi
   exit "$screen_rc"
 fi
 
-exec "$PY" -u "${REPO_ROOT}/orchestrator.py" "$@"
+if [[ "$#" -eq 0 ]]; then
+  if [[ ! -f "${REPO_ROOT}/orchestrator.py" ]]; then
+    echo "cron_run.sh: missing orchestrator.py under ${REPO_ROOT}; pass a python command after job_name." >&2
+    _hb_fail 127 "no orchestrator.py"
+    exit 127
+  fi
+  _run_orchestrator "$JOB_NAME"
+fi
+
+if _is_python_invocation "$1"; then
+  shift
+  _run_command "$PY" "$@"
+fi
+
+_run_orchestrator "$JOB_NAME" "$@"

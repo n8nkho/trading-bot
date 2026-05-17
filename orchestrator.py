@@ -1856,15 +1856,43 @@ def run_fortress():
     
     try:
         result = fortress_daily_check()
-        
+
         if result:
             logger.info("Fortress check complete")
             logger.info(f"Market regime: {result.get('market_conditions', {}).get('regime', 'N/A')}")
             logger.info(f"Strategies evaluated: {len(result.get('recommendations', {}))}")
-        
+
+        # Command Center agent activity watches logs/fortress.log for "Fortress Hedging" freshness.
+        try:
+            lp = Path(__file__).resolve().parent / "logs" / "fortress.log"
+            lp.parent.mkdir(parents=True, exist_ok=True)
+            lp.open("a", encoding="utf-8").write(
+                f"{datetime.now(timezone.utc).isoformat()} Fortress hedging cycle OK\n"
+            )
+        except Exception:
+            logger.debug("Could not append fortress.log activity line", exc_info=True)
+        try:
+            from utils.runtime_safety import clear_hedging_error
+
+            clear_hedging_error()
+        except Exception:
+            pass
+
         return result
     except Exception as e:
-        logger.error(f"Fortress error: {e}")
+        logger.exception("Fortress hedging execution failed")
+        try:
+            from utils.runtime_safety import set_hedging_error
+
+            set_hedging_error(e)
+        except Exception:
+            logger.exception("Could not persist hedging_execution_error to runtime_safety.json")
+        try:
+            from utils.fortress_logger import append_alerts_log
+
+            append_alerts_log(f"HEDGE EXECUTION ERROR — new entries blocked until cleared: {type(e).__name__}: {str(e)[:200]}")
+        except Exception:
+            pass
         return None
 
 

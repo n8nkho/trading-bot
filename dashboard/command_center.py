@@ -48,6 +48,78 @@ from utils.run_registry import (
 from agents.drift_detector import analyze_drift
 from utils.alpaca_env import is_alpaca_paper
 
+# Short TTL caches — dashboard polls many routes; avoid re-scanning crontab/logs every few seconds.
+_RESP_CACHE: dict[str, tuple[float, object]] = {}
+
+
+def _cache_ttl(env_key: str, default: float) -> float:
+    try:
+        return max(5.0, float(os.getenv(env_key, str(default))))
+    except Exception:
+        return default
+
+
+def _cached_json(key: str, ttl_sec: float, factory):
+    now = time.time()
+    ent = _RESP_CACHE.get(key)
+    if ent is not None and now - ent[0] < ttl_sec:
+        return ent[1]
+    val = factory()
+    _RESP_CACHE[key] = (now, val)
+    return val
+
+
+def _dashboard_poll_intervals_ms() -> tuple[int, int]:
+    """Core vs heavy client poll intervals (ms). Longer off-hours/weekends; scales with CPU count."""
+    cores = os.cpu_count() or 1
+    if cores >= 4:
+        rth_core_def, rth_heavy_def = 90_000, 180_000
+        off_core_def, off_heavy_def = 180_000, 420_000
+    elif cores >= 2:
+        rth_core_def, rth_heavy_def = 120_000, 240_000
+        off_core_def, off_heavy_def = 240_000, 600_000
+    else:
+        rth_core_def, rth_heavy_def = 120_000, 300_000
+        off_core_def, off_heavy_def = 300_000, 900_000
+    core_env = (os.getenv("FORTRESS_DASHBOARD_POLL_CORE_MS") or "").strip()
+    heavy_env = (os.getenv("FORTRESS_DASHBOARD_POLL_HEAVY_MS") or "").strip()
+    core_off_env = (os.getenv("FORTRESS_DASHBOARD_POLL_CORE_OFFHOURS_MS") or "").strip()
+    heavy_off_env = (os.getenv("FORTRESS_DASHBOARD_POLL_HEAVY_OFFHOURS_MS") or "").strip()
+
+    if _is_trading_day_window():
+        core = int(core_env) if core_env else int(rth_core_def)
+        heavy = int(heavy_env) if heavy_env else int(rth_heavy_def)
+    else:
+        # If operator set CORE/HEAVY_MS but not *_OFFHOURS_MS, reuse those values on weekends too.
+        if core_off_env:
+            core = int(core_off_env)
+        elif core_env:
+            core = int(core_env)
+        else:
+            core = int(off_core_def)
+        if heavy_off_env:
+            heavy = int(heavy_off_env)
+        elif heavy_env:
+            heavy = int(heavy_env)
+        else:
+            heavy = int(off_heavy_def)
+    return core, heavy
+
+
+def _cache_ttl_for_host(env_key: str, single_core_default: float, multi_core_default: float) -> float:
+    cores = os.cpu_count() or 1
+    default = multi_core_default if cores >= 4 else single_core_default
+    return _cache_ttl(env_key, default)
+
+
+def _background_refresh_enabled() -> bool:
+    return str(os.getenv("FORTRESS_DASHBOARD_BACKGROUND_REFRESH", "0")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
 
 def _get_version() -> str:
     """Read VERSION file at project root; default 1.0.0."""
@@ -122,6 +194,21 @@ DATA_DIR = _ROOT / "data"
 LOGS_DIR = _ROOT / "logs"
 CONFIG_DIR = _ROOT / "config"
 FORTRESS_REPORT_MAX_AGE_HOURS = float(os.getenv("FORTRESS_REPORT_MAX_AGE_HOURS", "30"))
+SCREENING_STALE_HOURS = float(os.getenv("FORTRESS_SCREENING_STALE_HOURS", "36"))
+REGIME_STALE_HOURS = float(os.getenv("FORTRESS_REGIME_STALE_HOURS", "72"))
+
+# Cron job name → agent row id (for heartbeat-aware freshness in AGENT ACTIVITY).
+CRON_JOB_TO_AGENT: dict[str, str] = {
+    "screener": "screener",
+    "regime_detector": "regime_detector",
+    "regime_detector_offhours": "regime_detector",
+    "sentiment_velocity": "sentiment_velocity_agent",
+    "earnings_intel": "earnings_intel_agent",
+    "earnings_intel_close": "earnings_intel_agent",
+    "morning_briefing": "briefing_agent",
+    "ops_autofix": "ops_autofix",
+    "drift_detector": "drift_detector",
+}
 
 # Fortress hedging output is routed to either `logs/fortress.log` or (on some builds)
 # `logs/fortress_dashboard.log`. Use whichever exists so agent activity has a real last_run.
@@ -787,6 +874,11 @@ def _count_unique_cron_jobs(cron_text: str, markers: list[str]) -> int:
 
 def get_system_health():
     """Services, cron, disk, CPU/RAM, risk, data files."""
+    ttl = _cache_ttl_for_host("FORTRESS_HEALTH_CACHE_SECONDS", 60.0, 30.0)
+    return _cached_json("system_health", ttl, _build_system_health)
+
+
+def _build_system_health() -> dict:
     health = {
         "timestamp": datetime.now().isoformat(),
         "services": {},
@@ -923,11 +1015,20 @@ def get_system_health():
         health["safety_status"] = get_safety_status()
     except Exception:
         health["safety_status"] = {}
+    try:
+        health["data_freshness"] = _build_data_freshness_summary()
+    except Exception as exc:
+        health["data_freshness"] = {"overall_stale": True, "warnings": [str(exc)[:120]], "items": []}
     return health
 
 
 def get_agent_activity():
     """Per-agent last run, status (fresh/stale), last log line."""
+    ttl = _cache_ttl_for_host("FORTRESS_AGENTS_CACHE_SECONDS", 90.0, 45.0)
+    return _cached_json("agent_activity", ttl, _build_agent_activity)
+
+
+def _build_agent_activity() -> dict:
     agents = []
     now = datetime.now()
     market_open = _is_market_hours()
@@ -1046,6 +1147,65 @@ def get_agent_activity():
             else:
                 stale_actionable = is_required and (market_open if active_hours_required else True)
                 ui_status = "stale" if stale_actionable else "idle"
+        last_run_source = "log_mtime" if last_run else None
+        cron_ok, cron_fail, cron_fail_detail = _cron_heartbeat_times_for_agent(key)
+        if key == "cron_heartbeat":
+            try:
+                from utils.cron_heartbeat import read_store
+
+                store = read_store(DATA_DIR / "cron_heartbeats.json")
+                hb_at = _parse_iso_dt(store.get("updated_at"))
+                if hb_at is not None:
+                    last_run = hb_at.isoformat()
+                    last_run_source = "cron_heartbeat"
+                    age_h = (now - hb_at).total_seconds() / 3600.0
+                    if age_h <= max_h:
+                        status = "fresh"
+                        ui_status = "fresh"
+                        stale_actionable = False
+            except Exception:
+                pass
+        if key == "fortress":
+            try:
+                fort_files = sorted(glob.glob(str(DATA_DIR / "fortress_report_*.json")), reverse=True)
+                if fort_files:
+                    ft = datetime.fromtimestamp(Path(fort_files[0]).stat().st_mtime)
+                    last_run = ft.isoformat()
+                    last_run_source = "fortress_report"
+                    age_h = (now - ft).total_seconds() / 3600.0
+                    if age_h <= max_h:
+                        status = "fresh"
+                        ui_status = "fresh"
+                        stale_actionable = False
+            except Exception:
+                pass
+        if cron_ok is not None:
+            cron_iso = cron_ok.isoformat()
+            use_cron = True
+            if last_run:
+                try:
+                    use_cron = cron_ok >= datetime.fromisoformat(str(last_run))
+                except Exception:
+                    use_cron = True
+            if use_cron:
+                last_run = cron_iso
+                last_run_source = "cron_heartbeat" if last_run_source else "cron_heartbeat"
+                age_h = (now - cron_ok).total_seconds() / 3600.0
+                if age_h <= max_h:
+                    status = "fresh"
+                    ui_status = "fresh"
+                    stale_actionable = False
+                elif status != "err":
+                    status = "stale"
+                    if ui_status == "fresh":
+                        ui_status = "stale"
+        if cron_fail is not None and cron_ok is not None and cron_fail > cron_ok:
+            if status != "err":
+                status = "err"
+                ui_status = "err"
+                stale_actionable = True
+            if cron_fail_detail:
+                last_line = (last_line + " | cron: " + cron_fail_detail).strip(" |")[:200]
         row = {
             "id": key,
             "name": cfg["name"],
@@ -1054,6 +1214,7 @@ def get_agent_activity():
             "tier": tier,
             "stale_actionable": stale_actionable,
             "last_run": last_run,
+            "last_run_source": last_run_source,
             "last_activity": last_line,
             "flag": flag_map.get(key),
             "flag_enabled": _env_enabled(flag_map.get(key)),
@@ -1082,17 +1243,30 @@ def get_agent_activity():
     # Logical display order for operator UX: CORE first, then OPTIONAL, then EXT.
     tier_rank = {"required": 0, "optional": 1, "extended": 2}
     agents.sort(key=lambda a: (tier_rank.get(a.get("tier"), 9), str(a.get("name") or "").lower()))
+    cron_hb = {}
+    try:
+        from utils.cron_heartbeat import evaluate_heartbeat_health, load_manifest
+
+        cron_hb = evaluate_heartbeat_health(load_manifest())
+    except Exception as exc:
+        cron_hb = {"overall": "err", "error": str(exc)}
     return {
         "agents": agents,
         "timestamp": now.isoformat(),
         "market_open": market_open,
         "hidden_legacy_count": hidden_legacy,
         "hidden_stale_noncore_count": hidden_stale_noncore,
+        "cron_heartbeat_health": cron_hb,
     }
 
 
 def get_trading_performance():
     """Positions, decisions summary, win rate, per-strategy stats, hedging snapshot, recent trades, latest daily_signals summary."""
+    ttl = _cache_ttl_for_host("FORTRESS_PERFORMANCE_CACHE_SECONDS", 45.0, 25.0)
+    return _cached_json("trading_performance", ttl, _build_trading_performance)
+
+
+def _build_trading_performance() -> dict:
     perf = {
         "positions": [],
         "positions_count": 0,
@@ -1371,6 +1545,14 @@ def get_trading_performance():
             sm, smr = _strict_mode_live(rlive)
             perf["latest_screening"]["strict_mode"] = sm
             perf["latest_screening"]["strict_mode_reason"] = smr
+        except Exception:
+            pass
+        try:
+            sig_path = Path(files[0])
+            perf["latest_screening"]["source_file"] = sig_path.name
+            perf["latest_screening"].update(
+                _freshness_meta(age_hours=_file_age_hours(sig_path), stale_hours=SCREENING_STALE_HOURS)
+            )
         except Exception:
             pass
 
@@ -1767,9 +1949,121 @@ def _parse_iso_dt(value):
     try:
         if not value:
             return None
-        return datetime.fromisoformat(str(value))
+        raw = str(value).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone().replace(tzinfo=None)
+        return dt
     except Exception:
         return None
+
+
+def _file_age_hours(path: Path | None) -> float | None:
+    try:
+        if path is None or not path.exists():
+            return None
+        return (datetime.now() - datetime.fromtimestamp(path.stat().st_mtime)).total_seconds() / 3600.0
+    except Exception:
+        return None
+
+
+def _freshness_meta(*, age_hours: float | None, stale_hours: float) -> dict:
+    stale = age_hours is None or age_hours > stale_hours
+    return {
+        "age_hours": round(age_hours, 1) if age_hours is not None else None,
+        "stale": stale,
+        "stale_after_hours": stale_hours,
+    }
+
+
+def _env_feature_enabled(env_key: str) -> bool:
+    return str(os.getenv(env_key, "0")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _build_data_freshness_summary() -> dict:
+    """Operator-facing artifact ages — surfaces stale panels without hiding them."""
+    warnings: list[str] = []
+    items: list[dict] = []
+
+    def _row(label: str, path: Path | None, stale_h: float) -> None:
+        meta = _freshness_meta(age_hours=_file_age_hours(path), stale_hours=stale_h)
+        entry = {"label": label, "path": str(path.name) if path else None, **meta}
+        items.append(entry)
+        if meta["stale"]:
+            if path is None or meta["age_hours"] is None:
+                warnings.append(f"{label}: missing or never generated")
+            else:
+                warnings.append(f"{label}: {meta['age_hours']}h old (stale after {stale_h}h)")
+
+    def _row_optional(label: str, path: Path | None, stale_h: float, env_key: str) -> None:
+        if not _env_feature_enabled(env_key):
+            items.append(
+                {
+                    "label": label,
+                    "path": str(path.name) if path else None,
+                    "age_hours": _file_age_hours(path),
+                    "stale": False,
+                    "stale_after_hours": stale_h,
+                    "feature_disabled": True,
+                }
+            )
+            return
+        _row(label, path, stale_h)
+
+    sig_files = sorted(glob.glob(str(DATA_DIR / "daily_signals_*.json")), reverse=True)
+    _row("Latest screening", Path(sig_files[0]) if sig_files else None, SCREENING_STALE_HOURS)
+    _row("Screening meta", DATA_DIR / "last_screening_meta.json", SCREENING_STALE_HOURS)
+    _row("Regime params", DATA_DIR / "daily_risk_params.json", REGIME_STALE_HOURS)
+    _row("Sentiment velocity", DATA_DIR / "sentiment_velocity.json", 24.0)
+    _row("Fortress hedge report", Path(sorted(glob.glob(str(DATA_DIR / "fortress_report_*.json")), reverse=True)[0]) if glob.glob(str(DATA_DIR / "fortress_report_*.json")) else None, FORTRESS_REPORT_MAX_AGE_HOURS)
+    _row_optional("Options flow", DATA_DIR / "options_flow.json", 12.0, "FORTRESS_OPTIONS_FLOW_ENABLED")
+    _row_optional("Cross-asset signal", DATA_DIR / "cross_asset_signal.json", 12.0, "FORTRESS_CROSS_ASSET_ENABLED")
+
+    try:
+        from utils.cron_heartbeat import evaluate_heartbeat_health, load_manifest
+
+        hb = evaluate_heartbeat_health(load_manifest(), store_path=DATA_DIR / "cron_heartbeats.json")
+    except Exception as exc:
+        hb = {"overall": "err", "error": str(exc)[:200]}
+    if hb.get("overall") in ("fail", "warn"):
+        warnings.append(f"Cron heartbeats: {hb.get('overall')} ({len(hb.get('alerts') or [])} alert(s))")
+
+    return {
+        "overall_stale": any(i.get("stale") for i in items) or hb.get("overall") == "fail",
+        "items": items,
+        "warnings": warnings[:8],
+        "cron_heartbeat_health": hb,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+def _cron_heartbeat_times_for_agent(agent_id: str) -> tuple[datetime | None, datetime | None, str | None]:
+    """Return (last_success, last_failure, failure_detail) from cron heartbeats for this agent."""
+    try:
+        from utils.cron_heartbeat import read_store
+
+        jobs = read_store(DATA_DIR / "cron_heartbeats.json").get("jobs") or {}
+    except Exception:
+        return None, None, None
+    if not isinstance(jobs, dict):
+        return None, None, None
+    last_ok: datetime | None = None
+    last_fail: datetime | None = None
+    fail_detail: str | None = None
+    for job_name, mapped in CRON_JOB_TO_AGENT.items():
+        if mapped != agent_id:
+            continue
+        ent = jobs.get(job_name)
+        if not isinstance(ent, dict):
+            continue
+        ok_dt = _parse_iso_dt(ent.get("last_success_at"))
+        if ok_dt and (last_ok is None or ok_dt > last_ok):
+            last_ok = ok_dt
+        fail_dt = _parse_iso_dt(ent.get("last_failure_at"))
+        if fail_dt and (last_fail is None or fail_dt > last_fail):
+            last_fail = fail_dt
+            fail_detail = str(ent.get("last_failure_detail") or "")[:120] or None
+    return last_ok, last_fail, fail_detail
 
 
 def _latest_fortress_report_is_fresh(max_age_hours: float = 36.0) -> bool:
@@ -1858,7 +2152,16 @@ def _build_stabilization_monitor(
     drift_reason = str(drift_snapshot.get("reason") or "—")
     ratio = drift_snapshot.get("drift_ratio")
     ratio_s = f"{ratio}" if ratio is not None else "n/a"
-    if drift_alert:
+    if drift_reason == "no_recent_trading_activity":
+        items.append(
+            {
+                "id": "drift",
+                "label": "Performance drift (last saved report)",
+                "severity": "ok",
+                "detail": "No realized fills in lookback window — drift rollback suppressed",
+            }
+        )
+    elif drift_alert:
         items.append(
             {
                 "id": "drift",
@@ -2062,14 +2365,29 @@ def _build_go_live_scorecard(*, hs: dict, risk: dict, rollback: dict, perf: dict
         or 0
     )
     cand_n = int((screening or {}).get("candidates_found") or 0)
+    raw_prefilter = int((screening or {}).get("prefilter_passed") or cand_n or 0)
     skip_n = int((screening or {}).get("entry_skip") or (screening or {}).get("skip_count") or 0)
-    throughput_sev = "ok" if buy_n > 0 else ("warn" if cand_n == 0 else "fail")
+    screened = max(cand_n, raw_prefilter)
+    if buy_n > 0:
+        throughput_sev = "ok"
+    elif screened == 0:
+        throughput_sev = "warn"
+    else:
+        # Screen produced candidates but no BUY (RecursiveScreener L2, entry gate, or risk).
+        throughput_sev = "warn"
     checks.append(
         {
             "id": "entry_throughput",
             "label": "Entry throughput (latest screen)",
             "severity": throughput_sev,
-            "detail": f"candidates={cand_n}, buy={buy_n}, skip={skip_n}",
+            "detail": (
+                f"candidates={cand_n}, buy={buy_n}, skip={skip_n}, prefilter_passed={raw_prefilter}"
+                + (
+                    "; no BUY after screen (L2/entry/risk gates)"
+                    if buy_n == 0 and screened > 0
+                    else ""
+                )
+            ),
             "hard_gate": False,
         }
     )
@@ -2080,6 +2398,13 @@ def _build_go_live_scorecard(*, hs: dict, risk: dict, rollback: dict, perf: dict
         a for a in (activity.get("agents") or [])
         if a.get("tier") == "required" and (a.get("stale_actionable") or a.get("status") == "err")
     ]
+    if actionable and not _is_trading_day_window():
+        # Off-hours/weekend: log mtime staleness for cron/fortress is expected; heartbeats file is authoritative.
+        actionable = [
+            a for a in actionable
+            if a.get("id") not in {"cron_heartbeat", "fortress"}
+            or a.get("status") == "err"
+        ]
     rel_sev = "ok" if not actionable else "fail"
     checks.append(
         {
@@ -2149,6 +2474,73 @@ def _build_go_live_scorecard(*, hs: dict, risk: dict, rollback: dict, perf: dict
         }
     )
 
+    # Aggregated SYSTEM_RELIABILITY_SCORE (cron heartbeats + hedging error latch + ops autofix self-check).
+    rel_parts: list[str] = []
+    sys_score = "ok"
+    try:
+        from utils.cron_heartbeat import evaluate_heartbeat_health, load_manifest
+
+        hb = evaluate_heartbeat_health(load_manifest())
+        rel_parts.append(f"cron_heartbeat={hb.get('overall')} alerts={len(hb.get('alerts') or [])}")
+        if hb.get("overall") == "fail":
+            sys_score = "fail"
+        elif hb.get("overall") == "warn" and sys_score == "ok":
+            sys_score = "warn"
+    except Exception as exc:
+        rel_parts.append(f"cron_heartbeat_eval_error:{type(exc).__name__}")
+        sys_score = "warn"
+    try:
+        from utils.runtime_safety import read_state
+
+        if (read_state().get("hedging_execution_error") or {}).get("active"):
+            sys_score = "fail"
+            rel_parts.append("hedging_execution_error_active")
+    except Exception:
+        pass
+    try:
+        st_path = DATA_DIR / "ops_autofix_status.json"
+        if st_path.exists():
+            oa = _read_json(st_path, default={}) or {}
+            if oa.get("self_check_ok") is False:
+                sys_score = "fail"
+                rel_parts.append("ops_autofix_self_check_failed")
+    except Exception:
+        pass
+    checks.append(
+        {
+            "id": "system_reliability",
+            "label": "SYSTEM_RELIABILITY_SCORE",
+            "severity": sys_score,
+            "detail": "; ".join(rel_parts) if rel_parts else "ok",
+            "hard_gate": True,
+        }
+    )
+
+    # Regime freshness (soft gate on scorecard — hard block happens in pre_trade_gate during RTH).
+    rf_sev = "ok"
+    rf_detail = ""
+    try:
+        from utils.market_calendar import is_us_equity_rth_open
+        from utils.regime_freshness import regime_is_stale_for_rth
+
+        stale, why = regime_is_stale_for_rth()
+        open_rth = bool(is_us_equity_rth_open())
+        rf_detail = f"rth={open_rth}, stale={stale}, why={why}"
+        if open_rth and stale:
+            rf_sev = "fail"
+    except Exception as exc:
+        rf_sev = "warn"
+        rf_detail = str(exc)
+    checks.append(
+        {
+            "id": "regime_freshness",
+            "label": "REGIME_FRESHNESS",
+            "severity": rf_sev,
+            "detail": rf_detail or "ok",
+            "hard_gate": False,
+        }
+    )
+
     overall = "ok"
     hard_gate_failed = False
     for c in checks:
@@ -2188,6 +2580,11 @@ def _build_go_live_scorecard(*, hs: dict, risk: dict, rollback: dict, perf: dict
 
 
 def get_safety_status():
+    ttl = _cache_ttl_for_host("FORTRESS_SAFETY_CACHE_SECONDS", 45.0, 25.0)
+    return _cached_json("safety_status", ttl, _build_safety_status)
+
+
+def _build_safety_status():
     perf = get_trading_performance()
     account_equity = _safe_float(perf.get("account_total_value_usd"))
     risk = {}
@@ -2306,6 +2703,8 @@ def get_safety_status():
         "drift_report_age_hours": drift_report_age_hours,
         "stabilization": stabilization,
         "go_live_scorecard": go_live_scorecard,
+        "llm_api_health": _read_json(DATA_DIR / "earnings_llm_health.json", default={}),
+        "pipeline_health": _read_json(DATA_DIR / "screening_pipeline_health.json", default={}),
     }
 
 
@@ -3336,7 +3735,15 @@ def index():
     if not _setup_status()["setup_complete"]:
         return redirect(url_for("setup_page"))
     from flask import make_response
-    resp = make_response(render_template("command_center.html", version=_get_version()))
+    poll_core_ms, poll_heavy_ms = _dashboard_poll_intervals_ms()
+    resp = make_response(
+        render_template(
+            "command_center.html",
+            version=_get_version(),
+            poll_core_ms=poll_core_ms,
+            poll_heavy_ms=poll_heavy_ms,
+        )
+    )
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
     resp.headers['Pragma'] = 'no-cache'
     return resp
@@ -3675,6 +4082,10 @@ def api_runbooks():
 @app.route("/api/drift")
 def api_drift():
     try:
+        refresh = str(request.args.get("refresh", "")).strip().lower() in {"1", "true", "yes", "on"}
+        path = DATA_DIR / "drift_report.json"
+        if not refresh and path.exists():
+            return jsonify(_read_json(path, default={}))
         return jsonify(analyze_drift())
     except Exception as e:
         return jsonify({"timestamp": datetime.now().isoformat(), "drift_alert": None, "reason": str(e)}), 500
@@ -3829,7 +4240,10 @@ def api_regime_status():
         "critique_strictness": None,
         "risk_posture": None,
         "vix": None,
-        "generated_at": datetime.now().isoformat(),
+        "api_generated_at": datetime.now().isoformat(),
+        "generated_at": None,
+        "regime_age_hours": None,
+        "regime_stale": True,
     }
     try:
         rp = _safe_read_json(DATA_DIR / "daily_risk_params.json", {})
@@ -3838,6 +4252,12 @@ def api_regime_status():
             out["regime"] = str(rp.get("regime") or out["regime"])
             out["regime_confidence"] = float(rp.get("regime_confidence") or 0.0)
             out["regime_detected_at"] = rp.get("regime_detected_at")
+            detected = _parse_iso_dt(rp.get("regime_detected_at"))
+            if detected:
+                age_h = (datetime.now() - detected).total_seconds() / 3600.0
+                out["regime_age_hours"] = round(age_h, 1)
+                out["regime_stale"] = age_h > REGIME_STALE_HOURS
+                out["generated_at"] = rp.get("regime_detected_at")
             out["halt_new_entries"] = bool(g.get("halt_new_entries"))
             out["screener_min_score"] = g.get("screener_min_score")
             out["position_size_multiplier"] = g.get("position_size_multiplier")
@@ -3871,6 +4291,7 @@ def api_sentiment_velocity():
                     out["surging_count"] += 1
                 if cls == "COLLAPSING":
                     out["collapsing_count"] += 1
+        out.update(_freshness_meta(age_hours=_file_age_hours(DATA_DIR / "sentiment_velocity.json"), stale_hours=24.0))
     except Exception:
         pass
     return jsonify(out)
@@ -3912,8 +4333,9 @@ def api_options_flow():
                     }
                 )
             out["signals"] = parsed[-50:]
+        out.update(_freshness_meta(age_hours=_file_age_hours(DATA_DIR / "options_flow.json"), stale_hours=12.0))
     except Exception:
-        pass
+        out.update(_freshness_meta(age_hours=None, stale_hours=12.0))
     return jsonify(out)
 
 
@@ -3928,30 +4350,34 @@ def api_earnings_intel():
             positions = positions.get("positions", [])
         held = {str((p or {}).get("underlying_ticker") or (p or {}).get("ticker") or "").upper() for p in (positions or []) if isinstance(p, dict)}
         held.discard("")
-        parsed = []
-        for e in arr[-100:]:
+        by_symbol: dict[str, dict] = {}
+        for e in arr[-200:]:
             if not isinstance(e, dict):
                 continue
             a = e.get("analysis") if isinstance(e.get("analysis"), dict) else {}
-            verdict = str(a.get("verdict") or e.get("verdict") or "IN_LINE")
-            if "BEAT" in verdict:
-                out["beats_count"] += 1
-            if "MISS" in verdict:
-                out["misses_count"] += 1
             sym = str(e.get("symbol") or a.get("symbol") or "").upper()
-            parsed.append(
-                {
-                    "symbol": sym,
-                    "verdict": verdict,
-                    "recommended_action": a.get("recommended_action"),
-                    "revenue_vs_exp": a.get("revenue_vs_exp"),
-                    "guidance": a.get("guidance"),
-                    "ceo_tone": a.get("ceo_tone"),
-                    "top_concerns": a.get("top_concerns") if isinstance(a.get("top_concerns"), list) else [],
-                    "processed_at": e.get("generated_at") or e.get("processed_at"),
-                    "affects_open_position": sym in held,
-                }
-            )
+            if not sym:
+                continue
+            verdict = str(a.get("verdict") or e.get("verdict") or "IN_LINE")
+            by_symbol[sym] = {
+                "symbol": sym,
+                "verdict": verdict,
+                "recommended_action": a.get("recommended_action"),
+                "revenue_vs_exp": a.get("revenue_vs_exp"),
+                "guidance": a.get("guidance"),
+                "ceo_tone": a.get("ceo_tone"),
+                "top_concerns": a.get("top_concerns") if isinstance(a.get("top_concerns"), list) else [],
+                "processed_at": e.get("generated_at") or e.get("processed_at"),
+                "affects_open_position": sym in held,
+                "rules_fallback": bool(a.get("rules_fallback")),
+            }
+        parsed = sorted(by_symbol.values(), key=lambda x: str(x.get("processed_at") or ""))
+        for row in parsed:
+            v = str(row.get("verdict") or "")
+            if "BEAT" in v:
+                out["beats_count"] += 1
+            if "MISS" in v:
+                out["misses_count"] += 1
         out["entries"] = parsed[-50:]
         out["total"] = len(parsed)
         now = datetime.now(timezone.utc)
@@ -3963,6 +4389,7 @@ def api_earnings_intel():
                 and (now - _parse_iso(x.get("processed_at"))).total_seconds() <= 48 * 3600
             }
         )
+        out.update(_freshness_meta(age_hours=_file_age_hours(DATA_DIR / "earnings_intel.json"), stale_hours=48.0))
     except Exception:
         pass
     return jsonify(out)
@@ -4000,8 +4427,9 @@ def api_cross_asset():
                     "implication": row.get("implication"),
                 }
             out["instruments"] = inst
+        out.update(_freshness_meta(age_hours=_file_age_hours(DATA_DIR / "cross_asset_signal.json"), stale_hours=12.0))
     except Exception:
-        pass
+        out.update(_freshness_meta(age_hours=None, stale_hours=12.0))
     return jsonify(out)
 
 
@@ -4184,6 +4612,26 @@ def api_morning_briefing():
     return jsonify(out)
 
 
+def _earnings_llm_fallback_operational() -> bool:
+    """True when earnings intel completed recently via rules fallback (suppress stale xAI outage banner)."""
+    try:
+        h = _safe_read_json(DATA_DIR / "earnings_llm_health.json", {})
+        if not isinstance(h, dict):
+            return False
+        if h.get("error_events_1h"):
+            return False
+        raw = h.get("last_success_at")
+        if not raw:
+            return False
+        dt = _parse_iso(str(raw))
+        if not dt:
+            return False
+        age_h = (datetime.now(timezone.utc) - dt).total_seconds() / 3600.0
+        return age_h <= 48.0
+    except Exception:
+        return False
+
+
 @app.route("/api/alerts_feed")
 def api_alerts_feed():
     out = {"total_alerts": 0, "exit_risk_count": 0, "recent": [], "alert_line_count": 0, "distinct_recent_alerts": 0}
@@ -4191,9 +4639,21 @@ def api_alerts_feed():
         p = LOGS_DIR / "alerts.log"
         lines = _safe_tail(p, 5000)
         out["alert_line_count"] = len(lines)
+        earnings_fallback_ok = _earnings_llm_fallback_operational()
 
         def _alert_body(ln: str) -> str:
             s = re.sub(r"^\[[^\]]*\]\s*", "", ln).strip()
+            low = s.lower()
+            # Collapse xAI 403/429/credits earnings outage lines into one bucket for the banner.
+            if "earnings intel" in low and (
+                "llm/api failure" in low
+                or "permissiondenied" in low
+                or "ratelimit" in low
+                or "resource has been exhausted" in low
+            ):
+                if earnings_fallback_ok:
+                    return ""
+                return "Earnings intel: LLM provider unavailable (rules fallback active; check xAI credits/permissions or use DeepSeek)"
             return s[:280]
 
         tail = lines[-120:] if lines else []
@@ -4219,7 +4679,7 @@ def api_alerts_feed():
             m = re.search(r"\b[A-Z]{1,6}\b", ln)
             if m:
                 sym = m.group(0)
-            recent.append({"timestamp": "", "type": typ, "symbol": sym, "message": ln})
+            recent.append({"timestamp": "", "type": typ, "symbol": sym, "message": b})
             if len(recent) >= 16:
                 break
         recent.reverse()
@@ -4443,15 +4903,23 @@ def _run_recommendation_refresh():
                 pass
 
 
+def _recommendation_refresh_sleep_seconds() -> float:
+    """Shorter interval during trading window; long sleep off-hours to save CPU."""
+    if _is_trading_day_window():
+        return float(os.getenv("FORTRESS_RECOMMENDATION_REFRESH_MINUTES", "15")) * 60.0
+    return float(os.getenv("FORTRESS_RECOMMENDATION_REFRESH_OFFHOURS_MINUTES", "360")) * 60.0
+
+
 def _refresh_loop():
-    """Background: run recommendation refresh shortly after start, then every 15 min."""
+    """Background: recommendation agents on trading days; idle sleep off-hours/weekends."""
     time.sleep(20)
     while True:
-        try:
-            _run_recommendation_refresh()
-        except Exception:
-            pass
-        time.sleep(15 * 60)
+        if _is_trading_day_window():
+            try:
+                _run_recommendation_refresh()
+            except Exception:
+                pass
+        time.sleep(_recommendation_refresh_sleep_seconds())
 
 
 
@@ -4639,6 +5107,9 @@ if __name__ == "__main__":
     DATA_DIR.mkdir(exist_ok=True)
     port = int(os.environ.get("COMMAND_CENTER_PORT", "8083"))
     print(f"Command Center: http://0.0.0.0:{port}")
-    t = threading.Thread(target=_refresh_loop, daemon=True)
-    t.start()
+    if _background_refresh_enabled():
+        threading.Thread(target=_refresh_loop, daemon=True).start()
+        print("Background recommendation refresh: ON (set FORTRESS_DASHBOARD_BACKGROUND_REFRESH=0 to disable)")
+    else:
+        print("Background recommendation refresh: OFF (saves CPU; enable with FORTRESS_DASHBOARD_BACKGROUND_REFRESH=1)")
     app.run(host="0.0.0.0", port=port, debug=False)

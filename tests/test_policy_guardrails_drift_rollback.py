@@ -65,6 +65,7 @@ def test_maybe_trigger_rollback_reapplies_when_expired(drift_report: dict) -> No
         patch.object(pg, "_load_rollback_state", return_value=existing),
         patch.object(pg, "_save_rollback_state") as save,
         patch("utils.trust_ledger.append_trust_event") as append,
+        patch("utils.trading_activity.has_recent_trading_activity", return_value=True),
     ):
         out = pg.maybe_trigger_rollback_on_drift(drift_report)
     assert out is not None
