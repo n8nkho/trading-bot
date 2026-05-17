@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 import tempfile
 import time
+import types
 from pathlib import Path
 
 
@@ -24,6 +26,42 @@ def _write_unique_fixture(tmpdir: Path) -> Path:
     fixture = tmpdir / "headline_event_status_fixture.json"
     fixture.write_text(json.dumps(data), encoding="utf-8")
     return fixture
+
+
+def _install_dashboard_import_stubs() -> None:
+    """Keep this smoke focused when the cloud image has not installed web deps."""
+    if "flask" not in sys.modules:
+        flask = types.ModuleType("flask")
+
+        class _DummyFlask:
+            def __init__(self, *args, **kwargs):
+                self.config = {}
+
+            def route(self, *args, **kwargs):
+                return lambda func: func
+
+            def before_request(self, func):
+                return func
+
+        flask.Flask = _DummyFlask
+        flask.render_template = lambda *args, **kwargs: ""
+        flask.jsonify = lambda *args, **kwargs: args[0] if len(args) == 1 else list(args)
+        flask.make_response = lambda *args, **kwargs: args[0] if args else None
+        flask.redirect = lambda *args, **kwargs: None
+        flask.url_for = lambda *args, **kwargs: ""
+        flask.Response = lambda *args, **kwargs: None
+        flask.request = types.SimpleNamespace(
+            path="",
+            authorization=None,
+            headers={},
+            get_json=lambda *args, **kwargs: {},
+        )
+        sys.modules["flask"] = flask
+
+    if "flask_cors" not in sys.modules:
+        flask_cors = types.ModuleType("flask_cors")
+        flask_cors.CORS = lambda *args, **kwargs: None
+        sys.modules["flask_cors"] = flask_cors
 
 
 def main() -> int:
@@ -65,6 +103,7 @@ def main() -> int:
             print(f"[FAIL] expected at least one shadow row: {run_result}")
             return 1
 
+        _install_dashboard_import_stubs()
         from dashboard.command_center import get_headline_event_status
 
         status = get_headline_event_status()
