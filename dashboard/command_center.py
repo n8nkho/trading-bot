@@ -77,6 +77,13 @@ _DASH_PUBLIC_PATHS = frozenset({
 _DASH_PUBLIC_PREFIXES = ("/static/",)
 
 
+def _dashboard_basic_auth_valid() -> bool:
+    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
+    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
+    auth = request.authorization
+    return bool(user and pw and auth and auth.username == user and auth.password == pw)
+
+
 @app.before_request
 def _fortress_dashboard_basic_auth():
     user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
@@ -86,8 +93,7 @@ def _fortress_dashboard_basic_auth():
     path = request.path or ""
     if path in _DASH_PUBLIC_PATHS or any(path.startswith(p) for p in _DASH_PUBLIC_PREFIXES):
         return None
-    auth = request.authorization
-    if auth and auth.username == user and auth.password == pw:
+    if _dashboard_basic_auth_valid():
         return None
     return Response(
         "Authentication required",
@@ -1956,9 +1962,7 @@ SETUP_COMPLETE_FILE = DATA_DIR / "setup_complete"
 ENV_FILE = _ROOT / ".env"
 
 
-def _setup_status():
-    """Returns dict: setup_complete (bool), has_alpaca_keys (bool). Keys never logged."""
-    has_keys = False
+def _env_has_alpaca_keys() -> bool:
     if ENV_FILE.exists():
         try:
             text = ENV_FILE.read_text()
@@ -1970,9 +1974,32 @@ def _setup_status():
                     secret_val = line.split("=", 1)[1].strip().strip('"\'')
             if key_val and secret_val and "your_" not in key_val.lower() and "your_" not in secret_val.lower():
                 if len(key_val) > 10 and len(secret_val) > 10:
-                    has_keys = True
+                    return True
         except Exception:
             pass
+    return False
+
+
+def _setup_mutation_allowed(*, allow_pending_connection_test: bool = False) -> bool:
+    """
+    Allow unauthenticated setup only on a clean first run.
+
+    Once keys already exist or setup has been completed, changing credentials
+    requires dashboard Basic auth or FORTRESS_OPERATOR_TOKEN.
+    """
+    if _dashboard_basic_auth_valid():
+        return True
+    token = (os.environ.get("FORTRESS_OPERATOR_TOKEN") or "").strip()
+    if token and (request.headers.get("X-Operator-Token") or "").strip() == token:
+        return True
+    if allow_pending_connection_test and not SETUP_COMPLETE_FILE.exists():
+        return True
+    return (not SETUP_COMPLETE_FILE.exists()) and (not _env_has_alpaca_keys())
+
+
+def _setup_status():
+    """Returns dict: setup_complete (bool), has_alpaca_keys (bool). Keys never logged."""
+    has_keys = _env_has_alpaca_keys()
     done = SETUP_COMPLETE_FILE.exists()
     return {"setup_complete": done or has_keys, "has_alpaca_keys": has_keys}
 
@@ -2014,6 +2041,8 @@ def api_setup_status():
 def api_setup_save_keys():
     """Save Alpaca API key and secret to .env. Never logged or echoed."""
     try:
+        if not _setup_mutation_allowed():
+            return jsonify({"ok": False, "error": "Setup is already configured; authenticate to change keys."}), 403
         data = request.get_json(force=True, silent=True) or {}
         api_key = (data.get("api_key") or "").strip()
         secret_key = (data.get("secret_key") or "").strip()
@@ -2033,6 +2062,8 @@ def api_setup_save_keys():
 def api_setup_test_connection():
     """Test Alpaca connection. On success, mark setup complete."""
     try:
+        if not _setup_mutation_allowed(allow_pending_connection_test=True):
+            return jsonify({"ok": False, "error": "Setup is already configured; authenticate to test or change keys."}), 403
         from alpaca.trading.client import TradingClient
         os.environ.pop("ALPACA_API_KEY", None)
         os.environ.pop("ALPACA_SECRET_KEY", None)
