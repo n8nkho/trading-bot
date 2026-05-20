@@ -49,8 +49,8 @@ def fetch_broker_positions() -> tuple[list[dict[str, Any]] | None, str | None]:
     Returns (positions, error). positions is None only on failure (keys, import, API).
     Empty list means genuinely zero open positions at broker.
     """
-    key = (os.getenv("ALPACA_API_KEY") or "").strip()
-    sec = (os.getenv("ALPACA_SECRET_KEY") or "").strip()
+    key = (os.getenv("ALPACA_API_KEY") or os.getenv("APCA_API_KEY_ID") or "").strip()
+    sec = (os.getenv("ALPACA_SECRET_KEY") or os.getenv("APCA_API_SECRET_KEY") or "").strip()
     if not key or not sec:
         return None, "missing_alpaca_keys"
     try:
