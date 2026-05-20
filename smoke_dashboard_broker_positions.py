@@ -15,6 +15,43 @@ import types
 from pathlib import Path
 
 
+def _install_dashboard_import_stubs() -> None:
+    """Keep this smoke focused on dashboard position logic in minimal envs."""
+    flask = types.ModuleType("flask")
+
+    class FakeFlask:
+        def __init__(self, *args, **kwargs):
+            self.config = {}
+
+        def route(self, *args, **kwargs):
+            return lambda func: func
+
+        def before_request(self, func):
+            return func
+
+        def run(self, *args, **kwargs):
+            return None
+
+    class FakeResponse:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    flask.Flask = FakeFlask
+    flask.render_template = lambda *args, **kwargs: ""
+    flask.jsonify = lambda obj=None, *args, **kwargs: obj if obj is not None else {}
+    flask.make_response = lambda *args, **kwargs: args[0] if args else None
+    flask.request = types.SimpleNamespace(path="", authorization=None, args={}, json=None)
+    flask.redirect = lambda *args, **kwargs: None
+    flask.url_for = lambda endpoint, **kwargs: endpoint
+    flask.Response = FakeResponse
+    sys.modules.setdefault("flask", flask)
+
+    flask_cors = types.ModuleType("flask_cors")
+    flask_cors.CORS = lambda *args, **kwargs: None
+    sys.modules.setdefault("flask_cors", flask_cors)
+
+
 def _install_fake_yfinance() -> None:
     yf = types.ModuleType("yfinance")
     yf.download = lambda *args, **kwargs: None
@@ -50,6 +87,7 @@ def _install_fake_alpaca() -> list[tuple[str, str, bool]]:
 
 
 def test_dashboard_empty_broker_positions_do_not_fallback() -> None:
+    _install_dashboard_import_stubs()
     _install_fake_yfinance()
 
     import dashboard.command_center as cc
@@ -77,6 +115,7 @@ def test_dashboard_empty_broker_positions_do_not_fallback() -> None:
 
 
 def test_dashboard_falls_back_when_broker_fetch_fails() -> None:
+    _install_dashboard_import_stubs()
     _install_fake_yfinance()
 
     import dashboard.command_center as cc
