@@ -51,6 +51,32 @@ def _install_dashboard_import_stubs() -> None:
     flask_cors.CORS = lambda *args, **kwargs: None
     sys.modules.setdefault("flask_cors", flask_cors)
 
+    stubs = {
+        "utils.market_assets": {"require_market_assets": lambda: None},
+        "utils.policy_profile": {"get_profile_bundle": lambda: {}},
+        "utils.trust_ledger": {
+            "append_trust_event": lambda *args, **kwargs: None,
+            "enrich_trust_ledger_items": lambda items, *args, **kwargs: items,
+            "read_recent_trust_events": lambda *args, **kwargs: [],
+        },
+        "utils.operator_halt": {
+            "get_halt_state": lambda: {"halted": False},
+            "set_trading_halt": lambda *args, **kwargs: {"halted": bool(args[0]) if args else False},
+        },
+        "utils.alerts": {"send_operator_alert": lambda *args, **kwargs: None},
+        "utils.simple_daily_backtest": {
+            "read_backtest_snapshot": lambda *args, **kwargs: {},
+            "run_daily_momentum_backtest": lambda *args, **kwargs: {},
+        },
+        "utils.run_registry": {"summarize_screening_runs": lambda *args, **kwargs: {}},
+        "agents.drift_detector": {"analyze_drift": lambda *args, **kwargs: {}},
+    }
+    for module_name, attrs in stubs.items():
+        module = types.ModuleType(module_name)
+        for attr, value in attrs.items():
+            setattr(module, attr, value)
+        sys.modules.setdefault(module_name, module)
+
 
 def _install_fake_yfinance() -> None:
     yf = types.ModuleType("yfinance")
