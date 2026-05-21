@@ -2025,9 +2025,9 @@ def flush_pending_execution_queue() -> dict:
     """
     Submit all trades queued in ``data/pending_execution_queue.json`` (human-in-the-loop).
 
-    Clears the queue after processing (check logs / trust ledger for failures).
+    Removes successful submissions while retaining failures for a later retry.
     """
-    from utils.pending_execution_queue import clear_batches, load_batches
+    from utils.pending_execution_queue import clear_batches, load_batches, replace_batches
 
     batches = load_batches(DATA_DIR)
     if not batches:
@@ -2038,35 +2038,56 @@ def flush_pending_execution_queue() -> dict:
 
     async def _run_all():
         out = []
+        retained_batches = []
         for batch in batches:
             if not isinstance(batch, dict):
                 continue
             candidates = batch.get("candidates") or []
             trades = batch.get("trades") or []
+            retained_trades = []
             for trade in trades:
                 if isinstance(trade, dict):
-                    out.append(await submit_approved_screening_trade(trade, candidates, current_params))
-        return out
+                    status, processed_trade = await submit_approved_screening_trade(trade, candidates, current_params)
+                    out.append((status, processed_trade))
+                    if status == "failure":
+                        retained_trades.append(processed_trade if isinstance(processed_trade, dict) else trade)
+            if retained_trades:
+                retained_batch = dict(batch)
+                retained_batch["updated_at"] = datetime.now().isoformat()
+                retained_batch["trades"] = retained_trades
+                retained_batches.append(retained_batch)
+        return out, retained_batches
 
-    results = asyncio.run(_run_all())
+    results, retained_batches = asyncio.run(_run_all())
     succeeded = sum(1 for st, _ in results if st == "success")
     failed = sum(1 for st, _ in results if st == "failure")
-    clear_batches(DATA_DIR)
+    if retained_batches:
+        replace_batches(retained_batches, DATA_DIR)
+    else:
+        clear_batches(DATA_DIR)
     append_trust_event(
         "pending_execution_flushed",
         {
             "batches": len(batches),
             "executed": succeeded,
             "failed": failed,
+            "retained_for_retry": failed,
         },
     )
     logger.info(
-        "execute_pending: batches=%d trade_results success=%d fail=%d (queue cleared)",
+        "execute_pending: batches=%d trade_results success=%d fail=%d retained=%d",
         len(batches),
         succeeded,
         failed,
+        len(retained_batches),
     )
-    return {"ok": True, "batches": len(batches), "executed": succeeded, "failed": failed}
+    return {
+        "ok": True,
+        "batches": len(batches),
+        "executed": succeeded,
+        "failed": failed,
+        "retained_for_retry": failed,
+    }
 
 
 if __name__ == "__main__":
@@ -2465,13 +2486,14 @@ if __name__ == "__main__":
         policy = get_profile_bundle()
         exec_cfg = policy.get("execution") or {}
         max_trades_per_run = int(exec_cfg.get("sniper_max_trades_per_run") or os.getenv("SNIPER_MAX_TRADES_PER_RUN", "3"))
+        execution_mode = get_execution_mode()
         executed = 0
         approved = []
         rejected = []
         deferred_snipe_trades: list[dict] = []
 
         for opp in opportunities:
-            if executed >= max_trades_per_run:
+            if executed + len(deferred_snipe_trades) >= max_trades_per_run:
                 break
 
             ticker = str(opp.get("ticker") or "").strip().upper()
@@ -2516,6 +2538,23 @@ if __name__ == "__main__":
                 decision["shares"] = shares
                 decision["position_value"] = position_value
 
+            if execution_mode == "human_in_loop":
+                pending_trade = dict(decision)
+                pending_trade.update({
+                    "ticker": ticker,
+                    "trade_type": "STOCK",
+                    "shares": shares,
+                    "entry_price": entry_price,
+                    "position_size": position_value,
+                    "position_value": position_value,
+                    "source": "intraday_sniper",
+                    "timestamp": datetime.now().isoformat(),
+                })
+                deferred_snipe_trades.append(pending_trade)
+                portfolio_data["positions"].append({"ticker": ticker, "value": position_value, "sector": "Unknown"})
+                existing_tickers.add(ticker)
+                continue
+
             order_result = execute_buy_order(ticker, shares, entry_price)
             if order_result.get("success") and _order_is_filled(order_result):
                 order_id = order_result.get("order_id")
@@ -2536,7 +2575,7 @@ if __name__ == "__main__":
                 executed += 1
                 approved.append({"ticker": ticker, "shares": shares, "entry_price": entry_price, "order_id": order_id})
 
-        if get_execution_mode() == "human_in_loop" and deferred_snipe_trades:
+        if execution_mode == "human_in_loop" and deferred_snipe_trades:
             from utils.pending_execution_queue import append_pending_batch
 
             snipe_rid = f"snipe_{int(pytime.time())}"
@@ -2556,7 +2595,7 @@ if __name__ == "__main__":
                 },
             )
 
-        if get_execution_mode() == "human_in_loop":
+        if execution_mode == "human_in_loop":
             logger.info(
                 "Intraday sniper (human-in-the-loop): queued=%d rejected=%d strict_mode=%s — run: python orchestrator.py execute_pending",
                 len(deferred_snipe_trades),
