@@ -4,12 +4,17 @@
 from __future__ import annotations
 
 import os
+import runpy
 import sys
 import types
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
+
+
+DUMMY_SUBMITTED_ORDERS: list[object] = []
 
 
 def _stub_module(name: str, **attrs) -> types.ModuleType:
@@ -36,6 +41,26 @@ def _install_import_stubs() -> None:
     class DummyTradingClient:
         def __init__(self, *args, **kwargs):
             pass
+
+        def get_account(self):
+            return SimpleNamespace(
+                buying_power="1000000",
+                equity="100000",
+                cash="1000000",
+                portfolio_value="100000",
+            )
+
+        def get_all_positions(self):
+            return []
+
+        def submit_order(self, order_data):
+            DUMMY_SUBMITTED_ORDERS.append(order_data)
+            return SimpleNamespace(
+                id="smoke_order",
+                status="filled",
+                filled_qty=1,
+                filled_avg_price=10.0,
+            )
 
     class DummyRequest:
         def __init__(self, *args, **kwargs):
@@ -112,6 +137,73 @@ def _install_import_stubs() -> None:
         _stub_module(name, **attrs)
 
 
+def _exercise_snipe_hitl(repo_root: Path) -> None:
+    import agents.intraday_sniper as sniper
+    import agents.risk_guardian as risk_guardian
+    import utils.policy_profile as policy_profile
+
+    DUMMY_SUBMITTED_ORDERS.clear()
+    sniper.scan_intraday_opportunities = lambda portfolio_value: [
+        {"ticker": "HITL", "entry_price": 10.0, "metrics": {"volume_ratio": 3.0}}
+    ]
+    sniper.evaluate_quick_entry = lambda ticker, entry_price, metrics, portfolio_value: {
+        "ticker": ticker,
+        "action": "BUY",
+        "shares": 1,
+        "position_value": entry_price,
+        "confidence": 0.99,
+        "reason": "smoke buy",
+    }
+    risk_guardian.check_risk_limits = lambda portfolio_data, new_position, strict_mode=False: {"approved": True}
+    risk_guardian.get_risk_status = lambda: {"consecutive_losses": 0, "circuit_breaker_active": False}
+    policy_profile.get_profile_bundle = lambda: {"execution": {"sniper_max_trades_per_run": 1}}
+
+    old_argv = sys.argv[:]
+    old_cwd = Path.cwd()
+    saved_env = {
+        key: os.environ.get(key)
+        for key in (
+            "FORTRESS_EXECUTION_MODE",
+            "ALPACA_API_KEY",
+            "ALPACA_SECRET_KEY",
+            "ALPACA_BASE_URL",
+        )
+    }
+
+    with TemporaryDirectory() as tmp:
+        try:
+            os.chdir(tmp)
+            os.environ["FORTRESS_EXECUTION_MODE"] = "human_in_loop"
+            os.environ["ALPACA_API_KEY"] = "DUMMY"
+            os.environ["ALPACA_SECRET_KEY"] = "DUMMY"
+            os.environ["ALPACA_BASE_URL"] = "https://paper-api.alpaca.markets"
+            sys.argv = ["orchestrator.py", "snipe", "10000"]
+            try:
+                runpy.run_path(str(repo_root / "orchestrator.py"), run_name="__main__")
+            except SystemExit as exc:
+                assert exc.code in (0, None), exc.code
+
+            assert DUMMY_SUBMITTED_ORDERS == [], "snipe HITL must not submit broker orders"
+
+            queue_path = Path(tmp) / "data" / "pending_execution_queue.json"
+            queued = json.loads(queue_path.read_text(encoding="utf-8"))
+            batches = queued["batches"]
+            assert len(batches) == 1, queued
+            assert batches[0]["source"] == "intraday_sniper", queued
+            trades = batches[0]["trades"]
+            assert len(trades) == 1, trades
+            assert trades[0]["ticker"] == "HITL", trades
+            assert trades[0]["shares"] == 1, trades
+        finally:
+            sys.argv = old_argv
+            os.chdir(old_cwd)
+            for key, value in saved_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+
 def main() -> int:
     # Prevent import-time credential validation failures.
     os.environ.setdefault("APCA_API_KEY_ID", "DUMMY")
@@ -164,6 +256,8 @@ def main() -> int:
             assert retained[0]["execution_error"] == "simulated broker reject", retained
         finally:
             orch.DATA_DIR = old_data_dir
+
+    _exercise_snipe_hitl(Path(__file__).resolve().parent)
 
     print("[OK] smoke_hitl_execution_queue")
     return 0
