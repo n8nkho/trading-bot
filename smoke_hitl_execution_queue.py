@@ -4,8 +4,112 @@
 from __future__ import annotations
 
 import os
+import sys
+import types
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from tempfile import TemporaryDirectory
+
+
+def _stub_module(name: str, **attrs) -> types.ModuleType:
+    mod = types.ModuleType(name)
+    for key, value in attrs.items():
+        setattr(mod, key, value)
+    sys.modules[name] = mod
+    return mod
+
+
+def _install_import_stubs() -> None:
+    """Stub import-time dependencies that this focused smoke does not exercise."""
+    dateutil = _stub_module("dateutil")
+    parser = _stub_module("dateutil.parser", parse=lambda value: datetime.fromisoformat(str(value)))
+    dateutil.parser = parser
+
+    _stub_module("pytz", UTC=timezone.utc)
+    _stub_module("dotenv", load_dotenv=lambda *args, **kwargs: None)
+
+    alpaca = _stub_module("alpaca")
+    alpaca_trading = _stub_module("alpaca.trading")
+    alpaca.trading = alpaca_trading
+
+    class DummyTradingClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class DummyRequest:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    client_mod = _stub_module("alpaca.trading.client", TradingClient=DummyTradingClient)
+    requests_mod = _stub_module(
+        "alpaca.trading.requests",
+        MarketOrderRequest=DummyRequest,
+        GetOrdersRequest=DummyRequest,
+    )
+    enums_mod = _stub_module(
+        "alpaca.trading.enums",
+        OrderSide=SimpleNamespace(BUY="buy", SELL="sell"),
+        TimeInForce=SimpleNamespace(DAY="day", GTC="gtc"),
+        QueryOrderStatus=SimpleNamespace(CLOSED="closed", OPEN="open"),
+    )
+    alpaca_trading.client = client_mod
+    alpaca_trading.requests = requests_mod
+    alpaca_trading.enums = enums_mod
+
+    agent_stubs = {
+        "agents.screener_agent": {"run_screener": lambda: []},
+        "agents.entry_agent": {"evaluate_entry": lambda *args, **kwargs: []},
+        "agents.exit_monitor": {"monitor_positions": lambda *args, **kwargs: {}},
+        "agents.risk_guardian": {
+            "check_risk_limits": lambda *args, **kwargs: {"approved": True},
+            "get_risk_limits": lambda *args, **kwargs: {},
+            "get_risk_status": lambda *args, **kwargs: {},
+            "update_consecutive_losses": lambda *args, **kwargs: None,
+        },
+        "agents.performance_analyzer": {
+            "track_decision": lambda *args, **kwargs: None,
+            "load_current_params": lambda: {"stop_loss_pct": -2.0, "take_profit_pct": 15.0},
+        },
+        "agents.llama_watchdog": {
+            "run_watchdog": lambda *args, **kwargs: {},
+            "preload_models": lambda *args, **kwargs: None,
+            "is_emergency_mode": lambda *args, **kwargs: False,
+        },
+        "agents.document_analyst": {"quick_fundamental_check": lambda *args, **kwargs: {}},
+        "agents.intraday_sniper": {
+            "scan_intraday_opportunities": lambda *args, **kwargs: [],
+            "evaluate_quick_entry": lambda *args, **kwargs: {},
+        },
+    }
+    for name, attrs in agent_stubs.items():
+        _stub_module(name, **attrs)
+
+    util_stubs = {
+        "utils.grok_sentiment": {"check_twitter_sentiment": lambda *args, **kwargs: {}},
+        "utils.option_contract_schema": {"normalize_option_decision": lambda value: value},
+        "utils.policy_profile": {"get_profile_bundle": lambda: {"execution": {}}},
+        "utils.trust_ledger": {"append_trust_event": lambda *args, **kwargs: None},
+        "utils.run_registry": {
+            "log_screening_completed": lambda *args, **kwargs: None,
+            "log_screening_failed": lambda *args, **kwargs: None,
+            "log_screening_started": lambda *args, **kwargs: "smoke_run",
+        },
+        "utils.pre_trade_gate": {
+            "evaluate_pre_trade_submission": lambda *args, **kwargs: {"allowed": True},
+            "format_gate_block_message": lambda gate: "blocked",
+        },
+        "utils.cost_calculator": {
+            "get_daily_costs": lambda *args, **kwargs: {},
+            "get_monthly_projection": lambda *args, **kwargs: {},
+            "get_lifetime_costs": lambda *args, **kwargs: {},
+            "get_cost_per_trade": lambda *args, **kwargs: {},
+            "generate_cost_report": lambda *args, **kwargs: {},
+        },
+    }
+    for name, attrs in util_stubs.items():
+        _stub_module(name, **attrs)
 
 
 def main() -> int:
@@ -13,6 +117,8 @@ def main() -> int:
     os.environ.setdefault("APCA_API_KEY_ID", "DUMMY")
     os.environ.setdefault("APCA_API_SECRET_KEY", "DUMMY")
     os.environ.setdefault("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+
+    _install_import_stubs()
 
     import orchestrator as orch
     from utils.pending_execution_queue import append_pending_batch, load_batches
