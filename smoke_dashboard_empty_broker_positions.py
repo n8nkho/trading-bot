@@ -61,6 +61,14 @@ def _install_optional_import_stubs() -> None:
         yf.Ticker = lambda *args, **kwargs: types.SimpleNamespace(history=lambda *a, **k: None)
         sys.modules["yfinance"] = yf
 
+    try:
+        __import__("utils.simple_daily_backtest")
+    except ImportError:
+        simple_daily_backtest = types.ModuleType("utils.simple_daily_backtest")
+        simple_daily_backtest.read_backtest_snapshot = lambda *args, **kwargs: {}
+        simple_daily_backtest.run_daily_momentum_backtest = lambda *args, **kwargs: {}
+        sys.modules["utils.simple_daily_backtest"] = simple_daily_backtest
+
 
 def main() -> int:
     _install_optional_import_stubs()
