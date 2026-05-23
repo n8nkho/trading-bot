@@ -81,9 +81,11 @@ def analyze_drift() -> dict:
         json.dump(report, f, indent=2)
 
     try:
-        from utils.policy_guardrails import maybe_trigger_rollback_on_drift
+        from utils.policy_guardrails import maybe_clear_forced_rollback_on_recovery, maybe_trigger_rollback_on_drift
 
-        maybe_trigger_rollback_on_drift(report)
+        cleared = maybe_clear_forced_rollback_on_recovery(report)
+        if cleared is None:
+            maybe_trigger_rollback_on_drift(report)
     except Exception:
         pass
 

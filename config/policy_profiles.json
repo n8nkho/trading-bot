@@ -15,7 +15,11 @@
     "shadow_candidate_profile": "opportunistic",
     "auto_rollback_on_drift_alert": true,
     "rollback_target_profile": "capital_preservation",
-    "rollback_duration_hours": 168
+    "rollback_duration_hours": 168,
+    "rollback_min_duration_hours": 12,
+    "rollback_recovery_on_metrics": true,
+    "rollback_recovery_min_win_rate": 0.70,
+    "rollback_recovery_min_recent_avg_pnl": 0.0
   },
   "profiles": {
     "capital_preservation": {

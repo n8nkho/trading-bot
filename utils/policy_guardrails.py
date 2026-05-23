@@ -51,6 +51,136 @@ def _save_rollback_state(data: dict) -> None:
         json.dump(data, f, indent=2)
 
 
+def _parse_iso_dt(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        s = str(raw).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s[:26] if "+" not in s[10:] else s)
+        return dt.replace(tzinfo=None) if dt.tzinfo else dt
+    except Exception:
+        return None
+
+
+def _pnl_ledger_stats(*, window: int = 118) -> dict[str, float | int | None]:
+    """Win rate and avg PnL from data/pnl_ledger.jsonl (recent closed trades)."""
+    ledger = _ROOT / "data" / "pnl_ledger.jsonl"
+    pnls: list[float] = []
+    if ledger.exists():
+        try:
+            for line in ledger.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                pnls.append(float(row.get("pnl") or 0.0))
+        except Exception:
+            pass
+    if not pnls:
+        return {"count": 0, "win_rate": None, "avg_pnl": None}
+    sample = pnls[-window:]
+    wins = sum(1 for p in sample if p > 0)
+    return {
+        "count": len(sample),
+        "win_rate": wins / len(sample),
+        "avg_pnl": sum(sample) / len(sample),
+    }
+
+
+def meets_rollback_recovery_criteria(
+    drift_report: dict,
+    *,
+    state: dict | None = None,
+    guard: dict | None = None,
+) -> tuple[bool, str]:
+    """
+    Early exit from drift rollback when metrics recover — not only after fixed duration.
+
+    Clears when min hold elapsed AND any of:
+    - drift_alert cleared (recent window no longer deteriorating vs prior)
+    - positive expectancy: recent_avg_pnl > floor AND win_rate >= threshold
+    """
+    guard = guard or get_guardrails()
+    if not guard.get("rollback_recovery_on_metrics", True):
+        return False, "recovery_disabled"
+
+    state = state or _load_rollback_state()
+    forced = (state.get("forced_profile") or "").strip().lower()
+    reason = (state.get("forced_reason") or "").strip().lower()
+    if not forced or reason != "drift_alert":
+        return False, "no_active_drift_rollback"
+
+    forced_at = _parse_iso_dt(state.get("forced_at"))
+    min_hours = int(guard.get("rollback_min_duration_hours") or 12)
+    if forced_at and datetime.now() < forced_at + timedelta(hours=min_hours):
+        return False, f"min_duration_{min_hours}h"
+
+    if not drift_report.get("drift_alert"):
+        return True, "drift_alert_cleared"
+
+    try:
+        recent_avg = float(drift_report.get("recent_avg_pnl") or 0.0)
+    except (TypeError, ValueError):
+        recent_avg = 0.0
+    min_recent = float(guard.get("rollback_recovery_min_recent_avg_pnl") or 0.0)
+    min_wr = float(guard.get("rollback_recovery_min_win_rate") or 0.70)
+
+    stats = _pnl_ledger_stats()
+    win_rate = stats.get("win_rate")
+    if (
+        recent_avg > min_recent
+        and win_rate is not None
+        and float(win_rate) >= min_wr
+        and int(stats.get("count") or 0) >= 20
+    ):
+        return True, f"positive_expectancy_wr={float(win_rate):.3f}_recent_avg={recent_avg:.2f}"
+
+    snap = state.get("drift_snapshot") if isinstance(state.get("drift_snapshot"), dict) else {}
+    try:
+        snap_ratio = float(snap.get("drift_ratio")) if snap.get("drift_ratio") is not None else None
+        cur_ratio = float(drift_report.get("drift_ratio")) if drift_report.get("drift_ratio") is not None else None
+    except (TypeError, ValueError):
+        snap_ratio = cur_ratio = None
+    if snap_ratio is not None and cur_ratio is not None and cur_ratio >= snap_ratio + 0.20:
+        return True, f"drift_ratio_improved_{snap_ratio:.3f}_to_{cur_ratio:.3f}"
+
+    return False, "recovery_criteria_not_met"
+
+
+def maybe_clear_forced_rollback_on_recovery(drift_report: dict) -> dict | None:
+    """Clear drift rollback when recovery criteria met (metrics-driven, not calendar-only)."""
+    state = _load_rollback_state()
+    ok, reason = meets_rollback_recovery_criteria(drift_report, state=state)
+    if not ok:
+        return None
+
+    cleared = clear_forced_rollback()
+    cleared["recovery_reason"] = reason
+    cleared["recovery_drift"] = {
+        "drift_alert": drift_report.get("drift_alert"),
+        "recent_avg_pnl": drift_report.get("recent_avg_pnl"),
+        "prior_avg_pnl": drift_report.get("prior_avg_pnl"),
+        "drift_ratio": drift_report.get("drift_ratio"),
+    }
+
+    try:
+        from utils.trust_ledger import append_trust_event
+
+        append_trust_event(
+            "policy_rollback_cleared",
+            {
+                "reason": reason,
+                "drift_alert": drift_report.get("drift_alert"),
+                "recent_avg_pnl": drift_report.get("recent_avg_pnl"),
+                "drift_ratio": drift_report.get("drift_ratio"),
+            },
+        )
+    except Exception:
+        pass
+
+    return {"action": "rollback_cleared", "reason": reason, "state": cleared}
+
+
 def clear_forced_rollback() -> dict:
     """Remove forced profile override (returns new state)."""
     state = _load_rollback_state()

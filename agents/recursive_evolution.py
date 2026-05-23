@@ -145,6 +145,32 @@ def _phase1_self_diagnosis() -> dict[str, Any]:
             }
         )
 
+    try:
+        from utils.policy_guardrails import get_public_rollback_status, meets_rollback_recovery_criteria
+
+        rb = get_public_rollback_status()
+        if rb.get("forced_profile"):
+            drift = _read_json(DATA_DIR / "drift_report.json", {})
+            ok, rec_reason = meets_rollback_recovery_criteria(drift if isinstance(drift, dict) else {})
+            if ok:
+                issues.append(
+                    {
+                        "severity": "medium",
+                        "title": f"Drift rollback ({rb.get('forced_profile')}) — metrics support recovery",
+                        "fix": f"Auto-clear rollback: {rec_reason}; restore active profile throughput.",
+                    }
+                )
+            else:
+                issues.append(
+                    {
+                        "severity": "medium",
+                        "title": f"Drift rollback active: {rb.get('forced_profile')}",
+                        "fix": "Hold conservative profile until drift metrics recover or max duration elapses.",
+                    }
+                )
+    except Exception:
+        pass
+
     blockers = (brief.get("qa_checklist") or {}).get("critical_blockers") or []
     for b in blockers[:5]:
         issues.append({"severity": "medium", "title": str(b), "fix": "Track in optimization queue and re-check after next session."})
@@ -363,5 +389,20 @@ def run_recursive_evolution(*, data_dir: Path = DATA_DIR) -> dict[str, Any]:
     out_path = DATA_DIR / f"recursive_evolution_{ts}.json"
     out_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     logger.info("Recursive evolution cycle complete: %s", out_path)
+
+    policy_recovery: dict[str, Any] = {}
+    try:
+        from utils.policy_guardrails import maybe_clear_forced_rollback_on_recovery
+
+        drift = _read_json(DATA_DIR / "drift_report.json", {})
+        if isinstance(drift, dict) and drift:
+            cleared = maybe_clear_forced_rollback_on_recovery(drift)
+            if cleared:
+                policy_recovery = cleared
+                result["policy_recovery"] = policy_recovery
+                out_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning("Policy recovery hook failed: %s", e)
+
     return result
 
