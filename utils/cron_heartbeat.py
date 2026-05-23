@@ -106,6 +106,27 @@ def _weekday_only_job_off_hours(schedule: str) -> bool:
         return False
 
 
+def _rth_cron_outside_us_session(schedule: str) -> bool:
+    """Weekday jobs with 9-16 ET window are not expected outside ~9:30-16:00 RTH."""
+    sched = schedule or ""
+    if "9-16" not in sched or "1-5" not in sched:
+        return False
+    try:
+        from zoneinfo import ZoneInfo
+
+        now = datetime.now(ZoneInfo("America/New_York"))
+        if now.weekday() >= 5:
+            return False
+        mins = now.hour * 60 + now.minute
+        return mins < 9 * 60 + 30 or mins >= 16 * 60
+    except Exception:
+        return False
+
+
+def _job_expected_quiet(schedule: str) -> bool:
+    return _weekday_only_job_off_hours(schedule) or _rth_cron_outside_us_session(schedule)
+
+
 def evaluate_heartbeat_health(
     manifest: list[dict[str, Any]],
     *,
@@ -138,7 +159,7 @@ def evaluate_heartbeat_health(
                     last_ok = None
         sched = str(row.get("schedule") or "")
         if last_ok is None:
-            if _weekday_only_job_off_hours(sched):
+            if _job_expected_quiet(sched):
                 ok_jobs += 1
                 continue
             soft = str(os.getenv("FORTRESS_CRON_HEARTBEAT_SOFT_LAUNCH", "1")).strip().lower() in {
@@ -157,8 +178,8 @@ def evaluate_heartbeat_health(
             continue
         age_min = (now - last_ok).total_seconds() / 60.0
         if age_min > max_age_min:
-            # Weekday RTH cron lines (screener, regime, …): weekend staleness is expected.
-            if _weekday_only_job_off_hours(sched):
+            # Weekday RTH cron lines: weekend and off-session staleness is expected.
+            if _job_expected_quiet(sched):
                 ok_jobs += 1
                 continue
             alerts.append(

@@ -37,7 +37,11 @@ def test_analyze_drift_suppresses_alert_without_recent_activity(tmp_path, monkey
     monkeypatch.setattr(dd, "LEDGER", ledger)
     monkeypatch.setattr(dd, "OUT", out_path)
 
-    with patch("utils.policy_guardrails.maybe_trigger_rollback_on_drift") as trig:
+    with (
+        patch("utils.trading_activity.has_recent_trading_activity", return_value=False),
+        patch("utils.policy_guardrails.maybe_clear_forced_rollback_on_recovery", return_value=None),
+        patch("utils.policy_guardrails.maybe_trigger_rollback_on_drift") as trig,
+    ):
         report = dd.analyze_drift()
 
     assert report["drift_alert"] is False

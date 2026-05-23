@@ -2010,9 +2010,21 @@ def _build_data_freshness_summary() -> dict:
             return
         _row(label, path, stale_h)
 
+    meta_path = DATA_DIR / "last_screening_meta.json"
     sig_files = sorted(glob.glob(str(DATA_DIR / "daily_signals_*.json")), reverse=True)
-    _row("Latest screening", Path(sig_files[0]) if sig_files else None, SCREENING_STALE_HOURS)
-    _row("Screening meta", DATA_DIR / "last_screening_meta.json", SCREENING_STALE_HOURS)
+    sig_path = Path(sig_files[0]) if sig_files else None
+    # Prefer screening meta mtime when fresher — daily_signals_* can lag while screener ran today.
+    screening_path = meta_path if meta_path.is_file() else sig_path
+    if meta_path.is_file() and sig_path and sig_path.is_file():
+        try:
+            if meta_path.stat().st_mtime >= sig_path.stat().st_mtime:
+                screening_path = meta_path
+            else:
+                screening_path = sig_path
+        except OSError:
+            screening_path = meta_path
+    _row("Latest screening", screening_path, SCREENING_STALE_HOURS)
+    _row("Screening meta", meta_path if meta_path.is_file() else None, SCREENING_STALE_HOURS)
     _row("Regime params", DATA_DIR / "daily_risk_params.json", REGIME_STALE_HOURS)
     _row("Sentiment velocity", DATA_DIR / "sentiment_velocity.json", 24.0)
     _row("Fortress hedge report", Path(sorted(glob.glob(str(DATA_DIR / "fortress_report_*.json")), reverse=True)[0]) if glob.glob(str(DATA_DIR / "fortress_report_*.json")) else None, FORTRESS_REPORT_MAX_AGE_HOURS)
