@@ -14,6 +14,7 @@ from datetime import datetime, time, timedelta
 from dateutil import parser
 from pathlib import Path
 from collections import Counter
+from threading import RLock
 import pytz
 from dotenv import load_dotenv
 
@@ -241,6 +242,95 @@ def _compute_hedge_gate_metrics_from_report(report: dict) -> dict:
         "strategy_gate_details": strategy_gate_details,
     }
 
+
+def _current_strict_mode_state() -> dict:
+    """Return the live strict-mode state used by all entry execution paths."""
+    risk_status = get_risk_status()
+    consecutive_losses = int(risk_status.get("consecutive_losses") or 0)
+    circuit_breaker_active = bool(risk_status.get("circuit_breaker_active"))
+    strict_mode = circuit_breaker_active or consecutive_losses >= 2
+    if circuit_breaker_active:
+        reason = f"circuit_breaker_active (consecutive_losses={consecutive_losses})"
+    elif consecutive_losses >= 2:
+        reason = f"consecutive_losses={consecutive_losses} >= 2"
+    else:
+        reason = "normal"
+    return {
+        "risk_status": risk_status,
+        "consecutive_losses": consecutive_losses,
+        "circuit_breaker_active": circuit_breaker_active,
+        "strict_mode": strict_mode,
+        "strict_mode_reason": reason,
+    }
+
+
+def _current_hedge_gate_summary(strict_mode: bool) -> dict:
+    """Compute the latest fortress hedge gate state for strict-mode entry enforcement."""
+    hedge_gate_summary = {
+        "passed": None,
+        "applied_count": None,
+        "skipped_count": None,
+        "not_evaluated_count": None,
+        "bonds_target_present": None,
+        "total_known": None,
+        "strategy_gate_details": None,
+        "reason": "not_evaluated",
+    }
+    report, report_meta = _load_latest_fortress_report(max_age_hours=FORTRESS_REPORT_MAX_AGE_HOURS)
+    if report is None:
+        hedge_gate_summary["reason"] = "No fortress_report_*.json found"
+    elif not report_meta.get("is_fresh", True):
+        age = report_meta.get("age_hours")
+        hedge_gate_summary["passed"] = False if strict_mode else None
+        hedge_gate_summary["reason"] = (
+            f"Stale fortress report ({age}h old > {FORTRESS_REPORT_MAX_AGE_HOURS}h)"
+        )
+    else:
+        try:
+            hedge_gate_summary = _compute_hedge_gate_metrics_from_report(report)
+            hedge_gate_summary["reason"] = "hedging gate derived from latest fortress_report"
+        except Exception:
+            hedge_gate_summary["passed"] = None
+            hedge_gate_summary["reason"] = "Failed to compute hedge gate metrics from fortress report"
+    return hedge_gate_summary
+
+
+def _entry_hedge_gate_allows(strict_mode: bool) -> tuple[bool, dict]:
+    """Return whether entries may proceed under the current strict hedge gate."""
+    hedge_gate_summary = _current_hedge_gate_summary(strict_mode)
+    if strict_mode and not bool(hedge_gate_summary.get("passed")):
+        return False, hedge_gate_summary
+    return True, hedge_gate_summary
+
+
+def _risk_position_from_trade(trade: dict, candidates: list) -> tuple[dict | None, dict, str | None]:
+    """Build a risk-guardian position from a queued approved trade."""
+    try:
+        prepared = dict(trade)
+        trade_type = prepared.get("trade_type", "STOCK")
+        if trade_type == "OPTION" or prepared.get("type") == "OPTION":
+            prepared = normalize_option_decision(prepared)
+            unit_count = int(prepared.get("contracts") or 0)
+            entry_price = float(prepared.get("entry_price") or 0)
+            value = float(prepared.get("position_size") or (unit_count * entry_price * 100.0))
+            sector = get_sector_from_candidates(prepared.get("ticker"), candidates)
+        else:
+            unit_count = int(prepared.get("shares") or 0)
+            entry_price = float(prepared.get("entry_price") or 0)
+            value = float(prepared.get("position_size") or prepared.get("position_value") or (unit_count * entry_price))
+            sector = get_sector_from_candidates(prepared.get("ticker"), candidates)
+
+        if unit_count <= 0 or value <= 0:
+            return None, prepared, "invalid_position_size"
+        return {
+            "ticker": prepared["ticker"],
+            "size": unit_count,
+            "value": value,
+            "sector": sector,
+        }, prepared, None
+    except Exception as exc:
+        return None, dict(trade), f"risk_position_build_failed: {type(exc).__name__}: {str(exc)}"
+
 # Load environment variables
 load_dotenv()
 
@@ -265,6 +355,7 @@ DATA_DIR.mkdir(exist_ok=True)
 
 POSITIONS_FILE = DATA_DIR / "positions.json"
 PNL_LEDGER_FILE = DATA_DIR / "pnl_ledger.jsonl"
+_POSITIONS_FILE_LOCK = RLock()
 FORTRESS_REPORT_MAX_AGE_HOURS = float(os.getenv("FORTRESS_REPORT_MAX_AGE_HOURS", "30"))
 PORTFOLIO_VALUE = 50000  # Default portfolio value
 
@@ -652,7 +743,8 @@ async def submit_approved_screening_trade(trade, candidates, current_params):
         logger.info(f"Executing STOCK order: {ticker} x {shares} shares")
 
         order_result = await asyncio.to_thread(execute_buy_order, ticker, shares, entry_price)
-        order_result = _refresh_order_result(order_result)
+
+    order_result = _refresh_order_result(order_result)
 
     if order_result["success"] and _order_is_filled(order_result):
         label = option_symbol or trade.get("ticker") or "?"
@@ -801,48 +893,17 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         }
 
         # Risk-elimination mode: triggered only when the risk engine is already under stress.
-        risk_status = get_risk_status()
-        consecutive_losses = int(risk_status.get("consecutive_losses") or 0)
-        circuit_breaker_active = bool(risk_status.get("circuit_breaker_active"))
-        strict_mode = circuit_breaker_active or consecutive_losses >= 2
-        if circuit_breaker_active:
-            strict_mode_reason = f"circuit_breaker_active (consecutive_losses={consecutive_losses})"
-        elif consecutive_losses >= 2:
-            strict_mode_reason = f"consecutive_losses={consecutive_losses} >= 2"
-        else:
-            strict_mode_reason = "normal"
+        strict_state = _current_strict_mode_state()
+        risk_status = strict_state["risk_status"]
+        strict_mode = strict_state["strict_mode"]
+        strict_mode_reason = strict_state["strict_mode_reason"]
 
         effective_limits = get_risk_limits(strict_mode=strict_mode)
         effective_max_positions = effective_limits.get("max_positions", MAX_POSITIONS)
 
-        hedge_gate_summary = {
-            "passed": None,
-            "applied_count": None,
-            "skipped_count": None,
-            "not_evaluated_count": None,
-            "bonds_target_present": None,
-            "total_known": None,
-            "strategy_gate_details": None,
-            "reason": "not_evaluated",
-        }
         # Always attempt to compute hedge gate transparency for UI metrics.
         # Enforcement still happens only when `strict_mode` is True.
-        report, report_meta = _load_latest_fortress_report(max_age_hours=FORTRESS_REPORT_MAX_AGE_HOURS)
-        if report is None:
-            hedge_gate_summary["reason"] = "No fortress_report_*.json found"
-        elif not report_meta.get("is_fresh", True):
-            age = report_meta.get("age_hours")
-            hedge_gate_summary["passed"] = False if strict_mode else None
-            hedge_gate_summary["reason"] = (
-                f"Stale fortress report ({age}h old > {FORTRESS_REPORT_MAX_AGE_HOURS}h)"
-            )
-        else:
-            try:
-                hedge_gate_summary = _compute_hedge_gate_metrics_from_report(report)
-                hedge_gate_summary["reason"] = "hedging gate derived from latest fortress_report"
-            except Exception:
-                hedge_gate_summary["passed"] = None
-                hedge_gate_summary["reason"] = "Failed to compute hedge gate metrics from fortress report"
+        hedge_gate_summary = _current_hedge_gate_summary(strict_mode)
 
         # Attach strict/hedge gate telemetry to the daily signals screener meta.
         screening_meta["strict_mode"] = strict_mode
@@ -1788,6 +1849,15 @@ def load_positions():
         return []
 
 
+def _write_positions_atomic(positions):
+    """Atomically replace positions.json while callers hold _POSITIONS_FILE_LOCK."""
+    POSITIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = POSITIONS_FILE.with_name(f"{POSITIONS_FILE.name}.tmp")
+    with open(tmp_path, 'w') as f:
+        json.dump(positions, f, indent=2)
+    os.replace(tmp_path, POSITIONS_FILE)
+
+
 def add_position(position):
     """
     Add a new position to data/positions.json.
@@ -1796,17 +1866,17 @@ def add_position(position):
         position: Position dict with ticker, shares, entry_price, etc.
     """
     try:
-        # Load existing positions
-        positions = load_positions()
+        with _POSITIONS_FILE_LOCK:
+            # Load existing positions
+            positions = load_positions()
+
+            # Add new position
+            positions.append(position)
+
+            # Save back to file as a list
+            _write_positions_atomic(positions)
         
-        # Add new position
-        positions.append(position)
-        
-        # Save back to file as a list
-        with open(POSITIONS_FILE, 'w') as f:
-            json.dump(positions, f, indent=2)
-        
-        logger.info(f"Added position: {position['ticker']} - {position['shares']} shares @ ${position['entry_price']:.2f}")
+        logger.info(f"Added position: {position.get('ticker')} - {position.get('shares', position.get('qty'))} units")
         
     except Exception as e:
         logger.error(f"Error adding position: {type(e).__name__}: {str(e)}")
@@ -1820,15 +1890,15 @@ def remove_position(ticker):
         ticker: Stock ticker to remove
     """
     try:
-        # Load existing positions
-        positions = load_positions()
-        
-        # Remove position
-        positions = [p for p in positions if p['ticker'] != ticker]
-        
-        # Save back to file as a list
-        with open(POSITIONS_FILE, 'w') as f:
-            json.dump(positions, f, indent=2)
+        with _POSITIONS_FILE_LOCK:
+            # Load existing positions
+            positions = load_positions()
+
+            # Remove position
+            positions = [p for p in positions if p['ticker'] != ticker]
+
+            # Save back to file as a list
+            _write_positions_atomic(positions)
         
         logger.info(f"Removed position: {ticker}")
         
@@ -1846,32 +1916,32 @@ def update_position_quantity(ticker, qty_sold, tier=None):
         tier: Optional tier name (e.g. 'tier1', 'tier2', 'tier3') to mark as sold
     """
     try:
-        # Load existing positions
-        positions = load_positions()
-        
-        # Update position
-        for pos in positions:
-            if pos['ticker'] == ticker:
-                # Handle both 'shares' and 'qty' keys
-                old_qty = pos.get('shares') or pos.get('qty', 0)
-                new_qty = old_qty - qty_sold
-                
-                # Update both keys if they exist
-                if 'shares' in pos:
-                    pos['shares'] = new_qty
-                if 'qty' in pos:
-                    pos['qty'] = new_qty
+        with _POSITIONS_FILE_LOCK:
+            # Load existing positions
+            positions = load_positions()
 
-                # Mark tier as sold so we don't repeatedly sell the same tranche.
-                if tier and 'tiers_sold' in pos and isinstance(pos['tiers_sold'], dict):
-                    pos['tiers_sold'][tier] = True
-                
-                logger.info(f"Updated position: {ticker} - {old_qty} -> {new_qty} shares")
-                break
-        
-        # Save back to file as a list
-        with open(POSITIONS_FILE, 'w') as f:
-            json.dump(positions, f, indent=2)
+            # Update position
+            for pos in positions:
+                if pos['ticker'] == ticker:
+                    # Handle both 'shares' and 'qty' keys
+                    old_qty = pos.get('shares') or pos.get('qty', 0)
+                    new_qty = old_qty - qty_sold
+
+                    # Update both keys if they exist
+                    if 'shares' in pos:
+                        pos['shares'] = new_qty
+                    if 'qty' in pos:
+                        pos['qty'] = new_qty
+
+                    # Mark tier as sold so we don't repeatedly sell the same tranche.
+                    if tier and 'tiers_sold' in pos and isinstance(pos['tiers_sold'], dict):
+                        pos['tiers_sold'][tier] = True
+
+                    logger.info(f"Updated position: {ticker} - {old_qty} -> {new_qty} shares")
+                    break
+
+            # Save back to file as a list
+            _write_positions_atomic(positions)
         
     except Exception as e:
         logger.error(f"Error updating position quantity: {type(e).__name__}: {str(e)}")
@@ -2036,6 +2106,12 @@ def flush_pending_execution_queue() -> dict:
 
     current_params = load_current_params()
 
+    def _failure(trade: dict, reason: str) -> tuple[str, dict]:
+        failed = dict(trade)
+        failed["executed"] = False
+        failed["execution_error"] = reason
+        return ("failure", failed)
+
     async def _run_all():
         out = []
         for batch in batches:
@@ -2044,8 +2120,62 @@ def flush_pending_execution_queue() -> dict:
             candidates = batch.get("candidates") or []
             trades = batch.get("trades") or []
             for trade in trades:
-                if isinstance(trade, dict):
-                    out.append(await submit_approved_screening_trade(trade, candidates, current_params))
+                if not isinstance(trade, dict):
+                    continue
+
+                strict_state = _current_strict_mode_state()
+                strict_mode = strict_state["strict_mode"]
+                hedge_allowed, hedge_gate_summary = _entry_hedge_gate_allows(strict_mode)
+                if not hedge_allowed:
+                    reason = hedge_gate_summary.get("reason") or "hedge gate failed"
+                    logger.warning("execute_pending: strict hedge gate rejected %s: %s", trade.get("ticker"), reason)
+                    out.append(_failure(trade, f"HEDGE_GATE_FAILED: {reason}"))
+                    continue
+
+                account_info = get_account_info()
+                if not account_info:
+                    out.append(_failure(trade, "Failed to get account info"))
+                    continue
+
+                effective_limits = get_risk_limits(strict_mode=strict_mode)
+                effective_max_positions = effective_limits.get("max_positions", MAX_POSITIONS)
+                if account_info.get("position_count", 0) >= effective_max_positions:
+                    out.append(_failure(trade, f"Position limit reached ({effective_max_positions})"))
+                    continue
+
+                risk_position, prepared_trade, error = _risk_position_from_trade(trade, candidates)
+                if error:
+                    out.append(_failure(trade, error))
+                    continue
+
+                required_capital = float(risk_position.get("value") or 0) * BUYING_POWER_BUFFER
+                if account_info.get("buying_power", 0) < required_capital:
+                    out.append(_failure(prepared_trade, "Insufficient buying power"))
+                    continue
+
+                portfolio_value = float(
+                    account_info.get("portfolio_value") or account_info.get("equity") or PORTFOLIO_VALUE
+                )
+                portfolio_data = build_portfolio_data(load_positions(), portfolio_value)
+                risk_check = check_risk_limits(portfolio_data, risk_position, strict_mode=strict_mode)
+                if not risk_check.get("approved"):
+                    out.append(_failure(prepared_trade, risk_check.get("reason") or "risk_rejected"))
+                    continue
+
+                if "adjusted_size" in risk_check:
+                    adjusted_size = int(risk_check["adjusted_size"])
+                    if adjusted_size < 1:
+                        out.append(_failure(prepared_trade, "Risk adjustment reduced position below 1 unit"))
+                        continue
+                    if prepared_trade.get("trade_type") == "OPTION" or prepared_trade.get("type") == "OPTION":
+                        prepared_trade["contracts"] = adjusted_size
+                        prepared_trade["position_size"] = adjusted_size * float(prepared_trade.get("entry_price") or 0) * 100
+                    else:
+                        prepared_trade["shares"] = adjusted_size
+                        prepared_trade["position_size"] = adjusted_size * float(prepared_trade.get("entry_price") or 0)
+                    prepared_trade["risk_adjusted"] = True
+                prepared_trade["risk_check"] = risk_check
+                out.append(await submit_approved_screening_trade(prepared_trade, candidates, current_params))
         return out
 
     results = asyncio.run(_run_all())
@@ -2447,11 +2577,16 @@ if __name__ == "__main__":
             logger.info("No opportunities found")
             sys.exit(0)
 
-        # Risk profile (match daily strict-mode behavior)
-        risk_status = get_risk_status()
-        consecutive_losses = int(risk_status.get("consecutive_losses") or 0)
-        circuit_breaker_active = bool(risk_status.get("circuit_breaker_active"))
-        strict_mode = circuit_breaker_active or consecutive_losses >= 2
+        # Risk profile and hedge gate (match daily strict-mode behavior)
+        strict_state = _current_strict_mode_state()
+        strict_mode = strict_state["strict_mode"]
+        hedge_allowed, hedge_gate_summary = _entry_hedge_gate_allows(strict_mode)
+        if not hedge_allowed:
+            logger.warning(
+                "Intraday sniper: strict hedge gate blocked entries: %s",
+                hedge_gate_summary.get("reason") or "hedge gate failed",
+            )
+            sys.exit(0)
 
         account_info = get_account_info()
         if not account_info:
@@ -2461,17 +2596,26 @@ if __name__ == "__main__":
         current_positions = load_positions()
         portfolio_data = build_portfolio_data(current_positions, portfolio_value)
         existing_tickers = {str(p.get("ticker") or "").upper() for p in current_positions if p.get("ticker")}
+        try:
+            if alpaca_client is not None:
+                for broker_pos in alpaca_client.get_all_positions():
+                    symbol = str(getattr(broker_pos, "symbol", "") or "").upper()
+                    if symbol:
+                        existing_tickers.add(symbol)
+        except Exception as exc:
+            logger.warning("Intraday sniper: could not refresh broker position symbols: %s", exc)
 
         policy = get_profile_bundle()
         exec_cfg = policy.get("execution") or {}
         max_trades_per_run = int(exec_cfg.get("sniper_max_trades_per_run") or os.getenv("SNIPER_MAX_TRADES_PER_RUN", "3"))
+        mode = get_execution_mode()
         executed = 0
         approved = []
         rejected = []
         deferred_snipe_trades: list[dict] = []
 
         for opp in opportunities:
-            if executed >= max_trades_per_run:
+            if executed + len(deferred_snipe_trades) >= max_trades_per_run:
                 break
 
             ticker = str(opp.get("ticker") or "").strip().upper()
@@ -2512,11 +2656,35 @@ if __name__ == "__main__":
 
             if "adjusted_size" in risk_check:
                 shares = int(risk_check["adjusted_size"])
+                if shares < 1:
+                    rejected.append({"ticker": ticker, "reason": "risk_adjusted_below_minimum_size"})
+                    continue
                 position_value = shares * entry_price
                 decision["shares"] = shares
                 decision["position_value"] = position_value
 
+            if mode == "human_in_loop":
+                deferred_trade = {
+                    "ticker": ticker,
+                    "action": "BUY",
+                    "trade_type": "STOCK",
+                    "shares": shares,
+                    "entry_price": entry_price,
+                    "position_size": position_value,
+                    "confidence": decision.get("confidence"),
+                    "reason": decision.get("reason"),
+                    "reasoning": decision.get("reasoning") or decision.get("reason"),
+                    "risk_check": risk_check,
+                    "timestamp": datetime.now().isoformat(),
+                    "source": "intraday_sniper",
+                }
+                deferred_snipe_trades.append(deferred_trade)
+                portfolio_data["positions"].append({"ticker": ticker, "value": position_value, "sector": "Unknown"})
+                existing_tickers.add(ticker)
+                continue
+
             order_result = execute_buy_order(ticker, shares, entry_price)
+            order_result = _refresh_order_result(order_result)
             if order_result.get("success") and _order_is_filled(order_result):
                 order_id = order_result.get("order_id")
                 add_position({
@@ -2536,7 +2704,7 @@ if __name__ == "__main__":
                 executed += 1
                 approved.append({"ticker": ticker, "shares": shares, "entry_price": entry_price, "order_id": order_id})
 
-        if get_execution_mode() == "human_in_loop" and deferred_snipe_trades:
+        if mode == "human_in_loop" and deferred_snipe_trades:
             from utils.pending_execution_queue import append_pending_batch
 
             snipe_rid = f"snipe_{int(pytime.time())}"
@@ -2556,7 +2724,7 @@ if __name__ == "__main__":
                 },
             )
 
-        if get_execution_mode() == "human_in_loop":
+        if mode == "human_in_loop":
             logger.info(
                 "Intraday sniper (human-in-the-loop): queued=%d rejected=%d strict_mode=%s — run: python orchestrator.py execute_pending",
                 len(deferred_snipe_trades),
