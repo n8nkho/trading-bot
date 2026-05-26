@@ -123,6 +123,14 @@ def _phase1_self_diagnosis() -> dict[str, Any]:
     analyst = _latest_json("analyst_consensus_*.json")
     issues: list[dict[str, Any]] = []
 
+    try:
+        from utils.integrity_diagnostics import issues_for_phase1, run_integrity_scan
+
+        integrity = run_integrity_scan(log=True)
+        issues.extend(issues_for_phase1(integrity))
+    except Exception as e:
+        logger.warning("Integrity scan failed: %s", e)
+
     buy_recs = [
         r
         for r in (analyst.get("recommendations") or [])
@@ -144,32 +152,6 @@ def _phase1_self_diagnosis() -> dict[str, Any]:
                 "fix": "Verify recent losses and reset only after review; keep paper mode until streak normalizes.",
             }
         )
-
-    try:
-        from utils.policy_guardrails import get_public_rollback_status, meets_rollback_recovery_criteria
-
-        rb = get_public_rollback_status()
-        if rb.get("forced_profile"):
-            drift = _read_json(DATA_DIR / "drift_report.json", {})
-            ok, rec_reason = meets_rollback_recovery_criteria(drift if isinstance(drift, dict) else {})
-            if ok:
-                issues.append(
-                    {
-                        "severity": "medium",
-                        "title": f"Drift rollback ({rb.get('forced_profile')}) — metrics support recovery",
-                        "fix": f"Auto-clear rollback: {rec_reason}; restore active profile throughput.",
-                    }
-                )
-            else:
-                issues.append(
-                    {
-                        "severity": "medium",
-                        "title": f"Drift rollback active: {rb.get('forced_profile')}",
-                        "fix": "Hold conservative profile until drift metrics recover or max duration elapses.",
-                    }
-                )
-    except Exception:
-        pass
 
     blockers = (brief.get("qa_checklist") or {}).get("critical_blockers") or []
     for b in blockers[:5]:
