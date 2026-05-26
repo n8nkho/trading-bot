@@ -140,3 +140,54 @@ def status_dict() -> dict[str, Any]:
         "pending_agent_review": [x for x in list_pending() if x.get("disposition") == DISPOSITION_PENDING_AGENT],
         "pending_human_go": [x for x in list_pending() if x.get("disposition") == DISPOSITION_PENDING_HUMAN],
     }
+
+
+DISPOSITION_DISMISSED = "dismissed"
+
+
+def set_agent_assessment(
+    item_id: str,
+    *,
+    worth_implementing: bool,
+    rationale: str,
+    proposed_implementation: str = "",
+    reviewer: str = "cursor_agent",
+) -> dict[str, Any]:
+    queue = load_queue()
+    for i, item in enumerate(queue.get("items") or []):
+        if item.get("id") != item_id:
+            continue
+        item["agent_assessment"] = {
+            "worth_implementing": bool(worth_implementing),
+            "rationale": rationale[:4000],
+            "proposed_implementation": proposed_implementation[:8000],
+            "reviewer": reviewer,
+            "assessed_utc": _now_iso(),
+        }
+        if worth_implementing:
+            item["disposition"] = DISPOSITION_PENDING_HUMAN
+        else:
+            item["disposition"] = DISPOSITION_DISMISSED
+            item["status"] = STATUS_CLOSED
+            item["closed_reason"] = "agent_dismissed"
+        item["updated_utc"] = _now_iso()
+        queue["items"][i] = item
+        save_queue(queue)
+        return item
+    raise KeyError(f"item_not_found:{item_id}")
+
+
+def mark_implemented(item_id: str, *, note: str = "") -> dict[str, Any]:
+    queue = load_queue()
+    for i, item in enumerate(queue.get("items") or []):
+        if item.get("id") != item_id:
+            continue
+        item["status"] = STATUS_IMPLEMENTED
+        item["disposition"] = "auto_resolved"
+        item["implemented_utc"] = _now_iso()
+        item["implementation_note"] = note[:2000]
+        item["updated_utc"] = _now_iso()
+        queue["items"][i] = item
+        save_queue(queue)
+        return item
+    raise KeyError(f"item_not_found:{item_id}")

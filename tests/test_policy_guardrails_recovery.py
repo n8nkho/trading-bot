@@ -47,6 +47,25 @@ class TestPolicyGuardrailsRecovery(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("min_duration", reason)
 
+    def test_high_win_rate_uses_shorter_min_duration(self):
+        guard = {
+            **self.guard,
+            "rollback_high_wr_min_duration_hours": 4,
+            "rollback_trigger_suppress_win_rate": 0.80,
+        }
+        state = dict(self.active_state)
+        state["forced_at"] = (datetime.now() - timedelta(hours=5)).isoformat()
+        drift = {
+            "drift_alert": True,
+            "recent_avg_pnl": 3.88,
+            "prior_avg_pnl": 8.38,
+            "drift_ratio": -0.54,
+        }
+        with patch.object(pg, "_pnl_ledger_stats", return_value={"count": 118, "win_rate": 0.873, "avg_pnl": 10.0}):
+            ok, reason = pg.meets_rollback_recovery_criteria(drift, state=state, guard=guard)
+        self.assertTrue(ok)
+        self.assertTrue(str(reason).startswith("positive_expectancy"))
+
 
 if __name__ == "__main__":
     unittest.main()

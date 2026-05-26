@@ -112,6 +112,10 @@ def meets_rollback_recovery_criteria(
 
     forced_at = _parse_iso_dt(state.get("forced_at"))
     min_hours = int(guard.get("rollback_min_duration_hours") or 12)
+    stats = _pnl_ledger_stats()
+    win_rate = stats.get("win_rate")
+    if win_rate is not None and float(win_rate) >= float(guard.get("rollback_trigger_suppress_win_rate") or 0.80):
+        min_hours = int(guard.get("rollback_high_wr_min_duration_hours") or 4)
     if forced_at and datetime.now() < forced_at + timedelta(hours=min_hours):
         return False, f"min_duration_{min_hours}h"
 
@@ -125,8 +129,6 @@ def meets_rollback_recovery_criteria(
     min_recent = float(guard.get("rollback_recovery_min_recent_avg_pnl") or 0.0)
     min_wr = float(guard.get("rollback_recovery_min_win_rate") or 0.70)
 
-    stats = _pnl_ledger_stats()
-    win_rate = stats.get("win_rate")
     if (
         recent_avg > min_recent
         and win_rate is not None
@@ -240,6 +242,58 @@ def _forced_rollback_still_active(existing: dict, *, target: str) -> bool:
         return True
 
 
+def should_trigger_rollback_on_drift(
+    drift_report: dict,
+    *,
+    guard: dict | None = None,
+) -> tuple[bool, str]:
+    """
+    Gate drift rollback — ticket-size compression alone must not lock capital_preservation
+    when ledger win rate and recent avg PnL still show positive expectancy.
+    """
+    guard = guard or get_guardrails()
+    if not guard.get("auto_rollback_on_drift_alert", True):
+        return False, "auto_rollback_disabled"
+    if not drift_report.get("drift_alert"):
+        return False, "no_drift_alert"
+
+    if str(drift_report.get("reason") or "") == "no_recent_trading_activity":
+        return False, "no_recent_trading_activity"
+
+    try:
+        from utils.trading_activity import has_recent_trading_activity
+
+        if not has_recent_trading_activity():
+            return False, "no_recent_trading_activity"
+    except Exception:
+        pass
+
+    try:
+        recent_avg = float(drift_report.get("recent_avg_pnl") or 0.0)
+    except (TypeError, ValueError):
+        recent_avg = 0.0
+
+    stats = _pnl_ledger_stats()
+    win_rate = stats.get("win_rate")
+    wr_f = float(win_rate) if win_rate is not None else None
+    suppress_wr = float(guard.get("rollback_trigger_suppress_win_rate") or 0.80)
+    min_wr = float(guard.get("rollback_trigger_min_win_rate") or 0.75)
+
+    if wr_f is not None and wr_f >= suppress_wr and recent_avg > 0:
+        return False, f"high_win_rate_positive_expectancy_wr={wr_f:.3f}"
+
+    if wr_f is not None and wr_f >= min_wr and recent_avg > 0:
+        return False, f"win_rate_floor_positive_recent_avg_wr={wr_f:.3f}"
+
+    if recent_avg < 0:
+        return True, "negative_recent_avg_pnl"
+
+    if wr_f is not None and wr_f < min_wr:
+        return True, f"win_rate_below_floor_wr={wr_f:.3f}"
+
+    return False, "ticket_compression_only"
+
+
 def maybe_trigger_rollback_on_drift(drift_report: dict) -> dict | None:
     """
     If drift_alert and guardrails.auto_rollback_on_drift_alert, force safer profile.
@@ -249,21 +303,9 @@ def maybe_trigger_rollback_on_drift(drift_report: dict) -> dict | None:
     or append trust events (avoids spam when /api/drift runs on every dashboard refresh).
     """
     guard = get_guardrails()
-    if not guard.get("auto_rollback_on_drift_alert", True):
+    ok, gate_reason = should_trigger_rollback_on_drift(drift_report, guard=guard)
+    if not ok:
         return None
-    if not drift_report.get("drift_alert"):
-        return None
-
-    if str(drift_report.get("reason") or "") == "no_recent_trading_activity":
-        return None
-
-    try:
-        from utils.trading_activity import has_recent_trading_activity
-
-        if not has_recent_trading_activity():
-            return None
-    except Exception:
-        pass
 
     target = (guard.get("rollback_target_profile") or "capital_preservation").strip().lower()
     hours = int(guard.get("rollback_duration_hours") or 168)
@@ -292,6 +334,7 @@ def maybe_trigger_rollback_on_drift(drift_report: dict) -> dict | None:
             "forced_profile": target,
             "duration_hours": hours,
             "reason": "drift_alert",
+            "gate_reason": gate_reason,
         })
     except Exception:
         pass

@@ -76,6 +76,14 @@ def analyze_drift() -> dict:
         "drift_alert": drift_alert,
         "reason": reason,
     }
+    try:
+        from utils.policy_guardrails import _pnl_ledger_stats
+
+        stats = _pnl_ledger_stats()
+        report["ledger_win_rate"] = round(float(stats["win_rate"]), 4) if stats.get("win_rate") is not None else None
+        report["ledger_trade_count"] = int(stats.get("count") or 0)
+    except Exception:
+        pass
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT, "w") as f:
         json.dump(report, f, indent=2)

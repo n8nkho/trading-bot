@@ -17,9 +17,13 @@
     "rollback_target_profile": "capital_preservation",
     "rollback_duration_hours": 168,
     "rollback_min_duration_hours": 12,
+    "rollback_high_wr_min_duration_hours": 4,
     "rollback_recovery_on_metrics": true,
     "rollback_recovery_min_win_rate": 0.70,
-    "rollback_recovery_min_recent_avg_pnl": 0.0
+    "rollback_recovery_min_recent_avg_pnl": 0.0,
+    "rollback_trigger_suppress_win_rate": 0.80,
+    "rollback_trigger_min_win_rate": 0.75,
+    "rollback_trigger_requires_negative_recent_avg": false
   },
   "profiles": {
     "capital_preservation": {
