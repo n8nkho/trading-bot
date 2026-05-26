@@ -2465,6 +2465,7 @@ if __name__ == "__main__":
         policy = get_profile_bundle()
         exec_cfg = policy.get("execution") or {}
         max_trades_per_run = int(exec_cfg.get("sniper_max_trades_per_run") or os.getenv("SNIPER_MAX_TRADES_PER_RUN", "3"))
+        execution_mode = get_execution_mode()
         executed = 0
         approved = []
         rejected = []
@@ -2516,6 +2517,24 @@ if __name__ == "__main__":
                 decision["shares"] = shares
                 decision["position_value"] = position_value
 
+            if execution_mode == "human_in_loop":
+                queued_trade = {
+                    **decision,
+                    "ticker": ticker,
+                    "action": "BUY",
+                    "shares": shares,
+                    "entry_price": entry_price,
+                    "position_value": position_value,
+                    "trade_type": decision.get("trade_type") or "STOCK",
+                    "source": "intraday_sniper",
+                    "timestamp": decision.get("timestamp") or datetime.now().isoformat(),
+                }
+                deferred_snipe_trades.append(queued_trade)
+                portfolio_data["positions"].append({"ticker": ticker, "value": position_value, "sector": "Unknown"})
+                existing_tickers.add(ticker)
+                executed += 1
+                continue
+
             order_result = execute_buy_order(ticker, shares, entry_price)
             if order_result.get("success") and _order_is_filled(order_result):
                 order_id = order_result.get("order_id")
@@ -2536,7 +2555,7 @@ if __name__ == "__main__":
                 executed += 1
                 approved.append({"ticker": ticker, "shares": shares, "entry_price": entry_price, "order_id": order_id})
 
-        if get_execution_mode() == "human_in_loop" and deferred_snipe_trades:
+        if execution_mode == "human_in_loop" and deferred_snipe_trades:
             from utils.pending_execution_queue import append_pending_batch
 
             snipe_rid = f"snipe_{int(pytime.time())}"
@@ -2556,7 +2575,7 @@ if __name__ == "__main__":
                 },
             )
 
-        if get_execution_mode() == "human_in_loop":
+        if execution_mode == "human_in_loop":
             logger.info(
                 "Intraday sniper (human-in-the-loop): queued=%d rejected=%d strict_mode=%s — run: python orchestrator.py execute_pending",
                 len(deferred_snipe_trades),
