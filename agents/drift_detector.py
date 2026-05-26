@@ -97,6 +97,13 @@ def analyze_drift() -> dict:
     except Exception:
         pass
 
+    try:
+        from utils.integrity_diagnostics import run_integrity_scan
+
+        run_integrity_scan(log=False)
+    except Exception:
+        pass
+
     return report
 
 

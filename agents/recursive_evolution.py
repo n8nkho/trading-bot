@@ -374,6 +374,13 @@ def run_recursive_evolution(*, data_dir: Path = DATA_DIR) -> dict[str, Any]:
     out_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     logger.info("Recursive evolution cycle complete: %s", out_path)
 
+    try:
+        from utils.cron_heartbeat import record_success
+
+        record_success("recursive_evolution")
+    except Exception:
+        pass
+
     policy_recovery: dict[str, Any] = {}
     try:
         from utils.policy_guardrails import maybe_clear_forced_rollback_on_recovery

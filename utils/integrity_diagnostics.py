@@ -139,14 +139,27 @@ def scan_fortress_ai_sibling() -> list[dict[str, Any]]:
     except Exception:
         return findings
     for f in doc.get("findings") or []:
-        if f.get("severity") in ("critical", "high"):
-            findings.append(
-                {
-                    **f,
-                    "component": f"fortress_ai:{f.get('component')}",
-                    "recommendation": str(f.get("recommendation") or ""),
-                }
-            )
+        if f.get("severity") not in ("critical", "high"):
+            continue
+        code = str(f.get("code") or "")
+        if code in ("exit_notional_blocked", "duplicate_entry_accumulation"):
+            try:
+                import sys
+
+                sys.path.insert(0, str(_FORTRESS_AI))
+                from utils.si_fix_deployment import is_deployed
+
+                if is_deployed(code):
+                    continue
+            except Exception:
+                pass
+        findings.append(
+            {
+                **f,
+                "component": f"fortress_ai:{f.get('component')}",
+                "recommendation": str(f.get("recommendation") or ""),
+            }
+        )
     return findings
 
 
@@ -173,7 +186,35 @@ def run_integrity_scan(*, log: bool = True) -> dict[str, Any]:
         with open(lp, "a", encoding="utf-8") as f:
             for item in findings:
                 f.write(json.dumps({**item, "scan_ts": out["timestamp_utc"]}, default=str) + "\n")
+    maybe_auto_run_evolution(out)
     return out
+
+
+def maybe_auto_run_evolution(scan: dict[str, Any]) -> dict[str, Any] | None:
+    """Run recursive evolution when stale — no manual operator step."""
+    import os
+
+    if str(os.getenv("FORTRESS_SI_AUTO_RUN_EVOLVE", "1")).strip().lower() not in ("1", "true", "yes", "on"):
+        return None
+    codes = {str(f.get("code") or "") for f in scan.get("findings") or []}
+    if "evolution_stale" not in codes and "evolution_never_run" not in codes:
+        return None
+    files = sorted(glob.glob(str(_ROOT / "data" / "recursive_evolution_*.json")), reverse=True)
+    if files:
+        try:
+            age_min = (datetime.now(timezone.utc) - datetime.fromtimestamp(
+                Path(files[0]).stat().st_mtime, tz=timezone.utc
+            )).total_seconds() / 60.0
+            if age_min < 30:
+                return {"skipped": "recent_evolution_run", "age_minutes": round(age_min, 1)}
+        except OSError:
+            pass
+    try:
+        from agents.recursive_evolution import run_recursive_evolution
+
+        return run_recursive_evolution()
+    except Exception as e:
+        return {"error": str(e)[:200]}
 
 
 def issues_for_phase1(scan: dict[str, Any] | None = None) -> list[dict[str, Any]]:
