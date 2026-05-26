@@ -1,0 +1,26 @@
+---
+description: Recursive self-improvement — classic Fortress queue and agent/human review
+alwaysApply: true
+---
+
+# Classic recursive SI workflow
+
+Same review model as fortress-ai (see sibling `fortress-ai/.cursor/rules/recursive-si-workflow.mdc`).
+
+## Classic pipeline
+
+- **Scan**: `utils/integrity_diagnostics.py` (drift rollback, evolution staleness, cron heartbeats, fortress-ai sibling findings)
+- **Queue**: `utils/si_recommendation_queue.py` → `data/si_recommendation_queue.json`
+- **Evolve**: `agents/recursive_evolution.py` phase-1 runs scan + queue on each cycle (17:10 ET cron)
+
+## Agent review
+
+1. Read `data/si_recommendation_summary.json` and fortress-ai sibling summary when present
+2. Triage `pending_agent_review` — recommend to user; wait for go-ahead before code changes
+3. Policy auto-recovery: `maybe_clear_forced_rollback_on_recovery()` runs at end of evolve when metrics allow
+
+## When fixing classic Fortress
+
+- Extend `utils/integrity_diagnostics.py` with a new `code` and recommendation text
+- Wire auto-action in evolve or policy guardrails where safe
+- Run `./scripts/e2e_before_deploy.sh` before commit

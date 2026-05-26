@@ -125,9 +125,11 @@ def _phase1_self_diagnosis() -> dict[str, Any]:
 
     try:
         from utils.integrity_diagnostics import issues_for_phase1, run_integrity_scan
+        from utils.si_recommendation_queue import process_integrity_scan
 
         integrity = run_integrity_scan(log=True)
         issues.extend(issues_for_phase1(integrity))
+        process_integrity_scan(integrity)
     except Exception as e:
         logger.warning("Integrity scan failed: %s", e)
 
