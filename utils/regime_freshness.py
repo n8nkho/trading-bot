@@ -32,6 +32,50 @@ def regime_age_minutes() -> float | None:
         return None
 
 
+def refresh_regime_if_stale_rth(*, max_age_minutes: float | None = None) -> dict[str, Any] | None:
+    """
+    Self-heal: refresh regime snapshot during RTH when stale (rate-limited).
+    Returns detector output dict or None if skipped/fresh.
+    """
+    import os
+    import time
+
+    if str(os.getenv("FORTRESS_REGIME_AUTO_REFRESH_RTH", "1")).strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        return None
+    stale, _why = regime_is_stale_for_rth(max_age_minutes=max_age_minutes)
+    if not stale:
+        return None
+
+    lock = _ROOT / "data" / ".regime_auto_refresh.ts"
+    try:
+        min_gap = float(os.getenv("FORTRESS_REGIME_AUTO_REFRESH_MIN_SEC", "120"))
+    except ValueError:
+        min_gap = 120.0
+    now_ts = time.time()
+    if lock.exists():
+        try:
+            last = float(lock.read_text(encoding="utf-8").strip())
+            if now_ts - last < min_gap:
+                return {"skipped": "rate_limited", "min_gap_sec": min_gap}
+        except Exception:
+            pass
+
+    try:
+        from agents.regime_detector import RegimeDetector
+
+        out = RegimeDetector().detect_regime(dry_run=False)
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text(str(now_ts), encoding="utf-8")
+        return out if isinstance(out, dict) else {"ok": True}
+    except Exception as exc:
+        return {"error": str(exc)[:200]}
+
+
 def regime_is_stale_for_rth(*, max_age_minutes: float | None = None) -> tuple[bool, str]:
     """
     During US equity RTH, stale if older than max_age_minutes (default env or 60).

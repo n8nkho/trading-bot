@@ -168,8 +168,9 @@ def evaluate_pre_trade_submission(
         }
         if regime_block:
             try:
-                from utils.regime_freshness import regime_is_stale_for_rth
+                from utils.regime_freshness import refresh_regime_if_stale_rth, regime_is_stale_for_rth
 
+                refresh_regime_if_stale_rth()
                 stale, why = regime_is_stale_for_rth()
                 if stale:
                     reasons.append(f"regime_stale_rth:{why}")

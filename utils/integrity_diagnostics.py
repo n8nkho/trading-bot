@@ -167,11 +167,40 @@ def scan_fortress_ai_sibling() -> list[dict[str, Any]]:
     return findings
 
 
+def scan_regime_stale_rth() -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    try:
+        from utils.market_calendar import is_us_equity_rth_open
+        from utils.regime_freshness import regime_age_minutes, regime_is_stale_for_rth
+
+        if not is_us_equity_rth_open():
+            return findings
+        stale, why = regime_is_stale_for_rth()
+        if stale:
+            findings.append(
+                {
+                    "code": "regime_stale_rth",
+                    "severity": "high",
+                    "component": "classic_regime",
+                    "age_minutes": regime_age_minutes(),
+                    "recommendation": (
+                        "Regime snapshot stale during RTH — auto-refresh via pre_trade_gate or "
+                        "run agents.regime_detector."
+                    ),
+                    "si_action": "refresh_regime",
+                }
+            )
+    except Exception:
+        pass
+    return findings
+
+
 def run_integrity_scan(*, log: bool = True) -> dict[str, Any]:
     findings = (
         scan_drift_rollback_false_positive()
         + scan_evolution_staleness()
         + scan_cron_heartbeat()
+        + scan_regime_stale_rth()
         + scan_fortress_ai_sibling()
     )
     ts = now_iso()
