@@ -5,9 +5,13 @@ from __future__ import annotations
 
 import glob
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from utils.system_time import ensure_system_tz, now, now_iso, system_tz_name
+
+ensure_system_tz()
 
 _ROOT = Path(__file__).resolve().parent.parent
 _FORTRESS_AI = Path("/home/ubuntu/fortress-ai")
@@ -86,8 +90,8 @@ def scan_evolution_staleness(*, max_age_days: int = 3) -> list[dict[str, Any]]:
         return findings
     latest = Path(files[0])
     try:
-        mtime = datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc)
-        age_days = (datetime.now(timezone.utc) - mtime).total_seconds() / 86400.0
+        mtime = datetime.fromtimestamp(latest.stat().st_mtime, tz=now().tzinfo)
+        age_days = (now() - mtime).total_seconds() / 86400.0
         if age_days > max_age_days:
             findings.append(
                 {
@@ -170,8 +174,11 @@ def run_integrity_scan(*, log: bool = True) -> dict[str, Any]:
         + scan_cron_heartbeat()
         + scan_fortress_ai_sibling()
     )
+    ts = now_iso()
     out = {
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "timestamp": ts,
+        "system_tz": system_tz_name(),
+        "timestamp_utc": ts,
         "findings": findings,
         "counts": {
             "critical": sum(1 for f in findings if f.get("severity") == "critical"),
@@ -185,7 +192,7 @@ def run_integrity_scan(*, log: bool = True) -> dict[str, Any]:
         lp = _ROOT / "data" / "integrity_recommendations.jsonl"
         with open(lp, "a", encoding="utf-8") as f:
             for item in findings:
-                f.write(json.dumps({**item, "scan_ts": out["timestamp_utc"]}, default=str) + "\n")
+                f.write(json.dumps({**item, "scan_ts": ts}, default=str) + "\n")
     maybe_auto_run_evolution(out)
     return out
 
@@ -202,8 +209,8 @@ def maybe_auto_run_evolution(scan: dict[str, Any]) -> dict[str, Any] | None:
     files = sorted(glob.glob(str(_ROOT / "data" / "recursive_evolution_*.json")), reverse=True)
     if files:
         try:
-            age_min = (datetime.now(timezone.utc) - datetime.fromtimestamp(
-                Path(files[0]).stat().st_mtime, tz=timezone.utc
+            age_min = (now() - datetime.fromtimestamp(
+                Path(files[0]).stat().st_mtime, tz=now().tzinfo
             )).total_seconds() / 60.0
             if age_min < 30:
                 return {"skipped": "recent_evolution_run", "age_minutes": round(age_min, 1)}

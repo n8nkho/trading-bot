@@ -9,6 +9,8 @@
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
+export TZ="${FORTRESS_SYSTEM_TZ:-America/New_York}"
+export FORTRESS_SYSTEM_TZ="${FORTRESS_SYSTEM_TZ:-America/New_York}"
 
 # Load .env for agent modules (screener, etc.) — orchestrator loads its own; this covers direct -m runs.
 if [[ -x "${REPO_ROOT}/venv/bin/python3" ]]; then

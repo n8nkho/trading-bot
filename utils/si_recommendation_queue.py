@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from utils.system_time import ensure_system_tz, now_iso, system_tz_name
+
+ensure_system_tz()
 
 _ROOT = Path(__file__).resolve().parent.parent
 _FORTRESS_AI = Path("/home/ubuntu/fortress-ai")
@@ -48,7 +51,7 @@ def save_queue(doc: dict[str, Any]) -> None:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return now_iso()
 
 
 def _finding_key(code: str, component: str = "") -> str:
@@ -113,8 +116,11 @@ def process_integrity_scan(scan: dict[str, Any] | None = None) -> dict[str, Any]
         except Exception:
             pass
 
+    ts = _now_iso()
     summary = {
-        "timestamp_utc": _now_iso(),
+        "timestamp": ts,
+        "system_tz": system_tz_name(),
+        "timestamp_utc": ts,
         "classic_items": len(items),
         "sibling_pending_agent": len(sibling_pending),
         "pending_agent": [x for x in load_queue().get("items") or [] if x.get("disposition") == DISPOSITION_PENDING_AGENT and x.get("status") == STATUS_OPEN],

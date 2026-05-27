@@ -1,0 +1,29 @@
+---
+description: All system times use US Eastern (America/New_York) only
+globs:
+  - "**/*.py"
+  - "**/*.sh"
+  - "**/*.service"
+  - "**/cron*"
+  - "**/.env.example"
+alwaysApply: true
+---
+
+# System timezone — US/New York only
+
+All timestamps, cron schedules, dashboards, logs, and operator-facing times **must** use **America/New_York** (US Eastern). Do not use UTC, GMT, or the VM host timezone for system logic.
+
+## Required patterns
+
+- Python: `from utils.system_time import now, now_iso, parse_iso, ensure_system_tz`
+- Env: `FORTRESS_SYSTEM_TZ=America/New_York` (see `config/system_timezone.json`)
+- Cron: single `CRON_TZ=America/New_York` at crontab top (`scripts/install_production_crontab.sh`)
+- systemd: `Environment=TZ=America/New_York` and `Environment=FORTRESS_SYSTEM_TZ=America/New_York`
+
+## Forbidden
+
+- `datetime.now(timezone.utc)` for new code or touched paths
+- Split crontab blocks with `CRON_TZ=UTC`
+- Scheduling or "today" rollups in UTC
+
+See `config/TIMEZONE.md` for full policy.
