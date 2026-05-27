@@ -317,13 +317,22 @@ def run_screener():
         Step-wise relaxation of numeric prefilter thresholds by tier.
         Keeps Tier 1 strict, and broadens only if earlier tiers produce too few/zero candidates.
         """
-        tier_profiles = {
-            1: {"drop_min": -15, "drop_max": -5, "rsi_threshold": 40, "volume_ratio_min": 1.5},
-            2: {"drop_min": -25, "drop_max": -1, "rsi_threshold": 45, "volume_ratio_min": 1.3},
-            3: {"drop_min": -35, "drop_max": 0, "rsi_threshold": 50, "volume_ratio_min": 1.2},
-            4: {"drop_min": -45, "drop_max": 0, "rsi_threshold": 52, "volume_ratio_min": 1.1},
-            5: {"drop_min": -50, "drop_max": 5, "rsi_threshold": 55, "volume_ratio_min": 1.0},
-        }
+        if market_regime in ("TRENDING_BULL", "BULL"):
+            tier_profiles = {
+                1: {"drop_min": -6, "drop_max": 2, "rsi_threshold": 50, "volume_ratio_min": 0.85},
+                2: {"drop_min": -10, "drop_max": 3, "rsi_threshold": 52, "volume_ratio_min": 0.75},
+                3: {"drop_min": -15, "drop_max": 4, "rsi_threshold": 55, "volume_ratio_min": 0.65},
+                4: {"drop_min": -20, "drop_max": 5, "rsi_threshold": 58, "volume_ratio_min": 0.55},
+                5: {"drop_min": -25, "drop_max": 6, "rsi_threshold": 60, "volume_ratio_min": 0.50},
+            }
+        else:
+            tier_profiles = {
+                1: {"drop_min": -15, "drop_max": -5, "rsi_threshold": 40, "volume_ratio_min": 1.5},
+                2: {"drop_min": -25, "drop_max": -1, "rsi_threshold": 45, "volume_ratio_min": 1.3},
+                3: {"drop_min": -35, "drop_max": 0, "rsi_threshold": 50, "volume_ratio_min": 1.2},
+                4: {"drop_min": -45, "drop_max": 0, "rsi_threshold": 52, "volume_ratio_min": 1.1},
+                5: {"drop_min": -50, "drop_max": 5, "rsi_threshold": 55, "volume_ratio_min": 1.0},
+            }
         prof = tier_profiles.get(tier_idx) or tier_profiles[5]
         merged = dict(params)
         merged.update(prof)
@@ -610,10 +619,14 @@ def run_screener():
             target_min=2,
             target_max=5,
         )
-        if throughput_mode >= 2 and throughput.get("changed"):
+        if throughput.get("changed") and (
+            throughput_mode >= 2 or (throughput_mode >= 1 and len(candidates) == 0)
+        ):
             try:
+                applied = throughput.get("recommended_params") or params
                 with open(CURRENT_PARAMS_FILE, "w", encoding="utf-8") as f:
-                    json.dump(throughput.get("recommended_params") or params, f, indent=2)
+                    json.dump(applied, f, indent=2)
+                params.update(applied)
             except Exception:
                 pass
         try:
