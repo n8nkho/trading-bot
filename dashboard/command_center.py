@@ -66,34 +66,60 @@ _DASH_PUBLIC_PATHS = frozenset({
     "/proof",
     "/setup",
     "/api/setup/status",
-    "/api/setup/save_keys",
-    "/api/setup/test_connection",
     "/manifest.json",
     "/api/hooks/tradingview",
     "/api/billing/stripe-webhook",
     # No secrets: paths + key names + counts (for debugging /proof billing when Basic auth is on).
     "/api/billing/proof_links_status",
 })
+_SETUP_MUTATION_PATHS = frozenset({"/api/setup/save_keys", "/api/setup/test_connection"})
 _DASH_PUBLIC_PREFIXES = ("/static/",)
+
+
+def _dashboard_basic_auth_valid() -> bool:
+    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
+    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
+    auth = request.authorization
+    return bool(user and pw and auth and auth.username == user and auth.password == pw)
+
+
+def _operator_token_valid() -> bool:
+    token = (os.environ.get("FORTRESS_OPERATOR_TOKEN") or "").strip()
+    hdr = (request.headers.get("X-Operator-Token") or "").strip()
+    return bool(token and hdr == token)
+
+
+def _auth_required_response():
+    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
+    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
+    if user and pw:
+        return Response(
+            "Authentication required",
+            401,
+            {"WWW-Authenticate": 'Basic realm="Fortress Command Center"'},
+        )
+    return jsonify({"ok": False, "error": "operator_token_or_auth_required"}), 403
 
 
 @app.before_request
 def _fortress_dashboard_basic_auth():
+    path = request.path or ""
+    if path in _SETUP_MUTATION_PATHS:
+        if not _setup_status()["setup_complete"]:
+            return None
+        if _dashboard_basic_auth_valid() or _operator_token_valid():
+            return None
+        return _auth_required_response()
+
     user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
     pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
     if not user or not pw:
         return None
-    path = request.path or ""
     if path in _DASH_PUBLIC_PATHS or any(path.startswith(p) for p in _DASH_PUBLIC_PREFIXES):
         return None
-    auth = request.authorization
-    if auth and auth.username == user and auth.password == pw:
+    if _dashboard_basic_auth_valid():
         return None
-    return Response(
-        "Authentication required",
-        401,
-        {"WWW-Authenticate": 'Basic realm="Fortress Command Center"'},
-    )
+    return _auth_required_response()
 
 
 DATA_DIR = _ROOT / "data"

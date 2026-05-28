@@ -141,10 +141,16 @@ def get_risk_limits(strict_mode: bool = False) -> dict:
         "circuit_breaker_reduce_threshold": CIRCUIT_BREAKER_REDUCE_THRESHOLD,
         "circuit_breaker_halt_threshold": CIRCUIT_BREAKER_HALT_THRESHOLD,
     }
-    # Policy profile can further tighten/adjust global limits without code changes.
-    for k in ["max_positions", "max_position_size_pct", "max_total_risk_pct", "daily_loss_limit_pct", "weekly_loss_limit_pct"]:
+    # Policy profile can adjust normal limits. In strict mode, profiles may only
+    # tighten the stress caps, never loosen them during a loss streak.
+    for k in ["max_positions", "max_position_size_pct", "max_total_risk_pct"]:
         if risk_cfg.get(k) is not None:
-            base[k] = risk_cfg.get(k)
+            cfg_value = risk_cfg.get(k)
+            base[k] = min(base[k], cfg_value) if strict_mode else cfg_value
+    for k in ["daily_loss_limit_pct", "weekly_loss_limit_pct"]:
+        if risk_cfg.get(k) is not None:
+            cfg_value = risk_cfg.get(k)
+            base[k] = max(base[k], cfg_value) if strict_mode else cfg_value
     base["policy_profile"] = policy.get("active_profile")
     return base
 
@@ -352,6 +358,7 @@ def get_risk_status():
     Returns:
         dict: Current risk status including circuit breaker state
     """
+    _load_risk_state()
     policy = get_profile_bundle()
     return {
         "consecutive_losses": consecutive_losses,

@@ -241,6 +241,38 @@ def _compute_hedge_gate_metrics_from_report(report: dict) -> dict:
         "strategy_gate_details": strategy_gate_details,
     }
 
+
+def _build_hedge_gate_summary(strict_mode: bool) -> dict:
+    """Return latest hedge-gate telemetry; stale/missing reports fail strict mode."""
+    hedge_gate_summary = {
+        "passed": None,
+        "applied_count": None,
+        "skipped_count": None,
+        "not_evaluated_count": None,
+        "bonds_target_present": None,
+        "total_known": None,
+        "strategy_gate_details": None,
+        "reason": "not_evaluated",
+    }
+    report, report_meta = _load_latest_fortress_report(max_age_hours=FORTRESS_REPORT_MAX_AGE_HOURS)
+    if report is None:
+        hedge_gate_summary["passed"] = False if strict_mode else None
+        hedge_gate_summary["reason"] = "No fortress_report_*.json found"
+    elif not report_meta.get("is_fresh", True):
+        age = report_meta.get("age_hours")
+        hedge_gate_summary["passed"] = False if strict_mode else None
+        hedge_gate_summary["reason"] = (
+            f"Stale fortress report ({age}h old > {FORTRESS_REPORT_MAX_AGE_HOURS}h)"
+        )
+    else:
+        try:
+            hedge_gate_summary = _compute_hedge_gate_metrics_from_report(report)
+            hedge_gate_summary["reason"] = "hedging gate derived from latest fortress_report"
+        except Exception:
+            hedge_gate_summary["passed"] = False if strict_mode else None
+            hedge_gate_summary["reason"] = "Failed to compute hedge gate metrics from fortress report"
+    return hedge_gate_summary
+
 # Load environment variables
 load_dotenv()
 
@@ -815,34 +847,9 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         effective_limits = get_risk_limits(strict_mode=strict_mode)
         effective_max_positions = effective_limits.get("max_positions", MAX_POSITIONS)
 
-        hedge_gate_summary = {
-            "passed": None,
-            "applied_count": None,
-            "skipped_count": None,
-            "not_evaluated_count": None,
-            "bonds_target_present": None,
-            "total_known": None,
-            "strategy_gate_details": None,
-            "reason": "not_evaluated",
-        }
         # Always attempt to compute hedge gate transparency for UI metrics.
         # Enforcement still happens only when `strict_mode` is True.
-        report, report_meta = _load_latest_fortress_report(max_age_hours=FORTRESS_REPORT_MAX_AGE_HOURS)
-        if report is None:
-            hedge_gate_summary["reason"] = "No fortress_report_*.json found"
-        elif not report_meta.get("is_fresh", True):
-            age = report_meta.get("age_hours")
-            hedge_gate_summary["passed"] = False if strict_mode else None
-            hedge_gate_summary["reason"] = (
-                f"Stale fortress report ({age}h old > {FORTRESS_REPORT_MAX_AGE_HOURS}h)"
-            )
-        else:
-            try:
-                hedge_gate_summary = _compute_hedge_gate_metrics_from_report(report)
-                hedge_gate_summary["reason"] = "hedging gate derived from latest fortress_report"
-            except Exception:
-                hedge_gate_summary["passed"] = None
-                hedge_gate_summary["reason"] = "Failed to compute hedge gate metrics from fortress report"
+        hedge_gate_summary = _build_hedge_gate_summary(strict_mode)
 
         # Attach strict/hedge gate telemetry to the daily signals screener meta.
         screening_meta["strict_mode"] = strict_mode
@@ -2452,6 +2459,13 @@ if __name__ == "__main__":
         consecutive_losses = int(risk_status.get("consecutive_losses") or 0)
         circuit_breaker_active = bool(risk_status.get("circuit_breaker_active"))
         strict_mode = circuit_breaker_active or consecutive_losses >= 2
+        hedge_gate_summary = _build_hedge_gate_summary(strict_mode)
+        if strict_mode and not bool(hedge_gate_summary.get("passed")):
+            logger.warning(
+                "Intraday sniper: strict mode hedge gate failed; rejecting all BUYs: %s",
+                hedge_gate_summary.get("reason") or "hedge gate failed",
+            )
+            sys.exit(0)
 
         account_info = get_account_info()
         if not account_info:
@@ -2469,9 +2483,11 @@ if __name__ == "__main__":
         approved = []
         rejected = []
         deferred_snipe_trades: list[dict] = []
+        execution_mode = get_execution_mode()
 
         for opp in opportunities:
-            if executed >= max_trades_per_run:
+            selected_count = executed + len(deferred_snipe_trades)
+            if selected_count >= max_trades_per_run:
                 break
 
             ticker = str(opp.get("ticker") or "").strip().upper()
@@ -2516,6 +2532,18 @@ if __name__ == "__main__":
                 decision["shares"] = shares
                 decision["position_value"] = position_value
 
+            if execution_mode == "human_in_loop":
+                decision["ticker"] = ticker
+                decision["shares"] = shares
+                decision["entry_price"] = entry_price
+                decision["position_size"] = position_value
+                decision["risk_check"] = risk_check
+                decision["source"] = "intraday_sniper"
+                deferred_snipe_trades.append(decision)
+                portfolio_data["positions"].append({"ticker": ticker, "value": position_value, "sector": "Unknown"})
+                existing_tickers.add(ticker)
+                continue
+
             order_result = execute_buy_order(ticker, shares, entry_price)
             if order_result.get("success") and _order_is_filled(order_result):
                 order_id = order_result.get("order_id")
@@ -2536,7 +2564,7 @@ if __name__ == "__main__":
                 executed += 1
                 approved.append({"ticker": ticker, "shares": shares, "entry_price": entry_price, "order_id": order_id})
 
-        if get_execution_mode() == "human_in_loop" and deferred_snipe_trades:
+        if execution_mode == "human_in_loop" and deferred_snipe_trades:
             from utils.pending_execution_queue import append_pending_batch
 
             snipe_rid = f"snipe_{int(pytime.time())}"
@@ -2556,7 +2584,7 @@ if __name__ == "__main__":
                 },
             )
 
-        if get_execution_mode() == "human_in_loop":
+        if execution_mode == "human_in_loop":
             logger.info(
                 "Intraday sniper (human-in-the-loop): queued=%d rejected=%d strict_mode=%s — run: python orchestrator.py execute_pending",
                 len(deferred_snipe_trades),
