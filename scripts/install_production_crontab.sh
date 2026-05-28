@@ -36,6 +36,7 @@ CRON_TZ=America/New_York
 0 */2 * * * cd /home/ubuntu/trading-bot && bash scripts/cron_run.sh regime_detector_offhours python3 -m agents.regime_detector >> /home/ubuntu/trading-bot/logs/cron_master.log 2>&1
 0 */1 * * * cd /home/ubuntu/fortress-ai && bash scripts/cron_run.sh ingest_all python3 -m agents.domain_ingest.ingest_runner >> /home/ubuntu/fortress-ai/logs/cron_master.log 2>&1
 0 17 * * 5 cd /home/ubuntu/fortress-ai && bash scripts/cron_run.sh cot_ingest python3 -m agents.domain_ingest.ingest_runner --source cot_report >> /home/ubuntu/fortress-ai/logs/cron_master.log 2>&1
+0 18 * * 1-5 cd /home/ubuntu/fortress-ai && flock -n /tmp/fortress-research-cycle.lock bash scripts/eod_research_cycle.sh >> /home/ubuntu/fortress-ai/logs/research_cycle.log 2>&1
 CRON
 
 crontab "$TMP"
