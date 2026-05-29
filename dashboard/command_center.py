@@ -1909,43 +1909,88 @@ def _operator_halt_post_allowed() -> bool:
     return False
 
 
+def _first_scalar(value):
+    """Collapse single-value pandas Series results from MultiIndex row lookups."""
+    if isinstance(value, (str, bytes)):
+        return value
+    if hasattr(value, "iloc"):
+        try:
+            if len(value) > 0:
+                return value.iloc[0]
+        except Exception:
+            pass
+    return value
+
+
+def _chart_row_value(row, field: str, ticker: str | None = None):
+    """Read flat OHLCV fields from either normal or yfinance MultiIndex rows."""
+    row_index = getattr(row, "index", [])
+    field_l = field.strip().lower()
+    ticker_l = (ticker or "").strip().lower()
+    exact_matches = []
+    loose_matches = []
+
+    try:
+        for col in row_index:
+            if isinstance(col, tuple):
+                parts = [str(part).strip().lower() for part in col if part is not None]
+                if field_l in parts:
+                    if ticker_l and ticker_l in parts:
+                        exact_matches.append(col)
+                    else:
+                        loose_matches.append(col)
+            elif str(col).strip().lower() == field_l:
+                loose_matches.append(col)
+    except Exception:
+        pass
+
+    for col in exact_matches + loose_matches:
+        try:
+            return _first_scalar(row[col])
+        except Exception:
+            continue
+
+    return _first_scalar(row[field])
+
+
+def _hist_to_chart_bars(hist, ticker: str | None = None):
+    out = []
+    if hist is None or hist.empty:
+        return out
+    for idx, row in hist.iterrows():
+        try:
+            try:
+                vol_raw = float(_chart_row_value(row, "Volume", ticker))
+                vol = int(vol_raw) if vol_raw == vol_raw else 0
+            except Exception:
+                vol = 0
+            tstr = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)[:10]
+            out.append({
+                "time": tstr,
+                "open": round(float(_chart_row_value(row, "Open", ticker)), 4),
+                "high": round(float(_chart_row_value(row, "High", ticker)), 4),
+                "low": round(float(_chart_row_value(row, "Low", ticker)), 4),
+                "close": round(float(_chart_row_value(row, "Close", ticker)), 4),
+                "volume": vol,
+            })
+        except Exception:
+            continue
+    return out
+
+
 def get_chart_bars_json(ticker: str, days: int) -> dict:
     import yfinance as yf
 
     sym = (ticker or "SPY").strip().upper() or "SPY"
     d = max(5, min(int(days), 800))
 
-    def _hist_to_bars(hist):
-        out = []
-        if hist is None or hist.empty:
-            return out
-        for idx, row in hist.iterrows():
-            try:
-                try:
-                    vol_raw = float(row["Volume"])
-                    vol = int(vol_raw) if vol_raw == vol_raw else 0
-                except Exception:
-                    vol = 0
-                tstr = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)[:10]
-                out.append({
-                    "time": tstr,
-                    "open": round(float(row["Open"]), 4),
-                    "high": round(float(row["High"]), 4),
-                    "low": round(float(row["Low"]), 4),
-                    "close": round(float(row["Close"]), 4),
-                    "volume": vol,
-                })
-            except Exception:
-                continue
-        return out
-
     t = yf.Ticker(sym)
     hist = t.history(period=f"{d}d", interval="1d", auto_adjust=True)
-    bars = _hist_to_bars(hist)
+    bars = _hist_to_chart_bars(hist, sym)
     if not bars:
         try:
             alt = yf.download(sym, period=f"{d}d", interval="1d", progress=False, auto_adjust=True, threads=False)
-            bars = _hist_to_bars(alt)
+            bars = _hist_to_chart_bars(alt, sym)
         except Exception:
             pass
     return {"timestamp": datetime.now().isoformat(), "ticker": sym, "bars": bars}
