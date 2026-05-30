@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import glob
+import threading
 import time
 import time as pytime
 from datetime import datetime, time, timedelta
@@ -267,6 +268,7 @@ POSITIONS_FILE = DATA_DIR / "positions.json"
 PNL_LEDGER_FILE = DATA_DIR / "pnl_ledger.jsonl"
 FORTRESS_REPORT_MAX_AGE_HOURS = float(os.getenv("FORTRESS_REPORT_MAX_AGE_HOURS", "30"))
 PORTFOLIO_VALUE = 50000  # Default portfolio value
+_POSITIONS_LOCK = threading.Lock()
 
 # Market hours (Eastern Time)
 MARKET_OPEN = time(9, 30)   # 9:30 AM ET
@@ -1788,6 +1790,14 @@ def load_positions():
         return []
 
 
+def _write_positions_atomic(positions):
+    POSITIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = POSITIONS_FILE.with_name(f".{POSITIONS_FILE.name}.{os.getpid()}.{pytime.time_ns()}.tmp")
+    with open(tmp, 'w') as f:
+        json.dump(positions, f, indent=2)
+    tmp.replace(POSITIONS_FILE)
+
+
 def add_position(position):
     """
     Add a new position to data/positions.json.
@@ -1796,15 +1806,15 @@ def add_position(position):
         position: Position dict with ticker, shares, entry_price, etc.
     """
     try:
-        # Load existing positions
-        positions = load_positions()
-        
-        # Add new position
-        positions.append(position)
-        
-        # Save back to file as a list
-        with open(POSITIONS_FILE, 'w') as f:
-            json.dump(positions, f, indent=2)
+        with _POSITIONS_LOCK:
+            # Load existing positions
+            positions = load_positions()
+
+            # Add new position
+            positions.append(position)
+
+            # Save back to file as a list
+            _write_positions_atomic(positions)
         
         logger.info(f"Added position: {position['ticker']} - {position['shares']} shares @ ${position['entry_price']:.2f}")
         
@@ -1820,15 +1830,15 @@ def remove_position(ticker):
         ticker: Stock ticker to remove
     """
     try:
-        # Load existing positions
-        positions = load_positions()
-        
-        # Remove position
-        positions = [p for p in positions if p['ticker'] != ticker]
-        
-        # Save back to file as a list
-        with open(POSITIONS_FILE, 'w') as f:
-            json.dump(positions, f, indent=2)
+        with _POSITIONS_LOCK:
+            # Load existing positions
+            positions = load_positions()
+
+            # Remove position
+            positions = [p for p in positions if p['ticker'] != ticker]
+
+            # Save back to file as a list
+            _write_positions_atomic(positions)
         
         logger.info(f"Removed position: {ticker}")
         
@@ -1846,32 +1856,32 @@ def update_position_quantity(ticker, qty_sold, tier=None):
         tier: Optional tier name (e.g. 'tier1', 'tier2', 'tier3') to mark as sold
     """
     try:
-        # Load existing positions
-        positions = load_positions()
-        
-        # Update position
-        for pos in positions:
-            if pos['ticker'] == ticker:
-                # Handle both 'shares' and 'qty' keys
-                old_qty = pos.get('shares') or pos.get('qty', 0)
-                new_qty = old_qty - qty_sold
-                
-                # Update both keys if they exist
-                if 'shares' in pos:
-                    pos['shares'] = new_qty
-                if 'qty' in pos:
-                    pos['qty'] = new_qty
+        with _POSITIONS_LOCK:
+            # Load existing positions
+            positions = load_positions()
 
-                # Mark tier as sold so we don't repeatedly sell the same tranche.
-                if tier and 'tiers_sold' in pos and isinstance(pos['tiers_sold'], dict):
-                    pos['tiers_sold'][tier] = True
-                
-                logger.info(f"Updated position: {ticker} - {old_qty} -> {new_qty} shares")
-                break
-        
-        # Save back to file as a list
-        with open(POSITIONS_FILE, 'w') as f:
-            json.dump(positions, f, indent=2)
+            # Update position
+            for pos in positions:
+                if pos['ticker'] == ticker:
+                    # Handle both 'shares' and 'qty' keys
+                    old_qty = pos.get('shares') or pos.get('qty', 0)
+                    new_qty = old_qty - qty_sold
+
+                    # Update both keys if they exist
+                    if 'shares' in pos:
+                        pos['shares'] = new_qty
+                    if 'qty' in pos:
+                        pos['qty'] = new_qty
+
+                    # Mark tier as sold so we don't repeatedly sell the same tranche.
+                    if tier and 'tiers_sold' in pos and isinstance(pos['tiers_sold'], dict):
+                        pos['tiers_sold'][tier] = True
+
+                    logger.info(f"Updated position: {ticker} - {old_qty} -> {new_qty} shares")
+                    break
+
+            # Save back to file as a list
+            _write_positions_atomic(positions)
         
     except Exception as e:
         logger.error(f"Error updating position quantity: {type(e).__name__}: {str(e)}")
@@ -2025,9 +2035,9 @@ def flush_pending_execution_queue() -> dict:
     """
     Submit all trades queued in ``data/pending_execution_queue.json`` (human-in-the-loop).
 
-    Clears the queue after processing (check logs / trust ledger for failures).
+    Removes only successfully submitted trades; failed trades stay queued for retry.
     """
-    from utils.pending_execution_queue import clear_batches, load_batches
+    from utils.pending_execution_queue import clear_batches, load_batches, write_batches
 
     batches = load_batches(DATA_DIR)
     if not batches:
@@ -2038,35 +2048,57 @@ def flush_pending_execution_queue() -> dict:
 
     async def _run_all():
         out = []
+        retained_batches = []
         for batch in batches:
             if not isinstance(batch, dict):
                 continue
             candidates = batch.get("candidates") or []
             trades = batch.get("trades") or []
+            retained_trades = []
             for trade in trades:
                 if isinstance(trade, dict):
-                    out.append(await submit_approved_screening_trade(trade, candidates, current_params))
-        return out
+                    status, result_trade = await submit_approved_screening_trade(trade, candidates, current_params)
+                    out.append((status, result_trade))
+                    if status != "success":
+                        retained_trades.append(result_trade if isinstance(result_trade, dict) else trade)
+            if retained_trades:
+                retained_batch = dict(batch)
+                retained_batch["trades"] = retained_trades
+                retained_batch["updated_at"] = datetime.now().isoformat()
+                retained_batch["retry_reason"] = "one_or_more_trades_failed"
+                retained_batches.append(retained_batch)
+        return out, retained_batches
 
-    results = asyncio.run(_run_all())
+    results, retained_batches = asyncio.run(_run_all())
     succeeded = sum(1 for st, _ in results if st == "success")
     failed = sum(1 for st, _ in results if st == "failure")
-    clear_batches(DATA_DIR)
+    if failed:
+        write_batches(retained_batches, DATA_DIR)
+    else:
+        clear_batches(DATA_DIR)
     append_trust_event(
         "pending_execution_flushed",
         {
             "batches": len(batches),
             "executed": succeeded,
             "failed": failed,
+            "retained_trades": sum(len(b.get("trades") or []) for b in retained_batches),
         },
     )
     logger.info(
-        "execute_pending: batches=%d trade_results success=%d fail=%d (queue cleared)",
+        "execute_pending: batches=%d trade_results success=%d fail=%d retained_batches=%d",
         len(batches),
         succeeded,
         failed,
+        len(retained_batches),
     )
-    return {"ok": True, "batches": len(batches), "executed": succeeded, "failed": failed}
+    return {
+        "ok": True,
+        "batches": len(batches),
+        "executed": succeeded,
+        "failed": failed,
+        "retained_batches": len(retained_batches),
+    }
 
 
 if __name__ == "__main__":
@@ -2461,6 +2493,32 @@ if __name__ == "__main__":
         current_positions = load_positions()
         portfolio_data = build_portfolio_data(current_positions, portfolio_value)
         existing_tickers = {str(p.get("ticker") or "").upper() for p in current_positions if p.get("ticker")}
+        mode = get_execution_mode()
+
+        if strict_mode:
+            report, report_meta = _load_latest_fortress_report(max_age_hours=FORTRESS_REPORT_MAX_AGE_HOURS)
+            if report is None:
+                hedge_gate_summary = {"passed": False, "reason": "No fortress_report_*.json found"}
+            elif not report_meta.get("is_fresh", True):
+                hedge_gate_summary = {
+                    "passed": False,
+                    "reason": f"Stale fortress report ({report_meta.get('age_hours')}h old > {FORTRESS_REPORT_MAX_AGE_HOURS}h)",
+                }
+            else:
+                try:
+                    hedge_gate_summary = _compute_hedge_gate_metrics_from_report(report)
+                    hedge_gate_summary["reason"] = "hedging gate derived from latest fortress_report"
+                except Exception:
+                    hedge_gate_summary = {
+                        "passed": False,
+                        "reason": "Failed to compute hedge gate metrics from fortress report",
+                    }
+            if not bool(hedge_gate_summary.get("passed")):
+                logger.warning(
+                    "Intraday sniper: strict mode hedge gate failed; rejecting all opportunities: %s",
+                    hedge_gate_summary.get("reason"),
+                )
+                sys.exit(0)
 
         policy = get_profile_bundle()
         exec_cfg = policy.get("execution") or {}
@@ -2471,7 +2529,7 @@ if __name__ == "__main__":
         deferred_snipe_trades: list[dict] = []
 
         for opp in opportunities:
-            if executed >= max_trades_per_run:
+            if executed + len(deferred_snipe_trades) >= max_trades_per_run:
                 break
 
             ticker = str(opp.get("ticker") or "").strip().upper()
@@ -2516,6 +2574,19 @@ if __name__ == "__main__":
                 decision["shares"] = shares
                 decision["position_value"] = position_value
 
+            if mode == "human_in_loop":
+                deferred_snipe_trades.append({
+                    "ticker": ticker,
+                    "shares": shares,
+                    "entry_price": entry_price,
+                    "position_size": position_value,
+                    "source": "intraday_sniper",
+                    "queued_at": datetime.now().isoformat(),
+                    "decision": decision,
+                })
+                existing_tickers.add(ticker)
+                continue
+
             order_result = execute_buy_order(ticker, shares, entry_price)
             if order_result.get("success") and _order_is_filled(order_result):
                 order_id = order_result.get("order_id")
@@ -2536,7 +2607,7 @@ if __name__ == "__main__":
                 executed += 1
                 approved.append({"ticker": ticker, "shares": shares, "entry_price": entry_price, "order_id": order_id})
 
-        if get_execution_mode() == "human_in_loop" and deferred_snipe_trades:
+        if mode == "human_in_loop" and deferred_snipe_trades:
             from utils.pending_execution_queue import append_pending_batch
 
             snipe_rid = f"snipe_{int(pytime.time())}"
@@ -2556,7 +2627,7 @@ if __name__ == "__main__":
                 },
             )
 
-        if get_execution_mode() == "human_in_loop":
+        if mode == "human_in_loop":
             logger.info(
                 "Intraday sniper (human-in-the-loop): queued=%d rejected=%d strict_mode=%s — run: python orchestrator.py execute_pending",
                 len(deferred_snipe_trades),

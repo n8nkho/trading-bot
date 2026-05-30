@@ -23,21 +23,24 @@ def is_trading_halted() -> bool:
         data = json.loads(HALT_PATH.read_text(encoding="utf-8"))
         return bool(data.get("active"))
     except Exception:
-        return False
+        # A present-but-unreadable kill-switch file is safer to treat as halted.
+        return HALT_PATH.exists()
 
 
 def get_halt_state() -> dict:
     env_on = os.environ.get("FORTRESS_TRADING_HALT", "").strip().lower() in ("1", "true", "yes", "on")
     file_state = {"active": False, "reason": "", "updated_at": None, "actor": ""}
+    file_error = None
     try:
         if HALT_PATH.exists():
             file_state.update(json.loads(HALT_PATH.read_text(encoding="utf-8")))
-    except Exception:
-        pass
+    except Exception as e:
+        file_error = f"{type(e).__name__}: {str(e)}"
     return {
         "env_halt": env_on,
         "file": file_state,
-        "effective_halted": env_on or bool(file_state.get("active")),
+        "file_error": file_error,
+        "effective_halted": env_on or bool(file_state.get("active")) or bool(file_error),
     }
 
 

@@ -77,6 +77,23 @@ _DASH_PUBLIC_PATHS = frozenset({
 _DASH_PUBLIC_PREFIXES = ("/static/",)
 
 
+def _dashboard_basic_auth_valid() -> bool:
+    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
+    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
+    auth = request.authorization
+    return bool(user and pw and auth and auth.username == user and auth.password == pw)
+
+
+def _operator_token_valid() -> bool:
+    token = (os.environ.get("FORTRESS_OPERATOR_TOKEN") or "").strip()
+    hdr = (request.headers.get("X-Operator-Token") or "").strip()
+    return bool(token and hdr == token)
+
+
+def _operator_request_authorized() -> bool:
+    return _operator_token_valid() or _dashboard_basic_auth_valid()
+
+
 @app.before_request
 def _fortress_dashboard_basic_auth():
     user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
@@ -86,8 +103,7 @@ def _fortress_dashboard_basic_auth():
     path = request.path or ""
     if path in _DASH_PUBLIC_PATHS or any(path.startswith(p) for p in _DASH_PUBLIC_PREFIXES):
         return None
-    auth = request.authorization
-    if auth and auth.username == user and auth.password == pw:
+    if _dashboard_basic_auth_valid():
         return None
     return Response(
         "Authentication required",
@@ -1894,19 +1910,8 @@ def get_recommendations():
 
 
 def _operator_halt_post_allowed() -> bool:
-    """If FORTRESS_OPERATOR_TOKEN is set, require token header or valid dashboard Basic auth."""
-    token = (os.environ.get("FORTRESS_OPERATOR_TOKEN") or "").strip()
-    if not token:
-        return True
-    hdr = (request.headers.get("X-Operator-Token") or "").strip()
-    if hdr == token:
-        return True
-    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
-    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
-    auth = request.authorization
-    if user and pw and auth and auth.username == user and auth.password == pw:
-        return True
-    return False
+    """State-changing halt/resume requires an operator token or dashboard auth."""
+    return _operator_request_authorized()
 
 
 def get_chart_bars_json(ticker: str, days: int) -> dict:
@@ -1997,6 +2002,29 @@ def _env_upsert_alpaca(api_key: str, secret_key: str) -> None:
         pass
 
 
+def _invalid_alpaca_credential_reason(api_key: str, secret_key: str) -> str | None:
+    for label, value in (("API key", api_key), ("secret key", secret_key)):
+        if "\n" in value or "\r" in value or "\x00" in value:
+            return f"{label} contains invalid control characters."
+    return None
+
+
+def _setup_save_keys_allowed() -> bool:
+    if _operator_request_authorized():
+        return True
+    if SETUP_COMPLETE_FILE.exists():
+        return False
+    # Preserve unauthenticated first-run setup only before real keys exist.
+    return not bool(_setup_status().get("has_alpaca_keys"))
+
+
+def _setup_test_connection_allowed() -> bool:
+    if _operator_request_authorized():
+        return True
+    # First-run wizard must be able to test the keys it just saved.
+    return not SETUP_COMPLETE_FILE.exists()
+
+
 @app.route("/setup")
 def setup_page():
     """First-run wizard: enter Alpaca keys and test connection."""
@@ -2014,6 +2042,8 @@ def api_setup_status():
 def api_setup_save_keys():
     """Save Alpaca API key and secret to .env. Never logged or echoed."""
     try:
+        if not _setup_save_keys_allowed():
+            return jsonify({"ok": False, "error": "operator_token_or_auth_required"}), 403
         data = request.get_json(force=True, silent=True) or {}
         api_key = (data.get("api_key") or "").strip()
         secret_key = (data.get("secret_key") or "").strip()
@@ -2023,6 +2053,9 @@ def api_setup_save_keys():
             return jsonify({"ok": False, "error": "Please use your real Alpaca keys, not placeholders."}), 400
         if len(api_key) < 10 or len(secret_key) < 10:
             return jsonify({"ok": False, "error": "Keys look too short. Check you copied them fully."}), 400
+        invalid_reason = _invalid_alpaca_credential_reason(api_key, secret_key)
+        if invalid_reason:
+            return jsonify({"ok": False, "error": invalid_reason}), 400
         _env_upsert_alpaca(api_key, secret_key)
         return jsonify({"ok": True})
     except Exception as e:
@@ -2033,6 +2066,8 @@ def api_setup_save_keys():
 def api_setup_test_connection():
     """Test Alpaca connection. On success, mark setup complete."""
     try:
+        if not _setup_test_connection_allowed():
+            return jsonify({"ok": False, "error": "operator_token_or_auth_required"}), 403
         from alpaca.trading.client import TradingClient
         os.environ.pop("ALPACA_API_KEY", None)
         os.environ.pop("ALPACA_SECRET_KEY", None)
@@ -2570,6 +2605,8 @@ def api_referral():
 
 @app.route("/api/policy/clear_rollback", methods=["POST"])
 def api_policy_clear_rollback():
+    if not _operator_request_authorized():
+        return jsonify({"ok": False, "error": "operator_token_or_auth_required"}), 403
     try:
         from utils.policy_guardrails import clear_forced_rollback
 

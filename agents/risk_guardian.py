@@ -141,10 +141,18 @@ def get_risk_limits(strict_mode: bool = False) -> dict:
         "circuit_breaker_reduce_threshold": CIRCUIT_BREAKER_REDUCE_THRESHOLD,
         "circuit_breaker_halt_threshold": CIRCUIT_BREAKER_HALT_THRESHOLD,
     }
-    # Policy profile can further tighten/adjust global limits without code changes.
+    # Policy profile can adjust global limits, but strict mode must never be loosened
+    # by an opportunistic/default profile while the risk engine is under stress.
     for k in ["max_positions", "max_position_size_pct", "max_total_risk_pct", "daily_loss_limit_pct", "weekly_loss_limit_pct"]:
         if risk_cfg.get(k) is not None:
-            base[k] = risk_cfg.get(k)
+            configured = risk_cfg.get(k)
+            if strict_mode:
+                if k in {"daily_loss_limit_pct", "weekly_loss_limit_pct"}:
+                    base[k] = max(base[k], configured)
+                else:
+                    base[k] = min(base[k], configured)
+            else:
+                base[k] = configured
     base["policy_profile"] = policy.get("active_profile")
     return base
 

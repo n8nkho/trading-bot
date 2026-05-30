@@ -9,6 +9,7 @@ File: ``data/pending_execution_queue.json`` with shape::
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,13 @@ from typing import Any
 def pending_queue_path(data_dir: Path | None = None) -> Path:
     root = data_dir if data_dir is not None else Path("data")
     return root / "pending_execution_queue.json"
+
+
+def _write_queue(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    tmp.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+    tmp.replace(path)
 
 
 def append_pending_batch(
@@ -34,8 +42,8 @@ def append_pending_batch(
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            data = {"batches": []}
+        except Exception as e:
+            raise ValueError(f"Could not read existing pending execution queue: {e}") from e
     batches = data.get("batches")
     if not isinstance(batches, list):
         batches = []
@@ -49,7 +57,7 @@ def append_pending_batch(
         }
     )
     data["batches"] = batches
-    path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+    _write_queue(path, data)
     return path
 
 
@@ -66,9 +74,12 @@ def load_batches(data_dir: Path | None = None) -> list[dict[str, Any]]:
 
 
 def clear_batches(data_dir: Path | None = None) -> None:
+    write_batches([], data_dir=data_dir)
+
+
+def write_batches(batches: list[dict[str, Any]], data_dir: Path | None = None) -> None:
     path = pending_queue_path(data_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"batches": []}, indent=2), encoding="utf-8")
+    _write_queue(path, {"batches": batches})
 
 
 def pending_summary(data_dir: Path | None = None) -> dict[str, Any]:
