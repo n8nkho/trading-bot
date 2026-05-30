@@ -134,6 +134,7 @@ def main() -> int:
         else:
             raise AssertionError("append_pending_batch should fail closed on corrupt JSON")
         assert queue_path.read_text(encoding="utf-8") == "{broken json"
+        queue_path.unlink()
 
         _install_orchestrator_import_stubs()
         os.environ["ALPACA_BASE_URL"] = "https://paper-api.alpaca.markets"
