@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import types
+from datetime import datetime
 from pathlib import Path
 
 
@@ -18,6 +19,15 @@ def _stub_module(name: str, **attrs) -> None:
 
 
 def _install_orchestrator_import_stubs() -> None:
+    parser = types.ModuleType("dateutil.parser")
+    parser.parse = lambda value: datetime.fromisoformat(str(value))
+    dateutil = types.ModuleType("dateutil")
+    dateutil.parser = parser
+    sys.modules["dateutil"] = dateutil
+    sys.modules["dateutil.parser"] = parser
+    _stub_module("pytz", timezone=lambda *a, **k: None)
+    _stub_module("dotenv", load_dotenv=lambda *a, **k: None)
+
     alpaca = types.ModuleType("alpaca")
     trading = types.ModuleType("alpaca.trading")
     client = types.ModuleType("alpaca.trading.client")
