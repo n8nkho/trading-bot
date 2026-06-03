@@ -40,6 +40,9 @@ python3 "$ROOT/smoke_operator_run_registry.py"
 echo "[verify] pre-trade gate smoke..."
 python3 "$ROOT/smoke_pre_trade_gate.py"
 
+echo "[verify] option notional gate smoke..."
+python3 "$ROOT/smoke_option_notional_gate.py"
+
 echo "[verify] trust ledger chain smoke..."
 python3 "$ROOT/smoke_trust_ledger_chain.py"
 

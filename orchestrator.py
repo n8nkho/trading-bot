@@ -571,6 +571,57 @@ def format_option_symbol(ticker, expiration, strike, call=True):
     return f"{ticker.upper()}{exp_str}{option_type}{strike_str}"
 
 
+def _estimate_option_order_notional_usd(trade: dict, contracts) -> float | None:
+    """Estimate premium-at-risk for an option order: contracts * premium * 100."""
+    try:
+        contract_count = float(contracts)
+    except Exception:
+        contract_count = 0.0
+
+    premium = None
+    option_details = trade.get("option_details")
+    premium_candidates = [
+        trade.get("entry_price"),
+        trade.get("premium"),
+        trade.get("entry_premium"),
+    ]
+    if isinstance(option_details, dict):
+        premium_candidates.extend(
+            [
+                option_details.get("premium"),
+                option_details.get("entry_premium"),
+                option_details.get("ask"),
+                option_details.get("lastPrice"),
+            ]
+        )
+    for candidate in premium_candidates:
+        try:
+            value = float(candidate)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            premium = value
+            break
+
+    if premium is not None and contract_count > 0:
+        return contract_count * premium * 100.0
+
+    fallback_candidates = [
+        trade.get("position_size"),
+        trade.get("cost"),
+    ]
+    if isinstance(option_details, dict):
+        fallback_candidates.append(option_details.get("cost"))
+    for candidate in fallback_candidates:
+        try:
+            value = float(candidate)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
 async def submit_approved_screening_trade(trade, candidates, current_params):
     """
     Submit one approved entry from daily screening (stock or option) and persist position if filled.
@@ -596,12 +647,13 @@ async def submit_approved_screening_trade(trade, candidates, current_params):
                 "error": "Alpaca client not initialized",
             }
         else:
+            estimated_notional = _estimate_option_order_notional_usd(trade, contracts)
             gate = evaluate_pre_trade_submission(
                 side="BUY",
                 symbol=option_symbol,
                 qty=float(contracts),
                 order_class="option",
-                estimated_notional_usd=None,
+                estimated_notional_usd=estimated_notional,
             )
             if not gate["allowed"]:
                 append_trust_event(

@@ -36,6 +36,13 @@ def evaluate_pre_trade_submission(
         max_notional = float(os.environ.get("FORTRESS_MAX_ORDER_NOTIONAL_USD", "25000"))
     except ValueError:
         max_notional = 25000.0
+    normalized_order_class = (order_class or "").strip().lower()
+    if (
+        normalized_order_class == "option"
+        and (side or "").strip().upper() == "BUY"
+        and estimated_notional_usd is None
+    ):
+        reasons.append("missing_option_notional_estimate")
     if estimated_notional_usd is not None and estimated_notional_usd > max_notional:
         reasons.append(f"estimated_notional_exceeds_cap:{max_notional}")
 
