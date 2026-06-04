@@ -32,6 +32,38 @@ def main():
     assert rg.circuit_breaker_active is True
     assert abs(rg.position_size_reduction - 0.5) < 1e-9
 
+    # Simulate the dashboard staying alive while a separate orchestrator/cron
+    # process updates the persisted state. get_risk_status must not report the
+    # stale import-time globals.
+    state_file.write_text(
+        json.dumps(
+            {
+                "consecutive_losses": 2,
+                "circuit_breaker_active": False,
+                "position_size_reduction": 0.5,
+                "updated_at": "2026-01-01T00:05:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    status = rg.get_risk_status()
+    assert int(status.get("consecutive_losses", 0)) == 2, status
+    assert status.get("circuit_breaker_active") is False, status
+
+    # Restore the original stressed state before testing in-process updates.
+    state_file.write_text(
+        json.dumps(
+            {
+                "consecutive_losses": 3,
+                "circuit_breaker_active": True,
+                "position_size_reduction": 0.5,
+                "updated_at": "2026-01-01T00:10:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert int(rg.get_risk_status().get("consecutive_losses", 0)) == 3
+
     # Apply a loss update and confirm file changed.
     rg.update_consecutive_losses({"pnl": -10.0})
     after = json.loads(state_file.read_text(encoding="utf-8"))

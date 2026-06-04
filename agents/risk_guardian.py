@@ -352,6 +352,9 @@ def get_risk_status():
     Returns:
         dict: Current risk status including circuit breaker state
     """
+    # Long-lived processes (dashboard/service workers) must observe updates
+    # persisted by cron/orchestrator processes after this module was imported.
+    _load_risk_state()
     policy = get_profile_bundle()
     return {
         "consecutive_losses": consecutive_losses,
