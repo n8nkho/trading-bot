@@ -318,12 +318,16 @@ def run_screener():
         Keeps Tier 1 strict, and broadens only if earlier tiers produce too few/zero candidates.
         """
         if market_regime in ("TRENDING_BULL", "BULL"):
+            try:
+                bull_rsi_t1 = int(float(os.getenv("FORTRESS_SCREENER_BULL_RSI_T1", "62") or 62))
+            except ValueError:
+                bull_rsi_t1 = 62
             tier_profiles = {
-                1: {"drop_min": -6, "drop_max": 2, "rsi_threshold": 50, "volume_ratio_min": 0.85},
-                2: {"drop_min": -10, "drop_max": 3, "rsi_threshold": 52, "volume_ratio_min": 0.75},
-                3: {"drop_min": -15, "drop_max": 4, "rsi_threshold": 55, "volume_ratio_min": 0.65},
-                4: {"drop_min": -20, "drop_max": 5, "rsi_threshold": 58, "volume_ratio_min": 0.55},
-                5: {"drop_min": -25, "drop_max": 6, "rsi_threshold": 60, "volume_ratio_min": 0.50},
+                1: {"drop_min": -6, "drop_max": 2, "rsi_threshold": bull_rsi_t1, "volume_ratio_min": 0.85},
+                2: {"drop_min": -10, "drop_max": 3, "rsi_threshold": min(68, bull_rsi_t1 + 4), "volume_ratio_min": 0.75},
+                3: {"drop_min": -15, "drop_max": 4, "rsi_threshold": min(72, bull_rsi_t1 + 8), "volume_ratio_min": 0.65},
+                4: {"drop_min": -20, "drop_max": 5, "rsi_threshold": min(75, bull_rsi_t1 + 12), "volume_ratio_min": 0.55},
+                5: {"drop_min": -25, "drop_max": 6, "rsi_threshold": min(78, bull_rsi_t1 + 16), "volume_ratio_min": 0.50},
             }
         else:
             tier_profiles = {
