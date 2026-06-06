@@ -4,6 +4,7 @@ Fetch open positions from Alpaca (broker truth) for dashboard sync / drift detec
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from typing import Any
 
 from utils.alpaca_env import is_alpaca_paper
@@ -40,6 +41,8 @@ def normalize_alpaca_position(pos: Any) -> dict[str, Any]:
         "current_price": cur,
         "pnl": round(u_pnl, 4),
         "pnl_pct": round(pct, 4) if pct is not None else None,
+        "entry_time": datetime.now().isoformat(),
+        "cost_basis": basis,
         "source": "alpaca_broker",
     }
 
