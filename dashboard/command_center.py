@@ -77,6 +77,19 @@ _DASH_PUBLIC_PATHS = frozenset({
 _DASH_PUBLIC_PREFIXES = ("/static/",)
 
 
+def _dashboard_basic_auth_valid() -> bool:
+    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
+    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
+    auth = request.authorization
+    return bool(user and pw and auth and auth.username == user and auth.password == pw)
+
+
+def _operator_token_valid() -> bool:
+    token = (os.environ.get("FORTRESS_OPERATOR_TOKEN") or "").strip()
+    hdr = (request.headers.get("X-Operator-Token") or "").strip()
+    return bool(token and hdr == token)
+
+
 @app.before_request
 def _fortress_dashboard_basic_auth():
     user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
@@ -86,8 +99,7 @@ def _fortress_dashboard_basic_auth():
     path = request.path or ""
     if path in _DASH_PUBLIC_PATHS or any(path.startswith(p) for p in _DASH_PUBLIC_PREFIXES):
         return None
-    auth = request.authorization
-    if auth and auth.username == user and auth.password == pw:
+    if _dashboard_basic_auth_valid():
         return None
     return Response(
         "Authentication required",
@@ -1895,16 +1907,9 @@ def get_recommendations():
 
 def _operator_halt_post_allowed() -> bool:
     """If FORTRESS_OPERATOR_TOKEN is set, require token header or valid dashboard Basic auth."""
-    token = (os.environ.get("FORTRESS_OPERATOR_TOKEN") or "").strip()
-    if not token:
+    if not (os.environ.get("FORTRESS_OPERATOR_TOKEN") or "").strip():
         return True
-    hdr = (request.headers.get("X-Operator-Token") or "").strip()
-    if hdr == token:
-        return True
-    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
-    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
-    auth = request.authorization
-    if user and pw and auth and auth.username == user and auth.password == pw:
+    if _operator_token_valid() or _dashboard_basic_auth_valid():
         return True
     return False
 
@@ -1977,6 +1982,24 @@ def _setup_status():
     return {"setup_complete": done or has_keys, "has_alpaca_keys": has_keys}
 
 
+def _setup_mutation_allowed() -> bool:
+    """Allow public onboarding only before real Alpaca keys have been configured."""
+    if not _setup_status()["setup_complete"]:
+        return True
+    return _dashboard_basic_auth_valid() or _operator_token_valid()
+
+
+def _clean_alpaca_env_value(value, label: str) -> tuple[str, str | None]:
+    if not isinstance(value, str):
+        return "", f"{label} must be a string."
+    cleaned = value.strip()
+    if any(ch in cleaned for ch in ("\r", "\n", "\x00")):
+        return "", f"{label} must be a single line."
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in cleaned):
+        return "", f"{label} contains invalid control characters."
+    return cleaned, None
+
+
 def _env_upsert_alpaca(api_key: str, secret_key: str) -> None:
     """Update or add ALPACA_API_KEY and ALPACA_SECRET_KEY in .env. Preserve other vars. Never log keys."""
     lines = []
@@ -2014,9 +2037,13 @@ def api_setup_status():
 def api_setup_save_keys():
     """Save Alpaca API key and secret to .env. Never logged or echoed."""
     try:
+        if not _setup_mutation_allowed():
+            return jsonify({"ok": False, "error": "setup_auth_required"}), 403
         data = request.get_json(force=True, silent=True) or {}
-        api_key = (data.get("api_key") or "").strip()
-        secret_key = (data.get("secret_key") or "").strip()
+        api_key, api_key_error = _clean_alpaca_env_value(data.get("api_key") or "", "API key")
+        secret_key, secret_key_error = _clean_alpaca_env_value(data.get("secret_key") or "", "Secret key")
+        if api_key_error or secret_key_error:
+            return jsonify({"ok": False, "error": api_key_error or secret_key_error}), 400
         if not api_key or not secret_key:
             return jsonify({"ok": False, "error": "API key and secret are required."}), 400
         if "your_" in api_key.lower() or "your_" in secret_key.lower():
@@ -2033,6 +2060,8 @@ def api_setup_save_keys():
 def api_setup_test_connection():
     """Test Alpaca connection. On success, mark setup complete."""
     try:
+        if not _setup_mutation_allowed():
+            return jsonify({"ok": False, "error": "setup_auth_required"}), 403
         from alpaca.trading.client import TradingClient
         os.environ.pop("ALPACA_API_KEY", None)
         os.environ.pop("ALPACA_SECRET_KEY", None)
