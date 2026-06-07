@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import base64
 import os
+import sys
 import tempfile
+import types
 from pathlib import Path
 
 
@@ -13,7 +15,17 @@ def _basic_auth(user: str, password: str) -> dict[str, str]:
     return {"Authorization": f"Basic {token}"}
 
 
+def _install_import_stubs() -> None:
+    """Keep this smoke focused on setup auth instead of optional analytics deps."""
+    if "utils.simple_daily_backtest" not in sys.modules:
+        mod = types.ModuleType("utils.simple_daily_backtest")
+        mod.read_backtest_snapshot = lambda *args, **kwargs: {}
+        mod.run_daily_momentum_backtest = lambda *args, **kwargs: {"ok": True}
+        sys.modules["utils.simple_daily_backtest"] = mod
+
+
 def main() -> int:
+    _install_import_stubs()
     import dashboard.command_center as cc
 
     old_env_file = cc.ENV_FILE
