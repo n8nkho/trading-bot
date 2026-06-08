@@ -195,14 +195,17 @@ def scan_regime_stale_rth() -> list[dict[str, Any]]:
     return findings
 
 
-def run_integrity_scan(*, log: bool = True) -> dict[str, Any]:
-    findings = (
+def _collect_findings() -> list[dict[str, Any]]:
+    return (
         scan_drift_rollback_false_positive()
         + scan_evolution_staleness()
         + scan_cron_heartbeat()
         + scan_regime_stale_rth()
         + scan_fortress_ai_sibling()
     )
+
+
+def _write_scan(findings: list[dict[str, Any]], *, log: bool) -> dict[str, Any]:
     ts = now_iso()
     out = {
         "timestamp": ts,
@@ -222,8 +225,129 @@ def run_integrity_scan(*, log: bool = True) -> dict[str, Any]:
         with open(lp, "a", encoding="utf-8") as f:
             for item in findings:
                 f.write(json.dumps({**item, "scan_ts": ts}, default=str) + "\n")
-    maybe_auto_run_evolution(out)
     return out
+
+
+def _remediation_attempted(result: dict[str, Any] | None) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if result.get("error"):
+        return False
+    if result.get("skipped"):
+        return False
+    return True
+
+
+def run_integrity_scan(*, log: bool = True, auto_remediate: bool = True) -> dict[str, Any]:
+    findings = _collect_findings()
+    out = _write_scan(findings, log=log)
+    remediation: list[dict[str, Any]] = []
+    if auto_remediate:
+        for name, fn in (
+            ("refresh_regime", maybe_auto_refresh_regime),
+            ("refresh_cron_heartbeats", maybe_auto_refresh_cron_heartbeats),
+            ("run_evolution", maybe_auto_run_evolution),
+        ):
+            try:
+                res = fn(out)
+            except Exception as e:
+                res = {"error": str(e)[:200]}
+            if res is not None:
+                remediation.append({"action": name, **res})
+        if any(_remediation_attempted(r) for r in remediation):
+            findings = _collect_findings()
+            out = _write_scan(findings, log=False)
+    if remediation:
+        out["auto_remediation"] = remediation
+    return out
+
+
+def maybe_auto_refresh_regime(scan: dict[str, Any]) -> dict[str, Any] | None:
+    """Refresh regime snapshot when stale during RTH."""
+    import os
+
+    if str(os.getenv("FORTRESS_SI_AUTO_REFRESH_REGIME", "1")).strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        return None
+    codes = {str(f.get("code") or "") for f in scan.get("findings") or []}
+    if "regime_stale_rth" not in codes:
+        return None
+    try:
+        import subprocess
+
+        py = _ROOT / "venv" / "bin" / "python3"
+        if not py.is_file():
+            py = Path("python3")
+        proc = subprocess.run(
+            [str(py), "-m", "agents.regime_detector"],
+            cwd=str(_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if proc.returncode == 0:
+            return {"ok": True}
+        return {"error": (proc.stderr or proc.stdout or "regime_detector failed")[:200]}
+    except Exception as e:
+        return {"error": str(e)[:200]}
+
+
+def maybe_auto_refresh_cron_heartbeats(scan: dict[str, Any]) -> dict[str, Any] | None:
+    """Re-run stale RTH cron jobs via cron_run.sh to refresh heartbeats."""
+    import os
+    import subprocess
+
+    if str(os.getenv("FORTRESS_SI_AUTO_REFRESH_CRON", "1")).strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        return None
+    codes = {str(f.get("code") or "") for f in scan.get("findings") or []}
+    if "cron_heartbeat_fail" not in codes:
+        return None
+    try:
+        from utils.cron_heartbeat import evaluate_heartbeat_health, load_manifest
+
+        hb = evaluate_heartbeat_health(load_manifest(), store_path=_ROOT / "data" / "cron_heartbeats.json")
+        stale_jobs = [str(a.get("job") or "") for a in (hb.get("alerts") or []) if a.get("job")]
+    except Exception as e:
+        return {"error": str(e)[:200]}
+    if not stale_jobs:
+        return {"skipped": "no_stale_jobs"}
+    script = _ROOT / "scripts" / "cron_run.sh"
+    if not script.is_file():
+        return {"error": "cron_run.sh missing"}
+    py = _ROOT / "venv" / "bin" / "python3"
+    job_cmds: dict[str, list[str]] = {
+        "regime_detector": [str(py), "-m", "agents.regime_detector"],
+        "screener": [str(py), "-m", "agents.screener_agent"],
+        "sentiment_velocity": [str(py), "-m", "agents.sentiment_velocity_agent"],
+        "options_flow": [str(py), "-m", "agents.options_flow_agent"],
+    }
+    refreshed: list[str] = []
+    errors: list[str] = []
+    for job in stale_jobs[:6]:
+        if job in job_cmds:
+            cmd = ["bash", str(script), job] + job_cmds[job]
+        else:
+            cmd = ["bash", str(script), job]
+        try:
+            proc = subprocess.run(cmd, cwd=str(_ROOT), capture_output=True, text=True, timeout=180)
+            if proc.returncode == 0:
+                refreshed.append(job)
+            else:
+                errors.append(f"{job}:{proc.returncode}")
+        except Exception as e:
+            errors.append(f"{job}:{str(e)[:80]}")
+    if refreshed:
+        return {"ok": True, "refreshed": refreshed, "errors": errors}
+    return {"error": "; ".join(errors)[:200] if errors else "no_jobs_refreshed"}
 
 
 def maybe_auto_run_evolution(scan: dict[str, Any]) -> dict[str, Any] | None:

@@ -19,9 +19,13 @@ _FORTRESS_AI = Path("/home/ubuntu/fortress-ai")
 
 DISPOSITION_PENDING_AGENT = "pending_agent_review"
 DISPOSITION_PENDING_HUMAN = "pending_human_go"
+DISPOSITION_AUTO_RESOLVED = "auto_resolved"
+DISPOSITION_MONITORING = "monitoring"
 STATUS_OPEN = "open"
 STATUS_CLOSED = "closed"
 STATUS_IMPLEMENTED = "implemented"
+
+_AUTO_RECONCILE_SOURCES = frozenset({"integrity_scan", "scan_opportunity", "capability_review"})
 
 
 def _data_dir() -> Path:
@@ -54,15 +58,81 @@ def _now_iso() -> str:
     return now_iso()
 
 
-def _finding_key(code: str, component: str = "") -> str:
-    return f"{component}:{code}" if component else str(code)
+def _finding_key(code: str, component: str = "", *, objective_id: str = "") -> str:
+    base = f"{component}:{code}" if component else str(code)
+    if objective_id and code == "si_objective_gap":
+        return f"{base}:{objective_id}"
+    return base
+
+
+def finding_key_from_finding(finding: dict[str, Any]) -> str:
+    return _finding_key(
+        str(finding.get("code") or ""),
+        str(finding.get("component") or ""),
+        objective_id=str(finding.get("objective_id") or ""),
+    )
+
+
+def _finding_still_active(item: dict[str, Any], findings: list[dict[str, Any]]) -> bool:
+    code = str(item.get("code") or "")
+    component = str(item.get("component") or "")
+    item_oid = str((item.get("finding") or {}).get("objective_id") or "")
+    for f in findings:
+        if str(f.get("code") or "") != code:
+            continue
+        if str(f.get("component") or "") != component:
+            continue
+        f_oid = str(f.get("objective_id") or "")
+        if code == "si_objective_gap" and (item_oid or f_oid):
+            if item_oid and f_oid:
+                return item_oid == f_oid
+            return True
+        return True
+    return False
+
+
+def reconcile_cleared_findings(
+    scan: dict[str, Any],
+    *,
+    active_findings: list[dict[str, Any]] | None = None,
+) -> list[str]:
+    """Auto-close open queue items when integrity/opportunity scans no longer report them."""
+    findings = active_findings if active_findings is not None else list(scan.get("findings") or [])
+    queue = load_queue()
+    closed: list[str] = []
+    changed = False
+    for i, item in enumerate(queue.get("items") or []):
+        if not isinstance(item, dict) or item.get("status") != STATUS_OPEN:
+            continue
+        if item.get("disposition") == DISPOSITION_PENDING_HUMAN:
+            continue
+        src = str(item.get("source") or "integrity_scan")
+        if src not in _AUTO_RECONCILE_SOURCES:
+            continue
+        if _finding_still_active(item, findings):
+            continue
+        code = str(item.get("code") or item.get("finding_key") or "")
+        item["status"] = STATUS_IMPLEMENTED
+        item["disposition"] = DISPOSITION_AUTO_RESOLVED
+        item["closed_reason"] = "finding_cleared"
+        item["implemented_utc"] = _now_iso()
+        item["implementation_note"] = (
+            f"Auto-closed: finding no longer active in scan ({code})."
+        )[:2000]
+        item["updated_utc"] = _now_iso()
+        queue["items"][i] = item
+        closed.append(code)
+        changed = True
+    if changed:
+        save_queue(queue)
+    return closed
 
 
 def upsert_from_finding(finding: dict[str, Any], *, source: str = "integrity_scan") -> dict[str, Any]:
     code = str(finding.get("code") or "")
     component = str(finding.get("component") or "classic")
     queue = load_queue()
-    key = _finding_key(code, component)
+    key = finding_key_from_finding(finding)
     existing = next(
         (x for x in queue.get("items") or [] if x.get("finding_key") == key and x.get("status") == STATUS_OPEN),
         None,
@@ -105,6 +175,7 @@ def process_integrity_scan(scan: dict[str, Any] | None = None) -> dict[str, Any]
 
     scan = scan or run_integrity_scan(log=True)
     items = [upsert_from_finding(f) for f in scan.get("findings") or []]
+    auto_resolved = reconcile_cleared_findings(scan)
 
     # Merge high-severity items from fortress-ai sibling queue
     sibling_pending: list[dict[str, Any]] = []
@@ -122,6 +193,7 @@ def process_integrity_scan(scan: dict[str, Any] | None = None) -> dict[str, Any]
         "system_tz": system_tz_name(),
         "timestamp_utc": ts,
         "classic_items": len(items),
+        "auto_resolved": auto_resolved,
         "sibling_pending_agent": len(sibling_pending),
         "pending_agent": [x for x in load_queue().get("items") or [] if x.get("disposition") == DISPOSITION_PENDING_AGENT and x.get("status") == STATUS_OPEN],
         "pending_human": [x for x in load_queue().get("items") or [] if x.get("disposition") == DISPOSITION_PENDING_HUMAN and x.get("status") == STATUS_OPEN],
