@@ -2078,10 +2078,11 @@ def flush_pending_execution_queue() -> dict:
         },
     )
     logger.info(
-        "execute_pending: batches=%d trade_results success=%d fail=%d (queue cleared)",
+        "execute_pending: batches=%d trade_results success=%d fail=%d remaining_batches=%d",
         len(batches),
         succeeded,
         failed,
+        len(remaining_batches),
     )
     return {"ok": True, "batches": len(batches), "executed": succeeded, "failed": failed}
 
