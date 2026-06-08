@@ -583,6 +583,8 @@ async def submit_approved_screening_trade(trade, candidates, current_params):
         expiration = trade["expiration"]
         contracts = trade["contracts"]
         call = trade.get("call", True)
+        entry_price = float(trade.get("entry_price") or trade.get("premium") or 0)
+        option_notional = float(contracts) * entry_price * 100 if entry_price > 0 else None
 
         option_symbol = format_option_symbol(ticker, expiration, strike, call)
         logger.info(f"Executing OPTION order: {option_symbol} x {contracts} contracts")
@@ -601,7 +603,7 @@ async def submit_approved_screening_trade(trade, candidates, current_params):
                 symbol=option_symbol,
                 qty=float(contracts),
                 order_class="option",
-                estimated_notional_usd=None,
+                estimated_notional_usd=option_notional,
             )
             if not gate["allowed"]:
                 append_trust_event(
@@ -636,6 +638,7 @@ async def submit_approved_screening_trade(trade, candidates, current_params):
                         "status": str(order.status),
                         "error": None,
                     }
+                    order_result = _refresh_order_result(order_result)
                 except Exception as e:
                     order_result = {
                         "success": False,
@@ -2027,7 +2030,7 @@ def flush_pending_execution_queue() -> dict:
 
     Clears the queue after processing (check logs / trust ledger for failures).
     """
-    from utils.pending_execution_queue import clear_batches, load_batches
+    from utils.pending_execution_queue import clear_batches, load_batches, replace_batches
 
     batches = load_batches(DATA_DIR)
     if not batches:
@@ -2038,20 +2041,34 @@ def flush_pending_execution_queue() -> dict:
 
     async def _run_all():
         out = []
+        remaining = []
         for batch in batches:
             if not isinstance(batch, dict):
                 continue
             candidates = batch.get("candidates") or []
             trades = batch.get("trades") or []
+            failed_trades = []
             for trade in trades:
                 if isinstance(trade, dict):
-                    out.append(await submit_approved_screening_trade(trade, candidates, current_params))
-        return out
+                    status, updated_trade = await submit_approved_screening_trade(trade, candidates, current_params)
+                    out.append((status, updated_trade))
+                    if status != "success":
+                        failed_trades.append(updated_trade)
+            if failed_trades:
+                kept_batch = dict(batch)
+                kept_batch["trades"] = failed_trades
+                kept_batch["updated_at"] = datetime.now().isoformat()
+                kept_batch["last_attempt_at"] = kept_batch["updated_at"]
+                remaining.append(kept_batch)
+        return out, remaining
 
-    results = asyncio.run(_run_all())
+    results, remaining_batches = asyncio.run(_run_all())
     succeeded = sum(1 for st, _ in results if st == "success")
     failed = sum(1 for st, _ in results if st == "failure")
-    clear_batches(DATA_DIR)
+    if failed:
+        replace_batches(remaining_batches, DATA_DIR)
+    else:
+        clear_batches(DATA_DIR)
     append_trust_event(
         "pending_execution_flushed",
         {
@@ -2516,7 +2533,26 @@ if __name__ == "__main__":
                 decision["shares"] = shares
                 decision["position_value"] = position_value
 
+            if get_execution_mode() == "human_in_loop":
+                deferred_snipe_trades.append(
+                    {
+                        "ticker": ticker,
+                        "action": "BUY",
+                        "reason": decision.get("reason") or "intraday_sniper",
+                        "reasoning": decision.get("reasoning") or decision.get("reason") or "intraday_sniper",
+                        "position_size": position_value,
+                        "shares": shares,
+                        "entry_price": entry_price,
+                        "confidence": decision.get("confidence"),
+                        "timestamp": datetime.now().isoformat(),
+                        "trade_type": "STOCK",
+                    }
+                )
+                existing_tickers.add(ticker)
+                continue
+
             order_result = execute_buy_order(ticker, shares, entry_price)
+            order_result = _refresh_order_result(order_result)
             if order_result.get("success") and _order_is_filled(order_result):
                 order_id = order_result.get("order_id")
                 add_position({

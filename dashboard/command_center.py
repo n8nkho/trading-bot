@@ -96,6 +96,23 @@ def _fortress_dashboard_basic_auth():
     )
 
 
+def _dashboard_basic_auth_valid() -> bool:
+    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
+    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
+    auth = request.authorization
+    return bool(user and pw and auth and auth.username == user and auth.password == pw)
+
+
+def _operator_token_valid() -> bool:
+    token = (os.environ.get("FORTRESS_OPERATOR_TOKEN") or "").strip()
+    hdr = (request.headers.get("X-Operator-Token") or "").strip()
+    return bool(token and hdr == token)
+
+
+def _mutation_auth_allowed() -> bool:
+    return _operator_token_valid() or _dashboard_basic_auth_valid()
+
+
 DATA_DIR = _ROOT / "data"
 LOGS_DIR = _ROOT / "logs"
 CONFIG_DIR = _ROOT / "config"
@@ -1894,19 +1911,8 @@ def get_recommendations():
 
 
 def _operator_halt_post_allowed() -> bool:
-    """If FORTRESS_OPERATOR_TOKEN is set, require token header or valid dashboard Basic auth."""
-    token = (os.environ.get("FORTRESS_OPERATOR_TOKEN") or "").strip()
-    if not token:
-        return True
-    hdr = (request.headers.get("X-Operator-Token") or "").strip()
-    if hdr == token:
-        return True
-    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
-    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
-    auth = request.authorization
-    if user and pw and auth and auth.username == user and auth.password == pw:
-        return True
-    return False
+    """Require either operator token or dashboard Basic auth for halt/resume writes."""
+    return _mutation_auth_allowed()
 
 
 def get_chart_bars_json(ticker: str, days: int) -> dict:
@@ -1997,6 +2003,16 @@ def _env_upsert_alpaca(api_key: str, secret_key: str) -> None:
         pass
 
 
+def _setup_mutation_allowed() -> bool:
+    if not _setup_status()["setup_complete"]:
+        return True
+    return _mutation_auth_allowed()
+
+
+def _safe_env_secret_value(value: str) -> bool:
+    return bool(value) and not any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+
+
 @app.route("/setup")
 def setup_page():
     """First-run wizard: enter Alpaca keys and test connection."""
@@ -2014,11 +2030,15 @@ def api_setup_status():
 def api_setup_save_keys():
     """Save Alpaca API key and secret to .env. Never logged or echoed."""
     try:
+        if not _setup_mutation_allowed():
+            return jsonify({"ok": False, "error": "operator_token_or_auth_required"}), 403
         data = request.get_json(force=True, silent=True) or {}
         api_key = (data.get("api_key") or "").strip()
         secret_key = (data.get("secret_key") or "").strip()
         if not api_key or not secret_key:
             return jsonify({"ok": False, "error": "API key and secret are required."}), 400
+        if not _safe_env_secret_value(api_key) or not _safe_env_secret_value(secret_key):
+            return jsonify({"ok": False, "error": "Keys contain unsupported control characters."}), 400
         if "your_" in api_key.lower() or "your_" in secret_key.lower():
             return jsonify({"ok": False, "error": "Please use your real Alpaca keys, not placeholders."}), 400
         if len(api_key) < 10 or len(secret_key) < 10:
@@ -2033,6 +2053,8 @@ def api_setup_save_keys():
 def api_setup_test_connection():
     """Test Alpaca connection. On success, mark setup complete."""
     try:
+        if not _setup_mutation_allowed():
+            return jsonify({"ok": False, "error": "operator_token_or_auth_required"}), 403
         from alpaca.trading.client import TradingClient
         os.environ.pop("ALPACA_API_KEY", None)
         os.environ.pop("ALPACA_SECRET_KEY", None)

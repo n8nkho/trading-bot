@@ -71,6 +71,14 @@ def clear_batches(data_dir: Path | None = None) -> None:
     path.write_text(json.dumps({"batches": []}, indent=2), encoding="utf-8")
 
 
+def replace_batches(batches: list[dict[str, Any]], data_dir: Path | None = None) -> None:
+    """Replace the queue contents, used to retain failed HITL submissions."""
+    path = pending_queue_path(data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    safe_batches = [b for b in batches if isinstance(b, dict)]
+    path.write_text(json.dumps({"batches": safe_batches}, indent=2, default=str), encoding="utf-8")
+
+
 def pending_summary(data_dir: Path | None = None) -> dict[str, Any]:
     batches = load_batches(data_dir)
     n_trades = 0
