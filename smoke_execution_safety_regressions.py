@@ -15,6 +15,7 @@ import os
 import sys
 import tempfile
 import types
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -27,6 +28,20 @@ def _module(name: str, **attrs):
 
 
 def _install_orchestrator_import_stubs() -> None:
+    dotenv_mod = _module("dotenv", load_dotenv=lambda *args, **kwargs: None)
+    dateutil_pkg = _module("dateutil")
+    dateutil_pkg.__path__ = []
+
+    def parse_date(value):
+        text = str(value)
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return datetime.strptime(text, "%Y-%m-%d")
+
+    _module("dateutil.parser", parse=parse_date)
+    _module("pytz", UTC=timezone.utc, timezone=lambda name: timezone.utc)
+
     agents_pkg = _module("agents")
     agents_pkg.__path__ = []
     _module("agents.screener_agent", run_screener=lambda: [])
