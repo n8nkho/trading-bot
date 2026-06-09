@@ -7,6 +7,8 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 import json
+import os
+import tempfile
 from utils.policy_profile import get_profile_bundle
 
 # Setup logging
@@ -54,6 +56,17 @@ position_size_reduction = 1.0  # multiplier for position sizing
 STATE_FILE = Path("data") / "risk_guardian_state.json"
 
 
+def _fail_closed_risk_state(reason: str) -> None:
+    """
+    Enter the safest persisted-risk fallback when halt state cannot be trusted.
+    """
+    global consecutive_losses, circuit_breaker_active, position_size_reduction
+    consecutive_losses = max(consecutive_losses, CIRCUIT_BREAKER_HALT_THRESHOLD)
+    circuit_breaker_active = True
+    position_size_reduction = min(position_size_reduction, 0.5)
+    logger.error(f"Risk state unavailable or invalid; failing closed: {reason}")
+
+
 def _load_risk_state() -> None:
     """
     Load persisted risk state so the circuit breaker isn't lost on restart.
@@ -68,16 +81,25 @@ def _load_risk_state() -> None:
             position_size_reduction = float(data.get("position_size_reduction", 1.0) or 1.0)
             logger.info(f"Loaded persisted risk state: consecutive_losses={consecutive_losses}")
     except Exception as e:
-        logger.warning(f"Could not load risk state from {STATE_FILE}: {type(e).__name__}: {str(e)}")
+        _fail_closed_risk_state(f"{STATE_FILE}: {type(e).__name__}: {str(e)}")
 
 
 def _persist_risk_state() -> None:
     """
     Persist risk state whenever it changes.
     """
+    tmp_name = None
     try:
         STATE_FILE.parent.mkdir(exist_ok=True, parents=True)
-        with open(STATE_FILE, "w") as f:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=STATE_FILE.parent,
+            prefix=f".{STATE_FILE.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as f:
+            tmp_name = f.name
             json.dump(
                 {
                     "consecutive_losses": consecutive_losses,
@@ -88,7 +110,16 @@ def _persist_risk_state() -> None:
                 f,
                 indent=2,
             )
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, STATE_FILE)
     except Exception as e:
+        if tmp_name:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
         logger.warning(f"Could not persist risk state to {STATE_FILE}: {type(e).__name__}: {str(e)}")
 
 
@@ -166,6 +197,11 @@ def check_risk_limits_with_profile(portfolio_data, new_position, strict_mode: bo
     
     # Check circuit breaker status
     if strict_mode:
+        if circuit_breaker_active:
+            return {
+                "approved": False,
+                "reason": f"Strict mode halt: circuit breaker active ({consecutive_losses} consecutive losses)",
+            }
         if consecutive_losses >= limits["circuit_breaker_halt_threshold"]:
             return {
                 "approved": False,
@@ -288,7 +324,11 @@ def check_circuit_breaker():
         dict: {"approved": bool, "reason": str}
     """
     global circuit_breaker_active
-    
+
+    if circuit_breaker_active:
+        reason = f"Trading halted: circuit breaker active ({consecutive_losses} consecutive losses)"
+        return {"approved": False, "reason": reason}
+
     if consecutive_losses >= CIRCUIT_BREAKER_HALT_THRESHOLD:
         circuit_breaker_active = True
         reason = f"Trading halted: {consecutive_losses} consecutive losses (threshold: {CIRCUIT_BREAKER_HALT_THRESHOLD})"
