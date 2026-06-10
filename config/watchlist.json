@@ -1,5 +1,5 @@
 {
-  "max_priority_tiers_to_scan": 5,
+  "max_priority_tiers_to_scan": 6,
   "screening_target_candidates_per_run": 5,
   "prefilter_workers": 6,
   "max_screening_runtime_seconds": 180,

@@ -54,7 +54,7 @@
       },
       "screening": {
         "target_candidates_per_run": 5,
-        "max_priority_tiers_to_scan": 5
+        "max_priority_tiers_to_scan": 6
       },
       "execution": {
         "sniper_max_trades_per_run": 3
@@ -71,7 +71,7 @@
       },
       "screening": {
         "target_candidates_per_run": 7,
-        "max_priority_tiers_to_scan": 5
+        "max_priority_tiers_to_scan": 6
       },
       "execution": {
         "sniper_max_trades_per_run": 4
