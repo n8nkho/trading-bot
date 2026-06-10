@@ -71,6 +71,13 @@ def clear_batches(data_dir: Path | None = None) -> None:
     path.write_text(json.dumps({"batches": []}, indent=2), encoding="utf-8")
 
 
+def replace_batches(batches: list[dict[str, Any]], data_dir: Path | None = None) -> None:
+    """Replace the queue contents with the supplied batches."""
+    path = pending_queue_path(data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"batches": batches}, indent=2, default=str), encoding="utf-8")
+
+
 def pending_summary(data_dir: Path | None = None) -> dict[str, Any]:
     batches = load_batches(data_dir)
     n_trades = 0

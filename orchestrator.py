@@ -2025,9 +2025,9 @@ def flush_pending_execution_queue() -> dict:
     """
     Submit all trades queued in ``data/pending_execution_queue.json`` (human-in-the-loop).
 
-    Clears the queue after processing (check logs / trust ledger for failures).
+    Retains failed trades in the queue so the operator can retry after fixing the cause.
     """
-    from utils.pending_execution_queue import clear_batches, load_batches
+    from utils.pending_execution_queue import load_batches, replace_batches
 
     batches = load_batches(DATA_DIR)
     if not batches:
@@ -2038,35 +2038,243 @@ def flush_pending_execution_queue() -> dict:
 
     async def _run_all():
         out = []
+        retained_batches = []
         for batch in batches:
             if not isinstance(batch, dict):
                 continue
             candidates = batch.get("candidates") or []
             trades = batch.get("trades") or []
+            failed_trades = []
             for trade in trades:
                 if isinstance(trade, dict):
-                    out.append(await submit_approved_screening_trade(trade, candidates, current_params))
-        return out
+                    try:
+                        status, updated_trade = await submit_approved_screening_trade(trade, candidates, current_params)
+                    except Exception as exc:
+                        status = "failure"
+                        updated_trade = dict(trade)
+                        updated_trade["executed"] = False
+                        updated_trade["execution_error"] = f"{type(exc).__name__}: {exc}"
+                        logger.error(
+                            "execute_pending: trade %s failed with unexpected error: %s",
+                            updated_trade.get("ticker", "?"),
+                            updated_trade["execution_error"],
+                        )
+                    out.append((status, updated_trade))
+                    if status != "success":
+                        failed_trades.append(updated_trade)
+            if failed_trades:
+                retained = dict(batch)
+                retained["trades"] = failed_trades
+                retained["updated_at"] = datetime.now().isoformat()
+                retained["last_execution_attempt_at"] = retained["updated_at"]
+                retained_batches.append(retained)
+        return out, retained_batches
 
-    results = asyncio.run(_run_all())
+    results, retained_batches = asyncio.run(_run_all())
     succeeded = sum(1 for st, _ in results if st == "success")
     failed = sum(1 for st, _ in results if st == "failure")
-    clear_batches(DATA_DIR)
+    replace_batches(retained_batches, DATA_DIR)
     append_trust_event(
         "pending_execution_flushed",
         {
             "batches": len(batches),
             "executed": succeeded,
             "failed": failed,
+            "retained_failed": failed,
         },
     )
     logger.info(
-        "execute_pending: batches=%d trade_results success=%d fail=%d (queue cleared)",
+        "execute_pending: batches=%d trade_results success=%d fail=%d retained=%d",
         len(batches),
         succeeded,
         failed,
+        len(retained_batches),
     )
     return {"ok": True, "batches": len(batches), "executed": succeeded, "failed": failed}
+
+
+def run_intraday_sniper(portfolio_value: float = 10000) -> dict:
+    """Run one intraday sniper cycle; queue instead of submitting in HITL mode."""
+    logger.info(f"Running intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
+    opportunities = scan_intraday_opportunities(portfolio_value)
+
+    logger.info("=" * 80)
+    logger.info("INTRADAY SNIPER RESULTS")
+    logger.info("=" * 80)
+    logger.info(f"Opportunities found: {len(opportunities)}")
+
+    if not opportunities:
+        logger.info("No opportunities found")
+        return {"ok": True, "opportunities": 0, "executed": 0, "queued": 0, "rejected": 0}
+
+    # Risk profile (match daily strict-mode behavior)
+    risk_status = get_risk_status()
+    consecutive_losses = int(risk_status.get("consecutive_losses") or 0)
+    circuit_breaker_active = bool(risk_status.get("circuit_breaker_active"))
+    strict_mode = circuit_breaker_active or consecutive_losses >= 2
+
+    account_info = get_account_info()
+    if not account_info:
+        logger.error("Intraday sniper: could not load Alpaca account info; execution disabled.")
+        return {
+            "ok": False,
+            "error": "account_info_unavailable",
+            "opportunities": len(opportunities),
+            "executed": 0,
+            "queued": 0,
+            "rejected": 0,
+            "strict_mode": strict_mode,
+        }
+
+    current_positions = load_positions()
+    portfolio_data = build_portfolio_data(current_positions, portfolio_value)
+    existing_tickers = {str(p.get("ticker") or "").upper() for p in current_positions if p.get("ticker")}
+
+    policy = get_profile_bundle()
+    exec_cfg = policy.get("execution") or {}
+    max_trades_per_run = int(exec_cfg.get("sniper_max_trades_per_run") or os.getenv("SNIPER_MAX_TRADES_PER_RUN", "3"))
+    mode = get_execution_mode()
+    executed = 0
+    approved = []
+    rejected = []
+    deferred_snipe_trades: list[dict] = []
+
+    for opp in opportunities:
+        if executed >= max_trades_per_run:
+            break
+
+        ticker = str(opp.get("ticker") or "").strip().upper()
+        entry_price = float(opp.get("entry_price") or 0)
+        metrics = opp.get("metrics") or {}
+
+        if not ticker or entry_price <= 0:
+            continue
+        if ticker in existing_tickers:
+            continue
+
+        decision = evaluate_quick_entry(ticker, entry_price, metrics, portfolio_value=portfolio_value)
+        if not isinstance(decision, dict) or decision.get("action") != "BUY":
+            rejected.append({"ticker": ticker, "reason": (decision or {}).get("reason") or "not_buy"})
+            continue
+
+        shares = int(decision.get("shares") or 0)
+        position_value = float(decision.get("position_value") or 0)
+        if shares < 1 or position_value <= 0:
+            rejected.append({"ticker": ticker, "reason": "invalid_position_size"})
+            continue
+
+        required_capital = position_value * BUYING_POWER_BUFFER
+        if account_info.get("buying_power", 0) < required_capital:
+            rejected.append({"ticker": ticker, "reason": "insufficient_buying_power"})
+            continue
+
+        new_position = {
+            "ticker": ticker,
+            "size": shares,
+            "value": position_value,
+            "sector": "Unknown",
+        }
+        risk_check = check_risk_limits(portfolio_data, new_position, strict_mode=strict_mode)
+        if not risk_check.get("approved"):
+            rejected.append({"ticker": ticker, "reason": risk_check.get("reason") or "risk_rejected"})
+            continue
+
+        if "adjusted_size" in risk_check:
+            shares = int(risk_check["adjusted_size"])
+            position_value = shares * entry_price
+            decision["shares"] = shares
+            decision["position_value"] = position_value
+
+        if mode == "human_in_loop":
+            trade = {
+                "ticker": ticker,
+                "action": "BUY",
+                "trade_type": "STOCK",
+                "shares": shares,
+                "entry_price": entry_price,
+                "position_value": position_value,
+                "reason": decision.get("reason") or "intraday_sniper",
+                "confidence": decision.get("confidence"),
+                "timestamp": datetime.now().isoformat(),
+            }
+            deferred_snipe_trades.append(trade)
+            portfolio_data["positions"].append({"ticker": ticker, "value": position_value, "sector": "Unknown"})
+            existing_tickers.add(ticker)
+            executed += 1
+            continue
+
+        order_result = execute_buy_order(ticker, shares, entry_price)
+        order_result = _refresh_order_result(order_result)
+        if order_result.get("success") and _order_is_filled(order_result):
+            order_id = order_result.get("order_id")
+            add_position({
+                "ticker": ticker,
+                "shares": shares,
+                "entry_price": entry_price,
+                "entry_date": datetime.now().isoformat(),
+                "order_id": order_id,
+                "sector": "Unknown",
+                "stop_loss_pct": -0.02,
+                "take_profit_pct": 0.05,
+                "tiers_sold": {"tier1": False, "tier2": False, "tier3": False},
+            })
+
+            portfolio_data["positions"].append({"ticker": ticker, "value": position_value, "sector": "Unknown"})
+            existing_tickers.add(ticker)
+            executed += 1
+            approved.append({"ticker": ticker, "shares": shares, "entry_price": entry_price, "order_id": order_id})
+
+    if mode == "human_in_loop" and deferred_snipe_trades:
+        from utils.pending_execution_queue import append_pending_batch
+
+        snipe_rid = f"snipe_{int(pytime.time())}"
+        append_pending_batch(
+            source="intraday_sniper",
+            run_id=snipe_rid,
+            candidates=[],
+            trades=deferred_snipe_trades,
+            data_dir=DATA_DIR,
+        )
+        append_trust_event(
+            "execution_deferred_hitl",
+            {
+                "run_id": snipe_rid,
+                "pending_count": len(deferred_snipe_trades),
+                "source": "intraday_sniper",
+            },
+        )
+
+    if mode == "human_in_loop":
+        logger.info(
+            "Intraday sniper (human-in-the-loop): queued=%d rejected=%d strict_mode=%s — run: python orchestrator.py execute_pending",
+            len(deferred_snipe_trades),
+            len(rejected),
+            strict_mode,
+        )
+        for a in deferred_snipe_trades:
+            logger.info(
+                "  QUEUED %s shares=%s @ %.2f",
+                a["ticker"],
+                a["shares"],
+                a["entry_price"],
+            )
+    else:
+        logger.info(
+            f"Intraday sniper: executed={len(approved)} rejected={len(rejected)} strict_mode={strict_mode}"
+        )
+        if approved:
+            for a in approved:
+                logger.info(f"  APPROVED {a['ticker']} shares={a['shares']} @ {a['entry_price']:.2f} order_id={a['order_id']}")
+
+    return {
+        "ok": True,
+        "mode": mode,
+        "opportunities": len(opportunities),
+        "executed": len(approved),
+        "queued": len(deferred_snipe_trades),
+        "rejected": len(rejected),
+        "strict_mode": strict_mode,
+    }
 
 
 if __name__ == "__main__":
@@ -2435,148 +2643,9 @@ if __name__ == "__main__":
 
     elif command == "snipe":
         portfolio_value = float(sys.argv[2]) if len(sys.argv) > 2 else 10000
-        logger.info(f"Running intraday sniper (Portfolio: ${portfolio_value:,.2f})...")
-        opportunities = scan_intraday_opportunities(portfolio_value)
-        
-        logger.info("=" * 80)
-        logger.info("INTRADAY SNIPER RESULTS")
-        logger.info("=" * 80)
-        logger.info(f"Opportunities found: {len(opportunities)}")
-        
-        if not opportunities:
-            logger.info("No opportunities found")
-            sys.exit(0)
-
-        # Risk profile (match daily strict-mode behavior)
-        risk_status = get_risk_status()
-        consecutive_losses = int(risk_status.get("consecutive_losses") or 0)
-        circuit_breaker_active = bool(risk_status.get("circuit_breaker_active"))
-        strict_mode = circuit_breaker_active or consecutive_losses >= 2
-
-        account_info = get_account_info()
-        if not account_info:
-            logger.error("Intraday sniper: could not load Alpaca account info; execution disabled.")
-            sys.exit(0)
-
-        current_positions = load_positions()
-        portfolio_data = build_portfolio_data(current_positions, portfolio_value)
-        existing_tickers = {str(p.get("ticker") or "").upper() for p in current_positions if p.get("ticker")}
-
-        policy = get_profile_bundle()
-        exec_cfg = policy.get("execution") or {}
-        max_trades_per_run = int(exec_cfg.get("sniper_max_trades_per_run") or os.getenv("SNIPER_MAX_TRADES_PER_RUN", "3"))
-        executed = 0
-        approved = []
-        rejected = []
-        deferred_snipe_trades: list[dict] = []
-
-        for opp in opportunities:
-            if executed >= max_trades_per_run:
-                break
-
-            ticker = str(opp.get("ticker") or "").strip().upper()
-            entry_price = float(opp.get("entry_price") or 0)
-            metrics = opp.get("metrics") or {}
-
-            if not ticker or entry_price <= 0:
-                continue
-            if ticker in existing_tickers:
-                continue
-
-            decision = evaluate_quick_entry(ticker, entry_price, metrics, portfolio_value=portfolio_value)
-            if not isinstance(decision, dict) or decision.get("action") != "BUY":
-                rejected.append({"ticker": ticker, "reason": (decision or {}).get("reason") or "not_buy"})
-                continue
-
-            shares = int(decision.get("shares") or 0)
-            position_value = float(decision.get("position_value") or 0)
-            if shares < 1 or position_value <= 0:
-                rejected.append({"ticker": ticker, "reason": "invalid_position_size"})
-                continue
-
-            required_capital = position_value * BUYING_POWER_BUFFER
-            if account_info.get("buying_power", 0) < required_capital:
-                rejected.append({"ticker": ticker, "reason": "insufficient_buying_power"})
-                continue
-
-            new_position = {
-                "ticker": ticker,
-                "size": shares,
-                "value": position_value,
-                "sector": "Unknown",
-            }
-            risk_check = check_risk_limits(portfolio_data, new_position, strict_mode=strict_mode)
-            if not risk_check.get("approved"):
-                rejected.append({"ticker": ticker, "reason": risk_check.get("reason") or "risk_rejected"})
-                continue
-
-            if "adjusted_size" in risk_check:
-                shares = int(risk_check["adjusted_size"])
-                position_value = shares * entry_price
-                decision["shares"] = shares
-                decision["position_value"] = position_value
-
-            order_result = execute_buy_order(ticker, shares, entry_price)
-            if order_result.get("success") and _order_is_filled(order_result):
-                order_id = order_result.get("order_id")
-                add_position({
-                    "ticker": ticker,
-                    "shares": shares,
-                    "entry_price": entry_price,
-                    "entry_date": datetime.now().isoformat(),
-                    "order_id": order_id,
-                    "sector": "Unknown",
-                    "stop_loss_pct": -0.02,
-                    "take_profit_pct": 0.05,
-                    "tiers_sold": {"tier1": False, "tier2": False, "tier3": False},
-                })
-
-                portfolio_data["positions"].append({"ticker": ticker, "value": position_value, "sector": "Unknown"})
-                existing_tickers.add(ticker)
-                executed += 1
-                approved.append({"ticker": ticker, "shares": shares, "entry_price": entry_price, "order_id": order_id})
-
-        if get_execution_mode() == "human_in_loop" and deferred_snipe_trades:
-            from utils.pending_execution_queue import append_pending_batch
-
-            snipe_rid = f"snipe_{int(pytime.time())}"
-            append_pending_batch(
-                source="intraday_sniper",
-                run_id=snipe_rid,
-                candidates=[],
-                trades=deferred_snipe_trades,
-                data_dir=DATA_DIR,
-            )
-            append_trust_event(
-                "execution_deferred_hitl",
-                {
-                    "run_id": snipe_rid,
-                    "pending_count": len(deferred_snipe_trades),
-                    "source": "intraday_sniper",
-                },
-            )
-
-        if get_execution_mode() == "human_in_loop":
-            logger.info(
-                "Intraday sniper (human-in-the-loop): queued=%d rejected=%d strict_mode=%s — run: python orchestrator.py execute_pending",
-                len(deferred_snipe_trades),
-                len(rejected),
-                strict_mode,
-            )
-            for a in deferred_snipe_trades:
-                logger.info(
-                    "  QUEUED %s shares=%s @ %.2f",
-                    a["ticker"],
-                    a["shares"],
-                    a["entry_price"],
-                )
-        else:
-            logger.info(
-                f"Intraday sniper: executed={len(approved)} rejected={len(rejected)} strict_mode={strict_mode}"
-            )
-            if approved:
-                for a in approved:
-                    logger.info(f"  APPROVED {a['ticker']} shares={a['shares']} @ {a['entry_price']:.2f} order_id={a['order_id']}")
+        out = run_intraday_sniper(portfolio_value)
+        if not out.get("ok"):
+            sys.exit(1)
 
     elif command == "headline_event":
         from agents.headline_event_agent import run_headline_event_cycle

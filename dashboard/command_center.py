@@ -1909,6 +1909,25 @@ def _operator_halt_post_allowed() -> bool:
     return False
 
 
+def _operator_token_valid() -> bool:
+    token = (os.environ.get("FORTRESS_OPERATOR_TOKEN") or "").strip()
+    return bool(token) and (request.headers.get("X-Operator-Token") or "").strip() == token
+
+
+def _dashboard_basic_auth_valid() -> bool:
+    user = (os.environ.get("FORTRESS_DASHBOARD_USER") or "").strip()
+    pw = (os.environ.get("FORTRESS_DASHBOARD_PASS") or "").strip()
+    auth = request.authorization
+    return bool(user and pw and auth and auth.username == user and auth.password == pw)
+
+
+def _setup_mutation_allowed() -> bool:
+    """Allow public setup only before real Alpaca keys exist; require auth afterward."""
+    if not _setup_status().get("setup_complete"):
+        return True
+    return _operator_token_valid() or _dashboard_basic_auth_valid()
+
+
 def get_chart_bars_json(ticker: str, days: int) -> dict:
     import yfinance as yf
 
@@ -1997,6 +2016,10 @@ def _env_upsert_alpaca(api_key: str, secret_key: str) -> None:
         pass
 
 
+def _valid_env_secret_value(value: str) -> bool:
+    return bool(value) and all(ord(ch) >= 32 and ord(ch) != 127 for ch in value)
+
+
 @app.route("/setup")
 def setup_page():
     """First-run wizard: enter Alpaca keys and test connection."""
@@ -2014,11 +2037,15 @@ def api_setup_status():
 def api_setup_save_keys():
     """Save Alpaca API key and secret to .env. Never logged or echoed."""
     try:
+        if not _setup_mutation_allowed():
+            return jsonify({"ok": False, "error": "Authentication required."}), 401
         data = request.get_json(force=True, silent=True) or {}
         api_key = (data.get("api_key") or "").strip()
         secret_key = (data.get("secret_key") or "").strip()
         if not api_key or not secret_key:
             return jsonify({"ok": False, "error": "API key and secret are required."}), 400
+        if not _valid_env_secret_value(api_key) or not _valid_env_secret_value(secret_key):
+            return jsonify({"ok": False, "error": "Keys contain invalid control characters."}), 400
         if "your_" in api_key.lower() or "your_" in secret_key.lower():
             return jsonify({"ok": False, "error": "Please use your real Alpaca keys, not placeholders."}), 400
         if len(api_key) < 10 or len(secret_key) < 10:
@@ -2033,6 +2060,8 @@ def api_setup_save_keys():
 def api_setup_test_connection():
     """Test Alpaca connection. On success, mark setup complete."""
     try:
+        if not _setup_mutation_allowed():
+            return jsonify({"ok": False, "error": "Authentication required."}), 401
         from alpaca.trading.client import TradingClient
         os.environ.pop("ALPACA_API_KEY", None)
         os.environ.pop("ALPACA_SECRET_KEY", None)
