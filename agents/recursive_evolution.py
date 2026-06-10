@@ -192,6 +192,28 @@ def _phase2_parameter_tuning() -> dict[str, Any]:
         proposed["rsi_threshold"] = min(55, int(current.get("rsi_threshold", 40)) + 1)
         proposed["drop_max"] = min(0, int(current.get("drop_max", -5)) + 1)
         rationale.append("Win rate above 65%; cautiously increase throughput.")
+    elif not outcomes:
+        try:
+            from utils.classic_si_screener import maybe_auto_relax_screener, screening_context
+
+            screener_si = maybe_auto_relax_screener()
+            ctx = screening_context()
+            rationale.append(
+                f"No closed trades in window — screener SI context: "
+                f"zero_streak={ctx.get('consecutive_zero_runs')} regime={ctx.get('regime')}."
+            )
+            return {
+                "observed_trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "win_rate": 0.0,
+                "current_params": current,
+                "proposed_params": current,
+                "rationale": rationale,
+                "screener_si": screener_si,
+            }
+        except Exception as e:
+            rationale.append(f"No trades; screener SI skipped: {e}")
     else:
         rationale.append("Insufficient edge shift; hold parameters steady.")
 

@@ -330,13 +330,22 @@ def run_screener():
                 5: {"drop_min": -25, "drop_max": 6, "rsi_threshold": min(78, bull_rsi_t1 + 16), "volume_ratio_min": 0.50},
             }
         else:
+            from utils.classic_si_screener import effective_bear_tier1
+
+            bear = effective_bear_tier1()
+            rsi_t1 = int(bear.get("bear_rsi_t1") or 40)
+            drop_min = float(bear.get("bear_drop_min") if bear.get("bear_drop_min") is not None else -15)
+            drop_max = float(bear.get("bear_drop_max") if bear.get("bear_drop_max") is not None else -5)
+            vol_min = float(bear.get("bear_volume_ratio_min") if bear.get("bear_volume_ratio_min") is not None else 1.5)
             tier_profiles = {
-                1: {"drop_min": -15, "drop_max": -5, "rsi_threshold": 40, "volume_ratio_min": 1.5},
-                2: {"drop_min": -25, "drop_max": -1, "rsi_threshold": 45, "volume_ratio_min": 1.3},
-                3: {"drop_min": -35, "drop_max": 0, "rsi_threshold": 50, "volume_ratio_min": 1.2},
-                4: {"drop_min": -45, "drop_max": 0, "rsi_threshold": 52, "volume_ratio_min": 1.1},
-                5: {"drop_min": -50, "drop_max": 5, "rsi_threshold": 55, "volume_ratio_min": 1.0},
+                1: {"drop_min": drop_min, "drop_max": drop_max, "rsi_threshold": rsi_t1, "volume_ratio_min": vol_min},
+                2: {"drop_min": min(-25, drop_min - 10), "drop_max": max(0, drop_max + 1), "rsi_threshold": min(58, rsi_t1 + 5), "volume_ratio_min": max(0.65, vol_min - 0.15)},
+                3: {"drop_min": min(-35, drop_min - 20), "drop_max": max(0, drop_max + 2), "rsi_threshold": min(62, rsi_t1 + 10), "volume_ratio_min": max(0.55, vol_min - 0.25)},
+                4: {"drop_min": min(-45, drop_min - 30), "drop_max": max(0, drop_max + 3), "rsi_threshold": min(65, rsi_t1 + 14), "volume_ratio_min": max(0.45, vol_min - 0.35)},
+                5: {"drop_min": min(-50, drop_min - 35), "drop_max": max(5, drop_max + 4), "rsi_threshold": min(68, rsi_t1 + 18), "volume_ratio_min": max(0.40, vol_min - 0.45)},
             }
+            if bear.get("bear_ranging_extremes") and market_regime in ("TRENDING_BEAR", "RANGING", "VOLATILE"):
+                ranging_extremes = True
         prof = tier_profiles.get(tier_idx) or tier_profiles[5]
         merged = dict(params)
         merged.update(prof)
@@ -637,6 +646,9 @@ def run_screener():
             from utils.pipeline_health import record_screening_outcome
 
             record_screening_outcome(candidates_found=len(candidates))
+            from utils.classic_si_screener import reset_relax_on_candidates
+
+            reset_relax_on_candidates(candidates_found=len(candidates))
         except Exception:
             pass
 

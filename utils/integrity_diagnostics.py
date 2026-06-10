@@ -195,12 +195,26 @@ def scan_regime_stale_rth() -> list[dict[str, Any]]:
     return findings
 
 
+def scan_classic_zero_candidates() -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    try:
+        from utils.classic_si_autonomous import scan_zero_candidate_finding
+
+        f = scan_zero_candidate_finding()
+        if f:
+            findings.append(f)
+    except Exception:
+        pass
+    return findings
+
+
 def _collect_findings() -> list[dict[str, Any]]:
     return (
         scan_drift_rollback_false_positive()
         + scan_evolution_staleness()
         + scan_cron_heartbeat()
         + scan_regime_stale_rth()
+        + scan_classic_zero_candidates()
         + scan_fortress_ai_sibling()
     )
 

@@ -19,6 +19,7 @@ _FORTRESS_AI = Path("/home/ubuntu/fortress-ai")
 
 DISPOSITION_PENDING_AGENT = "pending_agent_review"
 DISPOSITION_PENDING_HUMAN = "pending_human_go"
+DISPOSITION_AUTO_APPLY_QUEUED = "auto_apply_queued"
 DISPOSITION_AUTO_RESOLVED = "auto_resolved"
 DISPOSITION_MONITORING = "monitoring"
 STATUS_OPEN = "open"
@@ -106,6 +107,8 @@ def reconcile_cleared_findings(
             continue
         if item.get("disposition") == DISPOSITION_PENDING_HUMAN:
             continue
+        if item.get("disposition") == DISPOSITION_AUTO_APPLY_QUEUED:
+            continue
         src = str(item.get("source") or "integrity_scan")
         if src not in _AUTO_RECONCILE_SOURCES:
             continue
@@ -177,7 +180,6 @@ def process_integrity_scan(scan: dict[str, Any] | None = None) -> dict[str, Any]
     items = [upsert_from_finding(f) for f in scan.get("findings") or []]
     auto_resolved = reconcile_cleared_findings(scan)
 
-    # Merge high-severity items from fortress-ai sibling queue
     sibling_pending: list[dict[str, Any]] = []
     sib = _FORTRESS_AI / "data" / "si_recommendation_summary.json"
     if sib.exists():
@@ -187,6 +189,14 @@ def process_integrity_scan(scan: dict[str, Any] | None = None) -> dict[str, Any]
         except Exception:
             pass
 
+    classic_si: dict[str, Any] = {}
+    try:
+        from utils.classic_si_autonomous import run_classic_si_cycle
+
+        classic_si = run_classic_si_cycle()
+    except Exception as e:
+        classic_si = {"error": str(e)[:120]}
+
     ts = _now_iso()
     summary = {
         "timestamp": ts,
@@ -195,8 +205,10 @@ def process_integrity_scan(scan: dict[str, Any] | None = None) -> dict[str, Any]
         "classic_items": len(items),
         "auto_resolved": auto_resolved,
         "sibling_pending_agent": len(sibling_pending),
+        "classic_si": classic_si,
         "pending_agent": [x for x in load_queue().get("items") or [] if x.get("disposition") == DISPOSITION_PENDING_AGENT and x.get("status") == STATUS_OPEN],
         "pending_human": [x for x in load_queue().get("items") or [] if x.get("disposition") == DISPOSITION_PENDING_HUMAN and x.get("status") == STATUS_OPEN],
+        "auto_apply_queued": [x for x in load_queue().get("items") or [] if x.get("disposition") == DISPOSITION_AUTO_APPLY_QUEUED and x.get("status") == STATUS_OPEN],
     }
     (_data_dir() / "si_recommendation_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary
@@ -243,7 +255,15 @@ def set_agent_assessment(
             "assessed_utc": _now_iso(),
         }
         if worth_implementing:
-            item["disposition"] = DISPOSITION_PENDING_HUMAN
+            try:
+                from utils.classic_si_autonomous import auto_enabled
+
+                if auto_enabled():
+                    item["disposition"] = DISPOSITION_AUTO_APPLY_QUEUED
+                else:
+                    item["disposition"] = DISPOSITION_PENDING_HUMAN
+            except Exception:
+                item["disposition"] = DISPOSITION_PENDING_HUMAN
         else:
             item["disposition"] = DISPOSITION_DISMISSED
             item["status"] = STATUS_CLOSED
