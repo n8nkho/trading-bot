@@ -698,14 +698,17 @@ def is_market_hours():
         return False
 
 
-def execute_buy_order(ticker, shares, entry_price):
+def execute_buy_order(ticker, shares, entry_price, *, portfolio_equity_usd=None, stop_loss_pct=None, take_profit_pct=None):
     """
-    Execute a market buy order via Alpaca.
+    Execute a market buy order via Alpaca (optionally with broker-side bracket OCO).
     
     Args:
         ticker: Stock symbol
         shares: Number of shares to buy
         entry_price: Expected entry price (for logging)
+        portfolio_equity_usd: Optional equity for BUY position-% gate cap
+        stop_loss_pct: Optional override; defaults from current_params
+        take_profit_pct: Optional override; defaults from current_params
         
     Returns:
         dict: {
@@ -730,11 +733,19 @@ def execute_buy_order(ticker, shares, entry_price):
         est = float(shares) * float(entry_price or 0)
     except Exception:
         est = 0.0
+
+    equity = portfolio_equity_usd
+    if equity is None:
+        acct = get_account_info()
+        if acct:
+            equity = acct.get("equity")
+
     gate = evaluate_pre_trade_submission(
         side="BUY",
         symbol=ticker,
         qty=float(shares),
         estimated_notional_usd=est if est > 0 else None,
+        portfolio_equity_usd=equity,
     )
     if not gate["allowed"]:
         logger.warning(f"{ticker}: pre_trade_gate blocked: {gate.get('reasons')}")
@@ -749,32 +760,32 @@ def execute_buy_order(ticker, shares, entry_price):
             "filled_price": None,
             "error": format_gate_block_message(gate),
         }
+
+    params = load_current_params()
+    sl_pct = stop_loss_pct if stop_loss_pct is not None else params.get("stop_loss_pct", -2.0)
+    tp_pct = take_profit_pct if take_profit_pct is not None else params.get("take_profit_pct", 5.0)
     
     try:
-        logger.info(f"{ticker}: Submitting BUY order for {shares} shares (expected price: ${entry_price:.2f})")
-        
-        # Create market order request
-        order_data = MarketOrderRequest(
-            symbol=ticker,
-            qty=shares,
-            side=OrderSide.BUY,
-            time_in_force=TimeInForce.DAY
+        from utils.alpaca_execution import submit_entry_with_bracket
+
+        logger.info(
+            f"{ticker}: Submitting BUY order for {shares} shares "
+            f"(expected price: ${entry_price:.2f}, stop={sl_pct}, target={tp_pct})"
         )
-        
-        # Submit order
-        order = alpaca_client.submit_order(order_data)
-        
-        logger.info(f"{ticker}: Order submitted - ID: {order.id}, Status: {order.status}")
-        
-        # Return order details
-        return {
-            'success': True,
-            'order_id': str(order.id),
-            'filled_qty': int(order.filled_qty) if order.filled_qty else None,
-            'filled_price': float(order.filled_avg_price) if order.filled_avg_price else None,
-            'status': str(order.status),
-            'error': None
-        }
+        result = submit_entry_with_bracket(
+            client=alpaca_client,
+            symbol=ticker,
+            qty=int(shares),
+            entry_price=float(entry_price or 0),
+            stop_loss_pct=float(sl_pct),
+            take_profit_pct=float(tp_pct),
+        )
+        if result.get("success"):
+            logger.info(
+                f"{ticker}: Order submitted - ID: {result.get('order_id')}, "
+                f"Status: {result.get('status')}, type: {result.get('order_type')}"
+            )
+        return result
         
     except Exception as e:
         logger.error(f"{ticker}: Error executing buy order: {type(e).__name__}: {str(e)}")
@@ -787,13 +798,14 @@ def execute_buy_order(ticker, shares, entry_price):
         }
 
 
-def execute_sell_order(ticker, shares):
+def execute_sell_order(ticker, shares, mark_price=None):
     """
     Execute a market sell order via Alpaca.
     
     Args:
         ticker: Stock symbol
         shares: Number of shares to sell
+        mark_price: Optional mark for estimated_notional gate (required for cap checks)
         
     Returns:
         dict: {
@@ -814,11 +826,29 @@ def execute_sell_order(ticker, shares):
             'error': 'Alpaca client not initialized'
         }
 
+    try:
+        px = float(mark_price) if mark_price is not None else 0.0
+    except Exception:
+        px = 0.0
+    if px <= 0:
+        try:
+            import yfinance as yf
+
+            hist = yf.Ticker(ticker).history(period="1d", interval="1m")
+            if len(hist):
+                px = float(hist["Close"].iloc[-1])
+        except Exception:
+            px = 0.0
+    try:
+        est = float(shares) * float(px or 0)
+    except Exception:
+        est = 0.0
+
     gate = evaluate_pre_trade_submission(
         side="SELL",
         symbol=ticker,
         qty=float(shares),
-        estimated_notional_usd=None,
+        estimated_notional_usd=est if est > 0 else None,
     )
     if not gate["allowed"]:
         logger.warning(f"{ticker}: pre_trade_gate blocked: {gate.get('reasons')}")
@@ -964,12 +994,17 @@ async def submit_approved_screening_trade(trade, candidates, current_params):
                 "error": "Alpaca client not initialized",
             }
         else:
+            try:
+                premium = float(trade.get("entry_price") or trade.get("filled_price") or 0)
+            except Exception:
+                premium = 0.0
+            option_notional = premium * float(contracts) * 100.0 if premium > 0 else None
             gate = evaluate_pre_trade_submission(
                 side="BUY",
                 symbol=option_symbol,
                 qty=float(contracts),
                 order_class="option",
-                estimated_notional_usd=None,
+                estimated_notional_usd=option_notional,
             )
             if not gate["allowed"]:
                 append_trust_event(
@@ -2006,7 +2041,7 @@ async def monitor_positions_async():
                     execute_buy_order, ticker, cover_qty, mark_px
                 )
             else:
-                order_result = await asyncio.to_thread(execute_sell_order, ticker, cover_qty)
+                order_result = await asyncio.to_thread(execute_sell_order, ticker, cover_qty, mark_px)
             order_result = await asyncio.to_thread(_refresh_order_result, order_result)
             
             if order_result['success'] and _order_is_filled(order_result):

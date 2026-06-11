@@ -154,6 +154,12 @@ def main():
     ]
 
     orch_mod.run_screener = lambda: mock_candidates
+
+    class _PassthroughRecursiveScreener:
+        def screen_candidates(self, candidates, portfolio_nav=None):
+            return list(candidates or [])
+
+    orch_mod.RecursiveScreener = lambda data_dir=None: _PassthroughRecursiveScreener()
     orch_mod.check_twitter_sentiment = lambda ticker, confidence: "BULLISH"
     orch_mod.quick_fundamental_check = lambda ticker, confidence: {
         "fundamental_approved": True,
@@ -254,6 +260,7 @@ def main():
 
     saved_positions = []
     orch_mod2.run_screener = lambda: mock_candidates
+    orch_mod2.RecursiveScreener = lambda data_dir=None: _PassthroughRecursiveScreener()
     orch_mod2.check_twitter_sentiment = lambda ticker, confidence: "BULLISH"
     orch_mod2.quick_fundamental_check = lambda ticker, confidence: {
         "fundamental_approved": True,

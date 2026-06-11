@@ -78,6 +78,21 @@ class TestGuardrailExtensions(unittest.TestCase):
         self.assertFalse(gate["allowed"])
         self.assertIn("invalid_symbol_format", gate.get("reasons") or [])
 
+    def test_pre_trade_buy_position_pct_cap(self):
+        os.environ["FORTRESS_POSITION_SIZE_PCT"] = "0.03"
+        try:
+            gate = evaluate_pre_trade_submission(
+                side="BUY",
+                symbol="AAPL",
+                qty=100,
+                estimated_notional_usd=5000.0,
+                portfolio_equity_usd=100000.0,
+            )
+            self.assertFalse(gate["allowed"])
+            self.assertTrue(any("estimated_notional_exceeds_cap" in r for r in gate["reasons"]))
+        finally:
+            os.environ.pop("FORTRESS_POSITION_SIZE_PCT", None)
+
 
 if __name__ == "__main__":
     unittest.main()

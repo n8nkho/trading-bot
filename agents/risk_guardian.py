@@ -5,6 +5,7 @@ Monitors and enforces risk limits to protect capital
 
 import logging
 import os
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 import json
@@ -75,6 +76,7 @@ circuit_breaker_active = False
 position_size_reduction = 1.0  # multiplier for position sizing
 
 STATE_FILE = Path("data") / "risk_guardian_state.json"
+_STATE_LOCK = threading.RLock()
 
 # Avoid INFO spam when dashboard/API imports risk_guardian dozens of times per page load.
 _POLICY_RISK_LIMITS_CACHE: dict | None = None
@@ -148,6 +150,21 @@ def _policy_risk_limits() -> dict:
     return out
 
 
+def _sync_state_from_disk() -> None:
+    """Re-read persisted state so circuit breaker is authoritative across threads/processes."""
+    global consecutive_losses, circuit_breaker_active, position_size_reduction
+    try:
+        if not STATE_FILE.exists():
+            return
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        consecutive_losses = int(data.get("consecutive_losses", 0) or 0)
+        circuit_breaker_active = bool(data.get("circuit_breaker_active", False))
+        position_size_reduction = float(data.get("position_size_reduction", 1.0) or 1.0)
+    except Exception as e:
+        logger.warning("Could not sync risk state from %s: %s: %s", STATE_FILE, type(e).__name__, e)
+
+
 def _load_risk_state() -> None:
     """
     Load persisted risk state so the circuit breaker isn't lost on restart.
@@ -196,7 +213,7 @@ def _persist_risk_state() -> None:
     """
     try:
         STATE_FILE.parent.mkdir(exist_ok=True, parents=True)
-        with open(STATE_FILE, "w") as f:
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(
                 {
                     "consecutive_losses": consecutive_losses,
@@ -295,6 +312,12 @@ def check_risk_limits_with_profile(portfolio_data, new_position, strict_mode: bo
     - strict_mode tightens limits and uses a stricter circuit-breaker threshold.
     - does not alter persisted global state; it only changes approval for this decision.
     """
+    with _STATE_LOCK:
+        _sync_state_from_disk()
+        return _check_risk_limits_with_profile_locked(portfolio_data, new_position, strict_mode=strict_mode)
+
+
+def _check_risk_limits_with_profile_locked(portfolio_data, new_position, strict_mode: bool = False):
     logger.info(f"Checking risk limits for new position: {new_position['ticker']} (strict_mode={strict_mode})")
     
     equity = portfolio_data.get('equity', 0)
@@ -530,13 +553,18 @@ def check_circuit_breaker():
         dict: {"approved": bool, "reason": str}
     """
     global circuit_breaker_active
-    
-    if consecutive_losses >= CIRCUIT_BREAKER_HALT_THRESHOLD:
-        circuit_breaker_active = True
-        reason = f"Trading halted: {consecutive_losses} consecutive losses (threshold: {CIRCUIT_BREAKER_HALT_THRESHOLD})"
-        return {"approved": False, "reason": reason}
-    
-    return {"approved": True, "reason": "Circuit breaker OK"}
+
+    with _STATE_LOCK:
+        _sync_state_from_disk()
+        if consecutive_losses >= CIRCUIT_BREAKER_HALT_THRESHOLD:
+            circuit_breaker_active = True
+            reason = (
+                f"Trading halted: {consecutive_losses} consecutive losses "
+                f"(threshold: {CIRCUIT_BREAKER_HALT_THRESHOLD})"
+            )
+            return {"approved": False, "reason": reason}
+
+        return {"approved": True, "reason": "Circuit breaker OK"}
 
 
 def update_consecutive_losses(trade_result):
@@ -547,31 +575,34 @@ def update_consecutive_losses(trade_result):
         trade_result: dict with 'pnl' key (positive = profit, negative = loss)
     """
     global consecutive_losses, position_size_reduction, circuit_breaker_active
-    
-    pnl = trade_result.get('pnl', 0)
-    
-    if pnl < 0:
-        consecutive_losses += 1
-        logger.warning(f"Consecutive losses: {consecutive_losses}")
-        
-        # Apply position size reduction
-        if consecutive_losses >= CIRCUIT_BREAKER_REDUCE_THRESHOLD:
-            position_size_reduction = 0.5
-            logger.warning(f"Position size reduced to 50% after {consecutive_losses} consecutive losses")
-        
-        # Activate circuit breaker halt
-        if consecutive_losses >= CIRCUIT_BREAKER_HALT_THRESHOLD:
-            circuit_breaker_active = True
-            logger.error(f"CIRCUIT BREAKER ACTIVATED: Trading halted after {consecutive_losses} consecutive losses")
-    else:
-        # Reset on profitable trade
-        if consecutive_losses > 0:
-            logger.info(f"Consecutive loss streak broken. Resetting from {consecutive_losses} to 0")
-        consecutive_losses = 0
-        position_size_reduction = 1.0
-        circuit_breaker_active = False
 
-    _persist_risk_state()
+    with _STATE_LOCK:
+        _sync_state_from_disk()
+        pnl = trade_result.get('pnl', 0)
+
+        if pnl < 0:
+            consecutive_losses += 1
+            logger.warning(f"Consecutive losses: {consecutive_losses}")
+
+            if consecutive_losses >= CIRCUIT_BREAKER_REDUCE_THRESHOLD:
+                position_size_reduction = 0.5
+                logger.warning(
+                    f"Position size reduced to 50% after {consecutive_losses} consecutive losses"
+                )
+
+            if consecutive_losses >= CIRCUIT_BREAKER_HALT_THRESHOLD:
+                circuit_breaker_active = True
+                logger.error(
+                    f"CIRCUIT BREAKER ACTIVATED: Trading halted after {consecutive_losses} consecutive losses"
+                )
+        else:
+            if consecutive_losses > 0:
+                logger.info(f"Consecutive loss streak broken. Resetting from {consecutive_losses} to 0")
+            consecutive_losses = 0
+            position_size_reduction = 1.0
+            circuit_breaker_active = False
+
+        _persist_risk_state()
 
 
 def reset_circuit_breaker():
@@ -579,12 +610,14 @@ def reset_circuit_breaker():
     Manually reset circuit breaker (e.g., after review/intervention).
     """
     global consecutive_losses, position_size_reduction, circuit_breaker_active
-    
-    logger.info("Circuit breaker manually reset")
-    consecutive_losses = 0
-    position_size_reduction = 1.0
-    circuit_breaker_active = False
-    _persist_risk_state()
+
+    with _STATE_LOCK:
+        _sync_state_from_disk()
+        logger.info("Circuit breaker manually reset")
+        consecutive_losses = 0
+        position_size_reduction = 1.0
+        circuit_breaker_active = False
+        _persist_risk_state()
 
 
 def get_risk_status(portfolio_equity: float | None = None):
@@ -594,28 +627,30 @@ def get_risk_status(portfolio_equity: float | None = None):
     Returns:
         dict: Current risk status including circuit breaker state
     """
-    policy_limits = _policy_risk_limits()
-    effective_limits = get_risk_limits(strict_mode=False)
-    runtime_guard = _evaluate_runtime_equity_guardrails(portfolio_equity)
-    return {
-        "consecutive_losses": consecutive_losses,
-        "position_size_reduction": position_size_reduction,
-        "circuit_breaker_active": circuit_breaker_active,
-        "max_positions": policy_limits["max_positions"],
-        "max_position_size_pct": policy_limits["max_position_size_pct"],
-        "max_total_risk_pct": policy_limits["max_total_risk_pct"],
-        "daily_loss_limit_pct": policy_limits["daily_loss_limit_pct"],
-        "weekly_loss_limit_pct": policy_limits["weekly_loss_limit_pct"],
-        "max_sector_concentration_pct": MAX_SECTOR_CONCENTRATION_PCT,
-        "policy_profile": policy_limits["policy_profile"],
-        "effective_max_position_size_pct": effective_limits.get("max_position_size_pct"),
-        "volatility_adaptive_sizing": effective_limits.get("volatility_adaptive_sizing"),
-        "drawdown_from_peak": runtime_guard.get("metrics", {}).get("drawdown_from_peak"),
-        "daily_loss_from_start": runtime_guard.get("metrics", {}).get("daily_loss_pct"),
-        "hourly_equity_velocity": runtime_guard.get("metrics", {}).get("hourly_equity_velocity"),
-        "runtime_guardrail_reason": runtime_guard.get("reason"),
-        "runtime_guardrail_blocked": bool(runtime_guard.get("blocked")),
-    }
+    with _STATE_LOCK:
+        _sync_state_from_disk()
+        policy_limits = _policy_risk_limits()
+        effective_limits = get_risk_limits(strict_mode=False)
+        runtime_guard = _evaluate_runtime_equity_guardrails(portfolio_equity)
+        return {
+            "consecutive_losses": consecutive_losses,
+            "position_size_reduction": position_size_reduction,
+            "circuit_breaker_active": circuit_breaker_active,
+            "max_positions": policy_limits["max_positions"],
+            "max_position_size_pct": policy_limits["max_position_size_pct"],
+            "max_total_risk_pct": policy_limits["max_total_risk_pct"],
+            "daily_loss_limit_pct": policy_limits["daily_loss_limit_pct"],
+            "weekly_loss_limit_pct": policy_limits["weekly_loss_limit_pct"],
+            "max_sector_concentration_pct": MAX_SECTOR_CONCENTRATION_PCT,
+            "policy_profile": policy_limits["policy_profile"],
+            "effective_max_position_size_pct": effective_limits.get("max_position_size_pct"),
+            "volatility_adaptive_sizing": effective_limits.get("volatility_adaptive_sizing"),
+            "drawdown_from_peak": runtime_guard.get("metrics", {}).get("drawdown_from_peak"),
+            "daily_loss_from_start": runtime_guard.get("metrics", {}).get("daily_loss_pct"),
+            "hourly_equity_velocity": runtime_guard.get("metrics", {}).get("hourly_equity_velocity"),
+            "runtime_guardrail_reason": runtime_guard.get("reason"),
+            "runtime_guardrail_blocked": bool(runtime_guard.get("blocked")),
+        }
 
 
 # Load persisted state at import time.
