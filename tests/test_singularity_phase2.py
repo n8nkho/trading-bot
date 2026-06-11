@@ -88,6 +88,36 @@ class TestClassicBracketExecution(unittest.TestCase):
 
         self.assertEqual(getattr(req, "order_class", None), OrderClass.BRACKET)
 
+    def test_bracket_failure_skips_naked_market_order(self):
+        from utils.alpaca_execution import submit_entry_with_bracket
+
+        client = MagicMock()
+        client.submit_order.side_effect = RuntimeError("broker rejected bracket")
+
+        with patch.dict(os.environ, {"FORTRESS_BRACKET_EXITS": "1"}):
+            out = submit_entry_with_bracket(
+                client=client,
+                symbol="AAPL",
+                qty=1,
+                entry_price=100.0,
+                stop_loss_pct=-2.0,
+                take_profit_pct=5.0,
+            )
+
+        self.assertFalse(out["success"])
+        self.assertTrue(out.get("blocked"))
+        self.assertEqual(out.get("held"), "SI-HOLD: bracket_unavailable")
+        self.assertIn("SI-HOLD: bracket_unavailable", out.get("error") or "")
+        self.assertEqual(client.submit_order.call_count, 3)
+        for call in client.submit_order.call_args_list:
+            req = call[0][0]
+            self.assertNotEqual(getattr(req, "order_type", None), "market_fallback")
+            order_class = getattr(req, "order_class", None)
+            if order_class is not None:
+                from alpaca.trading.enums import OrderClass
+
+                self.assertEqual(order_class, OrderClass.BRACKET)
+
 
 class TestRiskGuardianStateSafety(unittest.TestCase):
     def _reload_rg(self):

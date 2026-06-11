@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 ALPACA_BRACKET_MIN_OFFSET = 0.01
+BRACKET_SUBMIT_RETRIES = 2
+BRACKET_RETRY_BACKOFF_SEC = 0.35
 
 
 def bracket_exits_enabled() -> bool:
@@ -64,6 +67,22 @@ def clamp_bracket_prices(
     return tp, sl
 
 
+def _bracket_unavailable_result(*, sym: str, last_err: Exception | None, attempts: int) -> dict[str, Any]:
+    detail = f"{type(last_err).__name__}: {last_err}" if last_err else "unknown"
+    msg = f"SI-HOLD: bracket_unavailable ({attempts} attempts): {detail}"
+    logger.warning("%s: %s — skipping naked market entry", sym, msg)
+    return {
+        "success": False,
+        "blocked": True,
+        "held": "SI-HOLD: bracket_unavailable",
+        "order_id": None,
+        "filled_qty": None,
+        "filled_price": None,
+        "error": msg,
+        "order_type": None,
+    }
+
+
 def submit_entry_with_bracket(
     *,
     client: Any,
@@ -85,63 +104,41 @@ def submit_entry_with_bracket(
         take_profit_pct=take_profit_pct,
     )
 
-    try:
-        from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
-        from alpaca.trading.requests import (
-            MarketOrderRequest,
-            StopLossRequest,
-            TakeProfitRequest,
+    from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+    from alpaca.trading.requests import (
+        MarketOrderRequest,
+        StopLossRequest,
+        TakeProfitRequest,
+    )
+
+    tp_req = TakeProfitRequest(limit_price=tp_px)
+    sl_req = StopLossRequest(stop_price=sl_px)
+
+    if use_bracket:
+        req = MarketOrderRequest(
+            symbol=sym,
+            qty=qty,
+            side=OrderSide.BUY,
+            time_in_force=TimeInForce.DAY,
+            order_class=OrderClass.BRACKET,
+            take_profit=tp_req,
+            stop_loss=sl_req,
         )
+        order_type = "bracket_market"
+    else:
+        req = MarketOrderRequest(
+            symbol=sym,
+            qty=qty,
+            side=OrderSide.BUY,
+            time_in_force=TimeInForce.DAY,
+        )
+        order_type = "market"
 
-        tp_req = TakeProfitRequest(limit_price=tp_px)
-        sl_req = StopLossRequest(stop_price=sl_px)
-
-        if use_bracket:
-            req = MarketOrderRequest(
-                symbol=sym,
-                qty=qty,
-                side=OrderSide.BUY,
-                time_in_force=TimeInForce.DAY,
-                order_class=OrderClass.BRACKET,
-                take_profit=tp_req,
-                stop_loss=sl_req,
-            )
-            order_type = "bracket_market"
-        else:
-            req = MarketOrderRequest(
-                symbol=sym,
-                qty=qty,
-                side=OrderSide.BUY,
-                time_in_force=TimeInForce.DAY,
-            )
-            order_type = "market"
-
-        order = client.submit_order(req)
-        return {
-            "success": True,
-            "order_id": str(order.id),
-            "filled_qty": int(order.filled_qty) if order.filled_qty else None,
-            "filled_price": float(order.filled_avg_price) if order.filled_avg_price else None,
-            "status": str(order.status),
-            "error": None,
-            "order_type": order_type,
-            "take_profit_price": tp_px if use_bracket else None,
-            "stop_loss_price": sl_px if use_bracket else None,
-        }
-    except Exception as e:
-        logger.warning("%s: bracket submit failed: %s — falling back to market", sym, e)
+    attempts = BRACKET_SUBMIT_RETRIES + 1
+    last_err: Exception | None = None
+    for attempt in range(attempts):
         try:
-            from alpaca.trading.enums import OrderSide, TimeInForce
-            from alpaca.trading.requests import MarketOrderRequest
-
-            order = client.submit_order(
-                MarketOrderRequest(
-                    symbol=sym,
-                    qty=qty,
-                    side=OrderSide.BUY,
-                    time_in_force=TimeInForce.DAY,
-                )
-            )
+            order = client.submit_order(req)
             return {
                 "success": True,
                 "order_id": str(order.id),
@@ -149,13 +146,26 @@ def submit_entry_with_bracket(
                 "filled_price": float(order.filled_avg_price) if order.filled_avg_price else None,
                 "status": str(order.status),
                 "error": None,
-                "order_type": "market_fallback",
+                "order_type": order_type,
+                "take_profit_price": tp_px if use_bracket else None,
+                "stop_loss_price": sl_px if use_bracket else None,
             }
-        except Exception as e2:
-            return {
-                "success": False,
-                "order_id": None,
-                "filled_qty": None,
-                "filled_price": None,
-                "error": f"{type(e2).__name__}: {e2}",
-            }
+        except Exception as e:
+            last_err = e
+            if use_bracket and attempt < attempts - 1:
+                time.sleep(BRACKET_RETRY_BACKOFF_SEC * (attempt + 1))
+                continue
+            break
+
+    if use_bracket:
+        return _bracket_unavailable_result(sym=sym, last_err=last_err, attempts=attempts)
+
+    detail = f"{type(last_err).__name__}: {last_err}" if last_err else "unknown"
+    return {
+        "success": False,
+        "order_id": None,
+        "filled_qty": None,
+        "filled_price": None,
+        "error": detail,
+        "order_type": None,
+    }
