@@ -102,23 +102,8 @@ def get_logger(name: str, log_file: str | None = None) -> logging.Logger:
     return logger
 
 
-def append_screener_log(line: str) -> None:
-    _append_log_line("screener.log", line)
-
-
 def append_critique_log(line: str) -> None:
     _append_log_line("critique.log", line)
-
-
-def append_reflection_log(line: str) -> None:
-    _append_log_line("reflection.log", line)
-
-
-def append_briefing_log(line: str, *, dated: bool = False) -> None:
-    _append_log_line("briefing.log", line)
-    if dated:
-        dated_name = f"briefing_{datetime.now(timezone.utc).strftime('%Y%m%d')}.log"
-        _append_log_line(dated_name, line)
 
 
 def append_alerts_log(line: str) -> None:
