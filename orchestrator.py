@@ -780,7 +780,13 @@ def execute_buy_order(ticker, shares, entry_price, *, portfolio_equity_usd=None,
             stop_loss_pct=float(sl_pct),
             take_profit_pct=float(tp_pct),
         )
-        if result.get("success"):
+        if result.get("held") == "SI-HOLD: bracket_unavailable":
+            logger.warning(f"{ticker}: {result.get('error')}")
+            append_trust_event(
+                "bracket_unavailable",
+                {"ticker": ticker, "pattern": "stock_buy", "detail": result.get("error")},
+            )
+        elif result.get("success"):
             logger.info(
                 f"{ticker}: Order submitted - ID: {result.get('order_id')}, "
                 f"Status: {result.get('status')}, type: {result.get('order_type')}"
