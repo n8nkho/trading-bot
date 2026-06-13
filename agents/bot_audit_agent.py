@@ -2007,6 +2007,14 @@ def audit_bot_performance(
     market_ctx: dict[str, Any]
     if include_market:
         market_ctx = fetch_market_performance_context()
+        try:
+            from utils.fortress_consciousness_bridge import load_consciousness_snapshot
+
+            fc = load_consciousness_snapshot()
+            if fc.get("enabled"):
+                market_ctx["fortress_consciousness"] = fc
+        except Exception:
+            pass
     else:
         market_ctx = {"ok": False, "disabled": True, "reason": "include_market_false"}
 
