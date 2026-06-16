@@ -609,6 +609,8 @@ def evaluate_single_entry(
     if _fr_ctx.get("active"):
         llm_min_conf = min(llm_min_conf, float(_fr_ctx.get("llm_min_confidence") or llm_min_conf))
         fill_recency_size_mult = float(_fr_ctx.get("position_size_mult") or 1.0)
+        # Apply relaxed RSI ceiling before deterministic gate (not only on LLM SKIP fallthrough).
+        rsi_cap = max(rsi_cap, float(_fr_ctx.get("relaxed_rsi_cap") or rsi_cap))
 
     # LLM-first reasoning path (replaces deterministic gating when provider is enabled).
     llm_decision = _get_llm_engine().evaluate_trade_opportunity(candidate)
