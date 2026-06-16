@@ -23,6 +23,7 @@ _SCREENER_CODES = frozenset(
         "classic_screener_throughput",
     }
 )
+_ENTRY_CODES = frozenset({"classic_fill_recency", "classic_fill_recency_gap"})
 
 
 def auto_enabled() -> bool:
@@ -36,12 +37,17 @@ def auto_enabled() -> bool:
 
 def _heuristic_assess(item: dict[str, Any]) -> dict[str, Any]:
     code = str(item.get("code") or "")
-    worth = code in _SCREENER_CODES or code.startswith("classic_")
+    worth = code in _SCREENER_CODES or code in _ENTRY_CODES or code.startswith("classic_")
     plan = str(item.get("recommendation") or "")
     if code in _SCREENER_CODES:
         plan += (
             "\nAuto-apply: utils/classic_si_screener.maybe_auto_relax_screener() "
             "and verify agents/screener_agent.py reads screener_si_overrides.json."
+        )
+    if code in _ENTRY_CODES:
+        plan += (
+            "\nAuto-apply: utils/classic_si_entry.maybe_auto_relax_entry_gate() "
+            "and verify agents/entry_agent.py reads entry_si_overrides.json."
         )
     return {
         "worth_implementing": worth,
@@ -105,6 +111,15 @@ def apply_screener_item(item: dict[str, Any]) -> dict[str, Any]:
     return {"ok": False, "skipped": result.get("skipped"), "detail": result}
 
 
+def apply_entry_item(item: dict[str, Any]) -> dict[str, Any]:
+    from utils.classic_si_entry import maybe_auto_relax_entry_gate
+
+    result = maybe_auto_relax_entry_gate()
+    if result.get("ok"):
+        return {"ok": True, "mode": "entry_relax", **result}
+    return {"ok": False, "skipped": result.get("skipped"), "detail": result}
+
+
 def apply_queued_item(item_id: str) -> dict[str, Any]:
     from utils.si_recommendation_queue import load_queue, mark_implemented
 
@@ -116,6 +131,8 @@ def apply_queued_item(item_id: str) -> dict[str, Any]:
     code = str(item.get("code") or "")
     if code in _SCREENER_CODES:
         result = apply_screener_item(item)
+    elif code in _ENTRY_CODES:
+        result = apply_entry_item(item)
     else:
         result = _try_fortress_code_agent(item)
 
@@ -276,6 +293,16 @@ def run_classic_si_cycle(*, assess_limit: int = 5, apply_limit: int = 2) -> dict
     if ctx["consecutive_zero_runs"] >= 2 and not any(a.get("ok") for a in applied):
         direct = maybe_auto_relax_screener()
 
+    entry_direct = {}
+    try:
+        from utils.fill_recency_entry import days_since_last_fill
+        from utils.classic_si_entry import maybe_auto_relax_entry_gate
+
+        if (days_since_last_fill() or 0) >= 7:
+            entry_direct = maybe_auto_relax_entry_gate()
+    except Exception:
+        entry_direct = {}
+
     return {
         "ok": True,
         "ts": now_iso(),
@@ -283,5 +310,6 @@ def run_classic_si_cycle(*, assess_limit: int = 5, apply_limit: int = 2) -> dict
         "assessed": len(assessed),
         "applied": applied,
         "direct_screener": direct,
+        "direct_entry": entry_direct,
         "context": ctx,
     }

@@ -598,13 +598,26 @@ def evaluate_single_entry(
     confidence = candidate.get('analysis', {}).get('confidence', 0.5)
     overnight_candidate = bool(candidate.get("overnight_eligible", True))
 
+    try:
+        from utils.fill_recency_entry import loosen_context
+
+        _fr_ctx = loosen_context()
+    except Exception:
+        _fr_ctx = {"active": False}
+    llm_min_conf = float(_LLM_MIN_CONF)
+    fill_recency_size_mult = 1.0
+    if _fr_ctx.get("active"):
+        llm_min_conf = min(llm_min_conf, float(_fr_ctx.get("llm_min_confidence") or llm_min_conf))
+        fill_recency_size_mult = float(_fr_ctx.get("position_size_mult") or 1.0)
+
     # LLM-first reasoning path (replaces deterministic gating when provider is enabled).
     llm_decision = _get_llm_engine().evaluate_trade_opportunity(candidate)
+    llm_fallthrough = False
     if llm_decision.get("llm_available"):
         llm_decision_id = get_llm_decision_tracker().record_decision(ticker, llm_decision, dict(candidate))
         llm_action = str(llm_decision.get("decision") or "SKIP").upper()
         llm_conf = float(llm_decision.get("confidence") or 0.0)
-        if llm_action == "BUY" and llm_conf >= _LLM_MIN_CONF:
+        if llm_action == "BUY" and llm_conf >= llm_min_conf:
             valid_llm, llm_guard_reason = validate_llm_trade_output(
                 ticker,
                 str(llm_decision.get("reasoning") or ""),
@@ -641,7 +654,7 @@ def evaluate_single_entry(
                 )
             base_position = float(portfolio_value) * BASE_POSITION_PCT
             multiplier = float(llm_decision.get("position_size_multiplier") or 1.0)
-            multiplier = max(0.8, min(1.2, multiplier))
+            multiplier = max(0.8, min(1.2, multiplier)) * fill_recency_size_mult
             policy_cap = _max_new_position_usd_from_policy(portfolio_value)
             position_size = min(base_position * multiplier, MAX_POSITION_SIZE, policy_cap)
             shares = int(position_size / current_price)
@@ -685,14 +698,31 @@ def evaluate_single_entry(
                 )
             if execution_advisor_mode >= 2:
                 decision["order_hint"] = (decision.get("execution_advisor") or {}).get("tactic")
+            if _fr_ctx.get("active"):
+                decision["fill_recency_loosen"] = True
+                decision["reason"] = (
+                    f"{decision.get('reason')} [fill_recency_loosen d={_fr_ctx.get('days_since_last_fill')}]"
+                )
             return decision
-        # LLM explicitly SKIPs or low-confidence BUY => skip.
-        return create_skip_decision(
-            ticker,
-            f"LLM decision {llm_action}: {llm_decision.get('reasoning')}",
-            llm_decision_id=llm_decision_id,
-        )
-    
+        if (
+            _fr_ctx.get("active")
+            and llm_action == "SKIP"
+            and screener_rsi < float(_fr_ctx.get("relaxed_rsi_cap") or 68)
+        ):
+            rsi_cap = max(rsi_cap, float(_fr_ctx["relaxed_rsi_cap"]))
+            llm_fallthrough = True
+            logger.info(
+                "%s: fill_recency_loosen — LLM SKIP, deterministic fallback rsi_cap=%.1f",
+                ticker,
+                rsi_cap,
+            )
+        elif llm_action != "BUY" or llm_conf < llm_min_conf:
+            return create_skip_decision(
+                ticker,
+                f"LLM decision {llm_action}: {llm_decision.get('reasoning')}",
+                llm_decision_id=llm_decision_id,
+            )
+
     # Fetch current intraday data
     logger.info(f"{ticker}: Fetching intraday data...")
     stock = yf.Ticker(ticker)
@@ -741,6 +771,8 @@ def evaluate_single_entry(
     policy_cap = _max_new_position_usd_from_policy(portfolio_value)
     base_position = portfolio_value * BASE_POSITION_PCT
     adjusted_position = base_position * confidence
+    if _fr_ctx.get("active") and fill_recency_size_mult < 1.0:
+        adjusted_position *= fill_recency_size_mult
     position_size = min(adjusted_position, MAX_POSITION_SIZE, policy_cap)
     shares = int(position_size / current_price)
     adaptive = recommend_size(
@@ -792,6 +824,12 @@ def evaluate_single_entry(
         )
     if execution_advisor_mode >= 2:
         decision["order_hint"] = (decision.get("execution_advisor") or {}).get("tactic")
+    if _fr_ctx.get("active"):
+        decision["fill_recency_loosen"] = True
+        if llm_fallthrough:
+            decision["reason"] = (
+                f"{decision['reason']} [fill_recency_loosen d={_fr_ctx.get('days_since_last_fill')}]"
+            )
     return decision
 
 def is_entry_window():
