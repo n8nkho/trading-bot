@@ -845,66 +845,62 @@ def execute_sell_order(ticker, shares, mark_price=None):
                 px = float(hist["Close"].iloc[-1])
         except Exception:
             px = 0.0
-    try:
-        est = float(shares) * float(px or 0)
-    except Exception:
-        est = 0.0
 
-    gate = evaluate_pre_trade_submission(
-        side="SELL",
-        symbol=ticker,
-        qty=float(shares),
-        estimated_notional_usd=est if est > 0 else None,
-    )
-    if not gate["allowed"]:
-        logger.warning(f"{ticker}: pre_trade_gate blocked: {gate.get('reasons')}")
-        append_trust_event(
-            "pre_trade_gate_blocked",
-            {"ticker": ticker, "pattern": "stock_sell", "gate": gate},
+    def _submit_one(sym: str, chunk_qty: int) -> dict:
+        try:
+            est = float(chunk_qty) * float(px or 0)
+        except Exception:
+            est = 0.0
+        gate = evaluate_pre_trade_submission(
+            side="SELL",
+            symbol=sym,
+            qty=float(chunk_qty),
+            estimated_notional_usd=est if est > 0 else None,
         )
-        return {
-            "success": False,
-            "order_id": None,
-            "filled_qty": None,
-            "filled_price": None,
-            "error": format_gate_block_message(gate),
-        }
-    
-    try:
-        logger.info(f"{ticker}: Submitting SELL order for {shares} shares")
-        
-        # Create market order request
-        order_data = MarketOrderRequest(
-            symbol=ticker,
-            qty=shares,
-            side=OrderSide.SELL,
-            time_in_force=TimeInForce.DAY
-        )
-        
-        # Submit order
-        order = alpaca_client.submit_order(order_data)
-        
-        logger.info(f"{ticker}: Order submitted - ID: {order.id}, Status: {order.status}")
-        
-        # Return order details
-        return {
-            'success': True,
-            'order_id': str(order.id),
-            'filled_qty': int(order.filled_qty) if order.filled_qty else None,
-            'filled_price': float(order.filled_avg_price) if order.filled_avg_price else None,
-            'status': str(order.status),
-            'error': None
-        }
-        
-    except Exception as e:
-        logger.error(f"{ticker}: Error executing sell order: {type(e).__name__}: {str(e)}")
-        return {
-            'success': False,
-            'order_id': None,
-            'filled_qty': None,
-            'filled_price': None,
-            'error': f"{type(e).__name__}: {str(e)}"
-        }
+        if not gate["allowed"]:
+            logger.warning(f"{sym}: pre_trade_gate blocked: {gate.get('reasons')}")
+            append_trust_event(
+                "pre_trade_gate_blocked",
+                {"ticker": sym, "pattern": "stock_sell", "gate": gate},
+            )
+            return {
+                "success": False,
+                "order_id": None,
+                "filled_qty": None,
+                "filled_price": None,
+                "error": format_gate_block_message(gate),
+            }
+        try:
+            logger.info(f"{sym}: Submitting SELL order for {chunk_qty} shares")
+            order_data = MarketOrderRequest(
+                symbol=sym,
+                qty=chunk_qty,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.DAY,
+            )
+            order = alpaca_client.submit_order(order_data)
+            logger.info(f"{sym}: Order submitted - ID: {order.id}, Status: {order.status}")
+            return {
+                "success": True,
+                "order_id": str(order.id),
+                "filled_qty": int(order.filled_qty) if order.filled_qty else None,
+                "filled_price": float(order.filled_avg_price) if order.filled_avg_price else None,
+                "status": str(order.status),
+                "error": None,
+            }
+        except Exception as e:
+            logger.error(f"{sym}: Error executing sell order: {type(e).__name__}: {str(e)}")
+            return {
+                "success": False,
+                "order_id": None,
+                "filled_qty": None,
+                "filled_price": None,
+                "error": f"{type(e).__name__}: {str(e)}",
+            }
+
+    from utils.order_sizer import submit_chunked_sell_orders
+
+    return submit_chunked_sell_orders(ticker, int(shares), float(px or 0), submit_one=_submit_one)
 
 
 def format_option_symbol(ticker, expiration, strike, call=True):
