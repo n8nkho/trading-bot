@@ -28,7 +28,9 @@ CRON_TZ=America/New_York
 0 8 * * 1-5 cd /home/ubuntu/trading-bot && bash scripts/cron_run.sh earnings_intel python3 -m agents.earnings_intel_agent >> /home/ubuntu/trading-bot/logs/cron_master.log 2>&1
 30 16 * * 1-5 cd /home/ubuntu/trading-bot && bash scripts/cron_run.sh earnings_intel_close python3 -m agents.earnings_intel_agent >> /home/ubuntu/trading-bot/logs/cron_master.log 2>&1
 35 14 * * 1-5 cd /home/ubuntu/trading-bot && bash scripts/cron_run.sh screen >> /home/ubuntu/trading-bot/logs/cron_master.log 2>&1
+50 14 * * 1-5 cd /home/ubuntu/trading-bot && bash scripts/cron_run.sh screen >> /home/ubuntu/trading-bot/logs/cron_master.log 2>&1
 5 15 * * 1-5 cd /home/ubuntu/trading-bot && bash scripts/cron_run.sh screen >> /home/ubuntu/trading-bot/logs/cron_master.log 2>&1
+35 15 * * 1-5 cd /home/ubuntu/trading-bot && bash scripts/cron_run.sh screen >> /home/ubuntu/trading-bot/logs/cron_master.log 2>&1
 10 17 * * 1-5 cd /home/ubuntu/trading-bot && bash scripts/cron_run.sh recursive_evolution python3 orchestrator.py evolve >> /home/ubuntu/trading-bot/logs/cron_master.log 2>&1
 */30 9-16 * * 1-5 cd /home/ubuntu/fortress-ai && bash scripts/cron_run.sh sec_ingest python3 -m agents.domain_ingest.ingest_runner --source sec_edgar >> /home/ubuntu/fortress-ai/logs/cron_master.log 2>&1
 

@@ -74,10 +74,10 @@
     },
     {
       "job_name": "screen",
-      "schedule": "35 14,5 15 * * 1-5 America/New_York",
+      "schedule": "35,50 14 & 5,35 15 * * 1-5 America/New_York",
       "script_path": "scripts/cron_run.sh screen",
       "expected_duration_seconds": 600,
-      "expected_interval_minutes": 720
+      "expected_interval_minutes": 360
     },
     {
       "job_name": "monitor",

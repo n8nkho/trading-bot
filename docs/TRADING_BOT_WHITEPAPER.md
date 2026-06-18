@@ -65,7 +65,7 @@ Cron / systemd
 
 | Job | Schedule | Command |
 |-----|----------|---------|
-| Full screen | 14:35, 15:05 ET weekdays | `orchestrator.py screen` |
+| Full screen | 14:35, 14:50, 15:05, 15:35 ET weekdays | `orchestrator.py screen` |
 | Exit monitor | Every 5 min 9-16 ET | `orchestrator.py monitor` |
 | Regime detector | 30 min RTH | `agents.regime_detector` |
 | Sentiment velocity | 20 min RTH | `agents.sentiment_velocity_agent` |

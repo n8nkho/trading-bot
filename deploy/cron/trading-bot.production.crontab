@@ -2,7 +2,7 @@
 # Install: set REPO, then: crontab deploy/cron/trading-bot.production.crontab
 #
 # Entry window for orchestrator screen: 14:30–16:00 ET (see docs/ENTRY_WINDOW_AND_CRON.md).
-# Screen runs at 14:35 and 15:05 ET to land inside the window.
+# Screen runs at 14:35, 14:50, 15:05, and 15:35 ET inside the entry window.
 
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
@@ -10,7 +10,9 @@ REPO=/home/ubuntu/trading-bot
 
 # --- Core trading (orchestrator) ---
 35 14 * * 1-5 TZ=America/New_York cd $REPO && ./scripts/cron_run.sh screen >> $REPO/logs/orchestrator.log 2>&1
+50 14 * * 1-5 TZ=America/New_York cd $REPO && ./scripts/cron_run.sh screen >> $REPO/logs/orchestrator.log 2>&1
 5 15 * * 1-5 TZ=America/New_York cd $REPO && ./scripts/cron_run.sh screen >> $REPO/logs/orchestrator.log 2>&1
+35 15 * * 1-5 TZ=America/New_York cd $REPO && ./scripts/cron_run.sh screen >> $REPO/logs/orchestrator.log 2>&1
 */5 9-16 * * 1-5 TZ=America/New_York cd $REPO && ./scripts/cron_run.sh monitor >> $REPO/logs/orchestrator.log 2>&1
 
 # --- Fortress agents (manifest-aligned) ---

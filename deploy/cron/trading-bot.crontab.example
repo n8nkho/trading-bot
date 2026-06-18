@@ -43,9 +43,11 @@
 #   $REPO/scripts/cron_run.sh ops_recovery >> $REPO/logs/orchestrator.log 2>&1
 #
 # --- Production schedule (VM) — see deploy/cron/trading-bot.production.crontab and docs/ENTRY_WINDOW_AND_CRON.md ---
-# Entry window 14:30-16:00 ET — screen at 14:35 and 15:05 ET:
+# Entry window 14:30-16:00 ET — screen at 14:35, 14:50, 15:05, 15:35 ET:
 # 35 14 * * 1-5 TZ=America/New_York cd $REPO && ./scripts/cron_run.sh screen >> $REPO/logs/orchestrator.log 2>&1
+# 50 14 * * 1-5 TZ=America/New_York cd $REPO && ./scripts/cron_run.sh screen >> $REPO/logs/orchestrator.log 2>&1
 # 5 15 * * 1-5 TZ=America/New_York cd $REPO && ./scripts/cron_run.sh screen >> $REPO/logs/orchestrator.log 2>&1
+# 35 15 * * 1-5 TZ=America/New_York cd $REPO && ./scripts/cron_run.sh screen >> $REPO/logs/orchestrator.log 2>&1
 #
 # --- Legacy example (edit times as needed) ---
 # Daily screen (~3 PM ET weekday): minute hour dom mon dow

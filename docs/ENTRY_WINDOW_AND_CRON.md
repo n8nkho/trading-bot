@@ -9,7 +9,9 @@ Production cron runs `screen` at:
 | ET time | Purpose |
 |---------|---------|
 | **14:35** | First in-window screen after open |
+| **14:50** | Early-window refresh |
 | **15:05** | Mid-window refresh |
+| **15:35** | Late-window refresh (before window close) |
 
 `monitor` runs every **5 minutes** during **09:00–16:59 ET** weekdays for stops and position management.
 
