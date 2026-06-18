@@ -148,13 +148,15 @@ def scan_fortress_ai_sibling() -> list[dict[str, Any]]:
         code = str(f.get("code") or "")
         if code in ("exit_notional_blocked", "duplicate_entry_accumulation"):
             try:
-                import sys
+                import importlib.util
 
-                sys.path.insert(0, str(_FORTRESS_AI))
-                from utils.si_fix_deployment import is_deployed
-
-                if is_deployed(code):
-                    continue
+                mod_path = _FORTRESS_AI / "utils" / "si_fix_deployment.py"
+                spec = importlib.util.spec_from_file_location("fortress_si_fix_deployment", mod_path)
+                if spec and spec.loader:
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    if mod.is_deployed(code):
+                        continue
             except Exception:
                 pass
         findings.append(
@@ -208,12 +210,22 @@ def scan_classic_zero_candidates() -> list[dict[str, Any]]:
     return findings
 
 
+def scan_classic_pnl_ledger_stale() -> list[dict[str, Any]]:
+    try:
+        from utils.pnl_ledger_health import scan_classic_pnl_ledger_stale as _scan
+
+        return _scan()
+    except Exception:
+        return []
+
+
 def _collect_findings() -> list[dict[str, Any]]:
     return (
         scan_drift_rollback_false_positive()
         + scan_evolution_staleness()
         + scan_cron_heartbeat()
         + scan_regime_stale_rth()
+        + scan_classic_pnl_ledger_stale()
         + scan_classic_zero_candidates()
         + scan_fortress_ai_sibling()
     )

@@ -147,7 +147,7 @@ def _context_from_overrides(ov: dict[str, Any], *, days: int | None, threshold: 
     return {
         "active": True,
         "reason": ov.get("reason") or "fill_recency_gap",
-        "days_since_last_fill": days,
+        "days_since_last_fill": days_since_last_fill(),
         "days_since_last_entry": days_since_last_entry(),
         "days_since_last_activity": days,
         "threshold_days": threshold,
