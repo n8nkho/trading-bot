@@ -396,6 +396,21 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
     deployed_so_far = 0.0
     overnight_so_far = 0.0
     analyst_index = _load_analyst_consensus_index(Path("data"))
+    fused_scores: dict[str, dict] = {}
+    try:
+        from utils.fused_signal_model import write_fused_scores
+
+        tickers = [str(c.get("ticker") or "").upper() for c in candidates if c.get("ticker")]
+        fused_out = write_fused_scores(tickers)
+        if fused_out.get("ok"):
+            import json as _json
+
+            p = Path("data/fused_signal_score.json")
+            if p.is_file():
+                doc = _json.loads(p.read_text(encoding="utf-8"))
+                fused_scores = doc.get("symbols") if isinstance(doc.get("symbols"), dict) else {}
+    except Exception as exc:
+        logger.info("fused_signal refresh skipped: %s", exc)
     # Entry-window gating must apply to both stock and option decisions.
     # The stock path already enforces this inside `evaluate_single_entry()`;
     # previously the option path could bypass it and attempt option market orders
@@ -533,6 +548,16 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
             
             if isinstance(decision, dict):
                 decision.setdefault("signal_mode", signal_mode)
+                try:
+                    from utils.fused_signal_model import apply_fused_signal_advisory
+
+                    decision = apply_fused_signal_advisory(
+                        decision,
+                        fused_row=fused_scores.get(str(ticker).upper()),
+                        logger=logger,
+                    )
+                except Exception as exc:
+                    logger.debug("fused_signal advisory skipped for %s: %s", ticker, exc)
                 if decision.get("action") == "BUY":
                     try:
                         deployed_so_far += float(decision.get("position_size") or 0.0)

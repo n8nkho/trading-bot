@@ -27,6 +27,17 @@ STATUS_CLOSED = "closed"
 STATUS_IMPLEMENTED = "implemented"
 
 _AUTO_RECONCILE_SOURCES = frozenset({"integrity_scan", "scan_opportunity", "capability_review"})
+CROSS_STACK_SOURCES = frozenset(
+    {
+        "capability_review",
+        "cross_stack_belief",
+        "fortress_ai_belief",
+    }
+)
+
+
+def is_cross_stack_source(source: str) -> bool:
+    return str(source or "") in CROSS_STACK_SOURCES
 
 
 def _data_dir() -> Path:
@@ -149,6 +160,9 @@ def upsert_from_finding(finding: dict[str, Any], *, source: str = "integrity_sca
         "human_go": None,
         "agent_assessment": None,
     }
+    disposition = DISPOSITION_PENDING_AGENT
+    if is_cross_stack_source(source):
+        disposition = DISPOSITION_PENDING_AGENT
     item.update(
         {
             "updated_utc": now,
@@ -157,11 +171,12 @@ def upsert_from_finding(finding: dict[str, Any], *, source: str = "integrity_sca
             "title": finding.get("title") or code,
             "severity": finding.get("severity"),
             "recommendation": finding.get("recommendation") or finding.get("fix") or "",
-            "disposition": DISPOSITION_PENDING_AGENT,
+            "disposition": disposition,
             "source": source,
             "finding": finding,
             "effort": finding.get("effort") or "medium",
             "impact": finding.get("impact") or finding.get("severity") or "medium",
+            "cross_stack": is_cross_stack_source(source),
         }
     )
     if existing:

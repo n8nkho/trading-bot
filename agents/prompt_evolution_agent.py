@@ -129,6 +129,24 @@ class PromptEvolutionAgent:
         }
         append_log("prompt_evolution.log", f"{now} evolution_trigger avg={avg:.2f} force={force}")
         if not dry_run and _ENABLED:
+            candidate_id = str(store.get("active_variant") or "variant_a")
+            try:
+                from utils.prompt_walk_forward_gate import ensure_gate_before_promotion
+
+                ensure_gate_before_promotion(
+                    candidate_id,
+                    metadata={"trigger_avg_score": avg, "source": "prompt_evolution_agent"},
+                )
+            except RuntimeError as exc:
+                append_log("prompt_evolution.log", f"{now} promotion_blocked wf={exc}")
+                return {
+                    "triggered": True,
+                    "avg_score": avg,
+                    "store": store,
+                    "dry_run": dry_run,
+                    "promotion_blocked": str(exc),
+                    "disposition": "pending_walk_forward_fail",
+                }
             write_json_atomic(_STORE, store)
         return {"triggered": True, "avg_score": avg, "store": store, "dry_run": dry_run}
 

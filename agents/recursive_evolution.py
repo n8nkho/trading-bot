@@ -417,5 +417,16 @@ def run_recursive_evolution(*, data_dir: Path = DATA_DIR) -> dict[str, Any]:
     except Exception as e:
         logger.warning("Policy recovery hook failed: %s", e)
 
+    try:
+        from utils.fused_signal_model import propose_weight_tuning_from_ledger
+        from utils.si_recommendation_queue import upsert_from_finding
+
+        finding = propose_weight_tuning_from_ledger()
+        if finding:
+            result["fused_signal_weight_proposal"] = upsert_from_finding(finding, source="integrity_scan")
+            out_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning("Fused signal reweight hook failed: %s", e)
+
     return result
 

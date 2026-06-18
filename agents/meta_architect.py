@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from collections import defaultdict
 import subprocess
+from typing import Any
 
 from utils.local_llm import call_ollama
 
@@ -43,6 +44,117 @@ IMPROVEMENT_THRESHOLD = 0.05  # 5% improvement required to keep agent
 LOOKBACK_DAYS = 30  # Days of data to analyze
 
 
+def _adaptive_meta_enabled() -> bool:
+    return str(os.environ.get("FORTRESS_META_ARCHITECT_ADAPTIVE_ENABLED", "0")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _early_trade_floor() -> int:
+    try:
+        return max(10, int(os.environ.get("FORTRESS_META_ARCHITECT_EARLY_TRADE_FLOOR", "30")))
+    except ValueError:
+        return 30
+
+
+def _gap_cycles_required() -> int:
+    try:
+        return max(2, int(os.environ.get("FORTRESS_META_ARCHITECT_GAP_CYCLES", "3")))
+    except ValueError:
+        return 3
+
+
+def _fortress_capability_gap_streak() -> int:
+    """Count consecutive capability reviews with objective gaps (fortress-ai sibling)."""
+    import json
+
+    log_path = Path("/home/ubuntu/fortress-ai/data/si_capability/review_log.jsonl")
+    if not log_path.is_file():
+        tb = Path(__file__).resolve().parent.parent
+        alt = tb.parent / "fortress-ai" / "data" / "si_capability" / "review_log.jsonl"
+        log_path = alt if alt.is_file() else log_path
+    if not log_path.is_file():
+        return 0
+    streak = 0
+    try:
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+        for line in reversed(lines[-20:]):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            gaps = int(row.get("gaps") or 0)
+            if gaps > 0:
+                streak += 1
+            else:
+                break
+    except Exception:
+        return 0
+    return streak
+
+
+def evaluate_meta_architect_trigger(trade_count: int) -> dict[str, Any]:
+    """
+    Decide minimum trades required for this cycle. Logs trigger rationale for trust ledger.
+    Default: 100-trade floor only. Adaptive path requires FORTRESS_META_ARCHITECT_ADAPTIVE_ENABLED=1.
+    """
+    result = {
+        "min_trades_required": MIN_TRADES_REQUIRED,
+        "trade_count": trade_count,
+        "trigger": "default_floor",
+        "early_trigger": False,
+        "inputs": {},
+    }
+    if trade_count >= MIN_TRADES_REQUIRED:
+        return result
+    if not _adaptive_meta_enabled():
+        return result
+
+    drift_alert = False
+    try:
+        drift = json.loads((Path("data") / "drift_report.json").read_text(encoding="utf-8"))
+        drift_alert = bool((drift or {}).get("drift_alert"))
+        result["inputs"]["drift_alert"] = drift_alert
+        result["inputs"]["drift_reason"] = (drift or {}).get("reason")
+    except Exception:
+        drift_alert = False
+
+    gap_streak = _fortress_capability_gap_streak()
+    result["inputs"]["capability_gap_streak"] = gap_streak
+    floor = _early_trade_floor()
+    need_gaps = _gap_cycles_required()
+
+    if (
+        drift_alert
+        and trade_count >= floor
+        and gap_streak >= need_gaps
+    ):
+        result["min_trades_required"] = floor
+        result["trigger"] = "adaptive_early"
+        result["early_trigger"] = True
+    return result
+
+
+def _log_meta_architect_trigger(trigger: dict[str, Any]) -> None:
+    try:
+        from utils.trust_ledger import append_trust_event
+
+        append_trust_event(
+            "meta_architect_trigger",
+            {
+                "trigger": trigger.get("trigger"),
+                "early_trigger": trigger.get("early_trigger"),
+                "trade_count": trigger.get("trade_count"),
+                "min_trades_required": trigger.get("min_trades_required"),
+                "inputs": trigger.get("inputs"),
+            },
+        )
+    except Exception:
+        pass
+
+
 def analyze_performance_gaps(lookback_days=LOOKBACK_DAYS):
     """
     Analyze last N days of trades to identify performance gaps.
@@ -72,12 +184,16 @@ def analyze_performance_gaps(lookback_days=LOOKBACK_DAYS):
     try:
         # Load trades from decisions log
         trades = load_recent_trades(lookback_days)
+        trigger = evaluate_meta_architect_trigger(len(trades))
+        _log_meta_architect_trigger(trigger)
+        min_required = int(trigger.get("min_trades_required") or MIN_TRADES_REQUIRED)
         
-        if len(trades) < MIN_TRADES_REQUIRED:
-            logger.warning(f"Insufficient trades: {len(trades)} < {MIN_TRADES_REQUIRED}")
+        if len(trades) < min_required:
+            logger.warning(f"Insufficient trades: {len(trades)} < {min_required}")
             return {
                 'total_trades': len(trades),
-                'error': f'Need at least {MIN_TRADES_REQUIRED} trades for analysis',
+                'error': f'Need at least {min_required} trades for analysis',
+                'meta_architect_trigger': trigger,
                 'suggested_agents': []
             }
         

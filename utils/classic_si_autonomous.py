@@ -61,6 +61,7 @@ def auto_assess_item(item_id: str) -> dict[str, Any]:
     from utils.si_recommendation_queue import (
         DISPOSITION_AUTO_APPLY_QUEUED,
         DISPOSITION_PENDING_HUMAN,
+        is_cross_stack_source,
         load_queue,
         save_queue,
     )
@@ -72,7 +73,11 @@ def auto_assess_item(item_id: str) -> dict[str, Any]:
 
     assessed = _heuristic_assess(item)
     item["agent_assessment"] = {**assessed, "assessed_utc": now_iso()}
-    if assessed.get("worth_implementing"):
+    source = str(item.get("source") or "")
+    if is_cross_stack_source(source) or item.get("cross_stack"):
+        item["disposition"] = DISPOSITION_PENDING_HUMAN
+        item["requires_human_go"] = True
+    elif assessed.get("worth_implementing"):
         item["disposition"] = DISPOSITION_AUTO_APPLY_QUEUED if auto_enabled() else DISPOSITION_PENDING_HUMAN
     else:
         item["status"] = "closed"
@@ -121,12 +126,21 @@ def apply_entry_item(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def apply_queued_item(item_id: str) -> dict[str, Any]:
-    from utils.si_recommendation_queue import load_queue, mark_implemented
+    from utils.si_recommendation_queue import is_cross_stack_source, load_queue, mark_implemented
 
     queue = load_queue()
     item = next((x for x in queue.get("items") or [] if x.get("id") == item_id), None)
     if not item:
         raise KeyError(f"item_not_found:{item_id}")
+
+    if is_cross_stack_source(str(item.get("source") or "")) or item.get("cross_stack"):
+        hg = item.get("human_go") if isinstance(item.get("human_go"), dict) else {}
+        if not hg.get("approved"):
+            return {
+                "ok": False,
+                "skipped": "cross_stack_requires_human_go",
+                "item_id": item_id,
+            }
 
     code = str(item.get("code") or "")
     if code in _SCREENER_CODES:

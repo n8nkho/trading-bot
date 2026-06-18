@@ -1,0 +1,10 @@
+# Fused intelligence signal weights (equal default). Env FORTRESS_FUSED_SIGNAL_WEIGHTS_PATH overrides path.
+version: 1
+components:
+  regime: 0.2
+  sentiment_velocity: 0.2
+  options_flow: 0.2
+  earnings_intel: 0.2
+  cross_asset: 0.2
+# Max confidence nudge when FORTRESS_FUSED_SIGNAL_AFFECTS_ENTRY=1 (advisory scale is [-1, 1]).
+max_confidence_delta: 0.05
