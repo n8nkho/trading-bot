@@ -40,6 +40,34 @@ class TestFusedSignalModel(unittest.TestCase):
         self.assertGreater(out["confidence"], 0.6)
         self.assertEqual(out["fused_signal_advisory"]["mode"], "confidence_nudge")
 
+    def test_fused_confidence_delta_capped_at_005(self):
+        from utils.fused_signal_model import apply_fused_signal_advisory, max_confidence_delta
+
+        env = {"FORTRESS_FUSED_SIGNAL_ENABLED": "1", "FORTRESS_FUSED_SIGNAL_AFFECTS_ENTRY": "1"}
+        base_conf = 0.6
+        cap = max_confidence_delta()
+        self.assertAlmostEqual(cap, 0.05, places=4)
+        cases = [(1.0, +cap), (-1.0, -cap), (10.0, +cap), (-10.0, -cap)]
+        with mock.patch.dict(os.environ, env, clear=False):
+            for score, expected_delta in cases:
+                decision = {"ticker": "AAPL", "action": "BUY", "confidence": base_conf}
+                out = apply_fused_signal_advisory(
+                    decision,
+                    fused_row={"fused_score": score, "components": {}},
+                )
+                self.assertAlmostEqual(
+                    out["fused_signal_advisory"]["confidence_delta"],
+                    expected_delta,
+                    places=4,
+                    msg=f"score={score}",
+                )
+                self.assertAlmostEqual(
+                    out["confidence"],
+                    base_conf + expected_delta,
+                    places=4,
+                    msg=f"score={score}",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

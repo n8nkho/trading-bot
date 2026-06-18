@@ -14,6 +14,14 @@ class TestPromptWalkForwardGate(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(reason, "gate_disabled")
 
+    def test_gate_enabled_via_legacy_alias(self):
+        with mock.patch.dict(
+            os.environ,
+            {"FORTRESS_PROMPT_LEDGER_HEALTH_GATE_ENABLED": "1", "FORTRESS_PROMPT_WF_GATE_ENABLED": "0"},
+            clear=False,
+        ):
+            self.assertTrue(gate_enabled())
+
     def test_gate_blocks_without_report(self):
         with mock.patch.dict(os.environ, {"FORTRESS_PROMPT_WF_GATE_ENABLED": "1"}, clear=False):
             ok, reason, _ = promotion_allowed("missing-report-id")

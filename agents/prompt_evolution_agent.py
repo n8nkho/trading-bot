@@ -138,14 +138,16 @@ class PromptEvolutionAgent:
                     metadata={"trigger_avg_score": avg, "source": "prompt_evolution_agent"},
                 )
             except RuntimeError as exc:
-                append_log("prompt_evolution.log", f"{now} promotion_blocked wf={exc}")
+                append_log("prompt_evolution.log", f"{now} promotion_blocked ledger_health={exc}")
                 return {
                     "triggered": True,
                     "avg_score": avg,
                     "store": store,
                     "dry_run": dry_run,
                     "promotion_blocked": str(exc),
+                    # Legacy wire value; means ledger health gate failed (not per-candidate WF).
                     "disposition": "pending_walk_forward_fail",
+                    "disposition_label": "pending_ledger_health_fail",
                 }
             write_json_atomic(_STORE, store)
         return {"triggered": True, "avg_score": avg, "store": store, "dry_run": dry_run}

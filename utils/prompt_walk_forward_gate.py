@@ -1,7 +1,14 @@
 """
-Walk-forward gate for prompt promotion — reuses ledger-based validator criteria.
+Ledger health gate for Classic prompt promotion.
 
-Default off: FORTRESS_PROMPT_WF_GATE_ENABLED=0.
+When enabled, blocks prompt store writes if the realized PnL ledger fails stability
+checks (late-window degradation vs early window). This is a *timing* safeguard —
+"now is not a risky period to promote anything" — not per-candidate prompt
+backtesting.
+
+Env (default off):
+  FORTRESS_PROMPT_LEDGER_HEALTH_GATE_ENABLED=1  — preferred name
+  FORTRESS_PROMPT_WF_GATE_ENABLED=1             — legacy alias (same behavior)
 """
 from __future__ import annotations
 
@@ -13,16 +20,28 @@ from typing import Any
 _ROOT = Path(__file__).resolve().parent.parent
 _DATA = _ROOT / "data"
 
+GATE_LABEL = "ledger health gate"
+
+# Legacy wire value — kept for log/API compatibility; means ledger health check failed.
 DISPOSITION_PENDING_WF_FAIL = "pending_walk_forward_fail"
+DISPOSITION_PENDING_LEDGER_HEALTH_FAIL = DISPOSITION_PENDING_WF_FAIL
+
+_LEDGER_HEALTH_ENV_KEYS = (
+    "FORTRESS_PROMPT_LEDGER_HEALTH_GATE_ENABLED",
+    "FORTRESS_PROMPT_WF_GATE_ENABLED",
+)
 
 
 def gate_enabled() -> bool:
-    return str(os.environ.get("FORTRESS_PROMPT_WF_GATE_ENABLED", "0")).strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
+    for key in _LEDGER_HEALTH_ENV_KEYS:
+        if str(os.environ.get(key, "0")).strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            return True
+    return False
 
 
 def report_path(candidate_id: str) -> Path:
@@ -31,6 +50,7 @@ def report_path(candidate_id: str) -> Path:
 
 
 def run_prompt_walk_forward(candidate_id: str, *, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Persist ledger stability report keyed by promotion candidate (audit only)."""
     from agents.walk_forward_validator import compute_walk_forward_report
 
     base = compute_walk_forward_report()
@@ -63,7 +83,7 @@ def promotion_allowed(candidate_id: str) -> tuple[bool, str, dict[str, Any] | No
 
 
 def ensure_gate_before_promotion(candidate_id: str, *, metadata: dict[str, Any] | None = None) -> None:
-    """Run WF if missing; raise RuntimeError when gate enabled and report fails."""
+    """Raise when ledger health gate is on and realized PnL stability check fails."""
     if not gate_enabled():
         return
     path = report_path(candidate_id)

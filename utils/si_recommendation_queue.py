@@ -40,6 +40,25 @@ def is_cross_stack_source(source: str) -> bool:
     return str(source or "") in CROSS_STACK_SOURCES
 
 
+def is_cross_stack_item(item: dict[str, Any] | None) -> bool:
+    """True when item originated from or is tagged as cross-stack belief sharing."""
+    if not isinstance(item, dict):
+        return False
+    if item.get("cross_stack"):
+        return True
+    return is_cross_stack_source(str(item.get("source") or ""))
+
+
+CROSS_STACK_FORBIDDEN_AUTO_DISPOSITIONS = frozenset(
+    {
+        DISPOSITION_AUTO_APPLY_QUEUED,
+        DISPOSITION_AUTO_RESOLVED,
+        "auto_applied",
+        "auto_implement_queued",
+    }
+)
+
+
 def _data_dir() -> Path:
     return _ROOT / "data"
 
@@ -119,6 +138,8 @@ def reconcile_cleared_findings(
         if item.get("disposition") == DISPOSITION_PENDING_HUMAN:
             continue
         if item.get("disposition") == DISPOSITION_AUTO_APPLY_QUEUED:
+            continue
+        if is_cross_stack_item(item):
             continue
         src = str(item.get("source") or "integrity_scan")
         if src not in _AUTO_RECONCILE_SOURCES:
@@ -270,15 +291,19 @@ def set_agent_assessment(
             "assessed_utc": _now_iso(),
         }
         if worth_implementing:
-            try:
-                from utils.classic_si_autonomous import auto_enabled
-
-                if auto_enabled():
-                    item["disposition"] = DISPOSITION_AUTO_APPLY_QUEUED
-                else:
-                    item["disposition"] = DISPOSITION_PENDING_HUMAN
-            except Exception:
+            if is_cross_stack_item(item):
                 item["disposition"] = DISPOSITION_PENDING_HUMAN
+                item["requires_human_go"] = True
+            else:
+                try:
+                    from utils.classic_si_autonomous import auto_enabled
+
+                    if auto_enabled():
+                        item["disposition"] = DISPOSITION_AUTO_APPLY_QUEUED
+                    else:
+                        item["disposition"] = DISPOSITION_PENDING_HUMAN
+                except Exception:
+                    item["disposition"] = DISPOSITION_PENDING_HUMAN
         else:
             item["disposition"] = DISPOSITION_DISMISSED
             item["status"] = STATUS_CLOSED
