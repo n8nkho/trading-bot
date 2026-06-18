@@ -11,6 +11,11 @@ _ORCHESTRATOR_ROOT = Path(__file__).resolve().parent
 os.chdir(_ORCHESTRATOR_ROOT)
 (_ORCHESTRATOR_ROOT / "logs").mkdir(parents=True, exist_ok=True)
 
+from dotenv import load_dotenv
+
+# Classic book keys must win over Fortress/shell env leaked into cron/systemd.
+load_dotenv(_ORCHESTRATOR_ROOT / ".env", override=True)
+
 import asyncio
 import json
 import logging
@@ -22,8 +27,6 @@ from dateutil import parser
 from collections import Counter
 import re
 import pytz
-from dotenv import load_dotenv
-
 # Import Alpaca
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, GetOrdersRequest
@@ -436,6 +439,144 @@ def _derive_entry_price_from_signal(signal: dict, filled_price: float) -> float 
         return None
 
 
+def _reconcile_delayed_pnl_ledger(
+    positions_by_ticker: dict,
+    ledger_order_ids: set[str] | None = None,
+) -> None:
+    """Backfill pnl_ledger.jsonl for delayed fills and broker SELL history."""
+    if ledger_order_ids is None:
+        ledger_order_ids = _read_pnl_ledger_order_ids()
+    try:
+        date_str = datetime.now().strftime('%Y%m%d')
+        exit_file = DATA_DIR / f"exit_signals_{date_str}.json"
+        signal_by_order_id = {}
+        if exit_file.exists() and alpaca_client is not None:
+            runs_blob = json.loads(exit_file.read_text())
+            runs = runs_blob.get('runs', [])
+            for run in runs:
+                for signal in run.get('exit_signals', []):
+                    order_id = signal.get('order_id')
+                    action = signal.get('action')
+                    if not order_id or not isinstance(action, str) or not action.startswith("SELL"):
+                        continue
+                    if str(order_id) in ledger_order_ids:
+                        continue
+                    signal_by_order_id[str(order_id)] = signal
+                    try:
+                        order = alpaca_client.get_order_by_id(str(order_id))
+                        status = str(getattr(order, "status", "")).strip().lower()
+                        if not (status == "filled" or status.endswith(".filled")):
+                            continue
+                        filled_price = getattr(order, "filled_avg_price", None)
+                        filled_qty = getattr(order, "filled_qty", None)
+                        if filled_price is None or filled_qty is None:
+                            continue
+                        filled_price = float(filled_price)
+                        sell_qty = float(signal.get('sell_qty') or filled_qty or 0)
+                        if sell_qty <= 0:
+                            continue
+
+                        pos = positions_by_ticker.get(signal.get('ticker'))
+                        trade_type = (pos or {}).get('type', 'STOCK')
+                        if trade_type == 'OPTION':
+                            entry_price = float((pos or {}).get('entry_premium', 0) or 0)
+                            pnl_dollars = (filled_price - entry_price) * sell_qty * 100
+                        else:
+                            if pos:
+                                entry_price = float(pos.get('entry_price', 0) or 0)
+                            else:
+                                derived = _derive_entry_price_from_signal(signal, filled_price)
+                                if derived is None:
+                                    continue
+                                entry_price = derived
+                            if bool(signal.get("is_short")):
+                                pnl_dollars = (entry_price - filled_price) * sell_qty
+                            else:
+                                pnl_dollars = (filled_price - entry_price) * sell_qty
+
+                        if _append_pnl_ledger_once({
+                            'timestamp': datetime.now().isoformat(),
+                            'order_id': str(order_id),
+                            'ticker': signal.get('ticker'),
+                            'underlying_ticker': (pos or {}).get('underlying_ticker'),
+                            'type': trade_type,
+                            'pnl': pnl_dollars,
+                            'pnl_pct': signal.get('pnl_pct')
+                        }, ledger_order_ids):
+                            update_consecutive_losses({'pnl': pnl_dollars})
+                    except Exception:
+                        continue
+
+            try:
+                after_ts = datetime.now(pytz.UTC) - timedelta(days=2)
+                req = GetOrdersRequest(status=QueryOrderStatus.CLOSED, after=after_ts, nested=False)
+                try:
+                    recent_orders = alpaca_client.get_orders(filter=req)
+                except TypeError:
+                    recent_orders = alpaca_client.get_orders(req)
+                except Exception:
+                    recent_orders = []
+
+                for order in recent_orders or []:
+                    try:
+                        order_id = str(getattr(order, "id", "") or "")
+                        if not order_id or order_id in ledger_order_ids:
+                            continue
+                        status = str(getattr(order, "status", "")).strip().lower()
+                        if not (status == "filled" or status.endswith(".filled")):
+                            continue
+                        side = str(getattr(order, "side", "")).strip().lower()
+                        if not (side == "sell" or side.endswith(".sell")):
+                            continue
+
+                        ticker = str(getattr(order, "symbol", "") or "").strip().upper()
+                        if not ticker:
+                            continue
+                        filled_price = getattr(order, "filled_avg_price", None)
+                        filled_qty = getattr(order, "filled_qty", None)
+                        if filled_price is None or filled_qty is None:
+                            continue
+                        filled_price = float(filled_price)
+                        sell_qty = float(filled_qty)
+                        if sell_qty <= 0:
+                            continue
+
+                        pos = positions_by_ticker.get(ticker)
+                        trade_type = (pos or {}).get('type', 'STOCK')
+                        signal = signal_by_order_id.get(order_id) or {}
+                        if trade_type == 'OPTION':
+                            entry_price = float((pos or {}).get('entry_premium', 0) or 0)
+                            if entry_price <= 0:
+                                continue
+                            pnl_dollars = (filled_price - entry_price) * sell_qty * 100
+                        else:
+                            if pos:
+                                entry_price = float(pos.get('entry_price', 0) or 0)
+                            else:
+                                derived = _derive_entry_price_from_signal(signal, filled_price)
+                                if derived is None:
+                                    continue
+                                entry_price = derived
+                            pnl_dollars = (filled_price - entry_price) * sell_qty
+
+                        if _append_pnl_ledger_once({
+                            'timestamp': datetime.now().isoformat(),
+                            'order_id': order_id,
+                            'ticker': ticker,
+                            'underlying_ticker': (pos or {}).get('underlying_ticker'),
+                            'type': trade_type,
+                            'pnl': pnl_dollars,
+                            'pnl_pct': signal.get('pnl_pct')
+                        }, ledger_order_ids):
+                            update_consecutive_losses({'pnl': pnl_dollars})
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"PnL reconciliation skipped: {type(e).__name__}: {str(e)}")
+
+
 def _compute_hedge_gate_metrics_from_report(report: dict) -> dict:
     """
     Compute hedge gate metrics from the latest fortress report.
@@ -504,9 +645,6 @@ def _compute_hedge_gate_metrics_from_report(report: dict) -> dict:
         "total_known": len(known_strategies),
         "strategy_gate_details": strategy_gate_details,
     }
-
-# Repo-root paths: logs/data/.env (cwd already set to repo root above).
-load_dotenv(_ORCHESTRATOR_ROOT / ".env")
 
 # Setup logging
 log_dir = _ORCHESTRATOR_ROOT / "logs"
@@ -2012,6 +2150,7 @@ async def monitor_positions_async():
         
         if len(positions) == 0:
             logger.info("No open positions to monitor.")
+            _reconcile_delayed_pnl_ledger(positions_by_ticker)
             result = {
                 'timestamp': datetime.now().isoformat(),
                 'market_open': True,
@@ -2151,140 +2290,7 @@ async def monitor_positions_async():
             except Exception as e:
                 logger.warning(f"Failed to record P&L ledger entry: {type(e).__name__}: {str(e)}")
 
-        # Reconcile delayed fills from earlier monitor runs that were not filled at submit-time.
-        # This closes the accounting gap where exit order eventually fills but pnl_ledger stays empty.
-        try:
-            date_str = datetime.now().strftime('%Y%m%d')
-            exit_file = DATA_DIR / f"exit_signals_{date_str}.json"
-            signal_by_order_id = {}
-            if exit_file.exists() and alpaca_client is not None:
-                runs_blob = json.loads(exit_file.read_text())
-                runs = runs_blob.get('runs', [])
-                for run in runs:  # scan full day history for delayed fills
-                    for signal in run.get('exit_signals', []):
-                        order_id = signal.get('order_id')
-                        action = signal.get('action')
-                        if not order_id or not isinstance(action, str) or not action.startswith("SELL"):
-                            continue
-                        if str(order_id) in ledger_order_ids:
-                            continue
-                        signal_by_order_id[str(order_id)] = signal
-                        try:
-                            order = alpaca_client.get_order_by_id(str(order_id))
-                            status = str(getattr(order, "status", "")).strip().lower()
-                            if not (status == "filled" or status.endswith(".filled")):
-                                continue
-                            filled_price = getattr(order, "filled_avg_price", None)
-                            filled_qty = getattr(order, "filled_qty", None)
-                            if filled_price is None or filled_qty is None:
-                                continue
-                            filled_price = float(filled_price)
-                            sell_qty = float(signal.get('sell_qty') or filled_qty or 0)
-                            if sell_qty <= 0:
-                                continue
-
-                            pos = positions_by_ticker.get(signal.get('ticker'))
-                            trade_type = (pos or {}).get('type', 'STOCK')
-                            if trade_type == 'OPTION':
-                                entry_price = float((pos or {}).get('entry_premium', 0) or 0)
-                                pnl_dollars = (filled_price - entry_price) * sell_qty * 100
-                            else:
-                                if pos:
-                                    entry_price = float(pos.get('entry_price', 0) or 0)
-                                else:
-                                    derived = _derive_entry_price_from_signal(signal, filled_price)
-                                    if derived is None:
-                                        continue
-                                    entry_price = derived
-                                if bool(signal.get("is_short")):
-                                    pnl_dollars = (entry_price - filled_price) * sell_qty
-                                else:
-                                    pnl_dollars = (filled_price - entry_price) * sell_qty
-
-                            if _append_pnl_ledger_once({
-                                'timestamp': datetime.now().isoformat(),
-                                'order_id': str(order_id),
-                                'ticker': signal.get('ticker'),
-                                'underlying_ticker': (pos or {}).get('underlying_ticker'),
-                                'type': trade_type,
-                                'pnl': pnl_dollars,
-                                'pnl_pct': signal.get('pnl_pct')
-                            }, ledger_order_ids):
-                                update_consecutive_losses({'pnl': pnl_dollars})
-                        except Exception:
-                            continue
-
-                # Second reconciliation source: Alpaca filled SELL order history.
-                # Captures fills that happened outside exit_signals (manual/API sell path).
-                try:
-                    after_ts = datetime.now(pytz.UTC) - timedelta(days=2)
-                    req = GetOrdersRequest(status=QueryOrderStatus.CLOSED, after=after_ts, nested=False)
-                    try:
-                        recent_orders = alpaca_client.get_orders(filter=req)
-                    except TypeError:
-                        recent_orders = alpaca_client.get_orders(req)
-                    except Exception:
-                        recent_orders = []
-
-                    for order in recent_orders or []:
-                        try:
-                            order_id = str(getattr(order, "id", "") or "")
-                            if not order_id or order_id in ledger_order_ids:
-                                continue
-                            status = str(getattr(order, "status", "")).strip().lower()
-                            if not (status == "filled" or status.endswith(".filled")):
-                                continue
-                            side = str(getattr(order, "side", "")).strip().lower()
-                            if not (side == "sell" or side.endswith(".sell")):
-                                continue
-
-                            ticker = str(getattr(order, "symbol", "") or "").strip().upper()
-                            if not ticker:
-                                continue
-                            filled_price = getattr(order, "filled_avg_price", None)
-                            filled_qty = getattr(order, "filled_qty", None)
-                            if filled_price is None or filled_qty is None:
-                                continue
-                            filled_price = float(filled_price)
-                            sell_qty = float(filled_qty)
-                            if sell_qty <= 0:
-                                continue
-
-                            pos = positions_by_ticker.get(ticker)
-                            trade_type = (pos or {}).get('type', 'STOCK')
-                            signal = signal_by_order_id.get(order_id) or {}
-                            if trade_type == 'OPTION':
-                                entry_price = float((pos or {}).get('entry_premium', 0) or 0)
-                                if entry_price <= 0:
-                                    continue
-                                pnl_dollars = (filled_price - entry_price) * sell_qty * 100
-                            else:
-                                if pos:
-                                    entry_price = float(pos.get('entry_price', 0) or 0)
-                                else:
-                                    # If position is fully closed, infer from available pnl_pct.
-                                    derived = _derive_entry_price_from_signal(signal, filled_price)
-                                    if derived is None:
-                                        continue
-                                    entry_price = derived
-                                pnl_dollars = (filled_price - entry_price) * sell_qty
-
-                            if _append_pnl_ledger_once({
-                                'timestamp': datetime.now().isoformat(),
-                                'order_id': order_id,
-                                'ticker': ticker,
-                                'underlying_ticker': (pos or {}).get('underlying_ticker'),
-                                'type': trade_type,
-                                'pnl': pnl_dollars,
-                                'pnl_pct': signal.get('pnl_pct')
-                            }, ledger_order_ids):
-                                update_consecutive_losses({'pnl': pnl_dollars})
-                        except Exception:
-                            continue
-                except Exception:
-                    pass
-        except Exception as e:
-            logger.warning(f"PnL reconciliation skipped: {type(e).__name__}: {str(e)}")
+        _reconcile_delayed_pnl_ledger(positions_by_ticker, ledger_order_ids)
         
         # Compile results
         end_time = datetime.now()

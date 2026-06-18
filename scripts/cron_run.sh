@@ -13,6 +13,11 @@ export TZ="${FORTRESS_SYSTEM_TZ:-America/New_York}"
 export FORTRESS_SYSTEM_TZ="${FORTRESS_SYSTEM_TZ:-America/New_York}"
 export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
 
+# Classic .env must override inherited Fortress/shell Alpaca keys before any job runs.
+if [[ -x "${REPO_ROOT}/venv/bin/python3" ]]; then
+  "${REPO_ROOT}/venv/bin/python3" -c "from dotenv import load_dotenv; from pathlib import Path; load_dotenv(Path('${REPO_ROOT}')/'.env', override=True)" 2>/dev/null || true
+fi
+
 # Load .env for agent modules (screener, etc.) — orchestrator loads its own; this covers direct -m runs.
 if [[ -x "${REPO_ROOT}/venv/bin/python3" ]]; then
   "${REPO_ROOT}/venv/bin/python3" -c "from utils.llm_router import ensure_llm_env_loaded; ensure_llm_env_loaded()" 2>/dev/null || true

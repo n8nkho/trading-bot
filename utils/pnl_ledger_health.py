@@ -75,7 +75,7 @@ def _broker_closed_sells_since(since: datetime) -> list[dict[str, Any]]:
         from alpaca.trading.requests import GetOrdersRequest
         from alpaca.trading.enums import QueryOrderStatus
 
-        load_dotenv(_ROOT / ".env")
+        load_dotenv(_ROOT / ".env", override=True)
         key = os.environ.get("ALPACA_API_KEY")
         sec = os.environ.get("ALPACA_SECRET_KEY")
         if not key or not sec:

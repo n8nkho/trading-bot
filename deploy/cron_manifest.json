@@ -77,7 +77,7 @@
       "schedule": "35,50 14 & 5,35 15 * * 1-5 America/New_York",
       "script_path": "scripts/cron_run.sh screen",
       "expected_duration_seconds": 600,
-      "expected_interval_minutes": 360
+      "expected_interval_minutes": 90
     },
     {
       "job_name": "monitor",
