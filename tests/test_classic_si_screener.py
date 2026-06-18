@@ -62,6 +62,27 @@ class TestClassicSiScreener(unittest.TestCase):
             tier = css.effective_bear_tier1()
         self.assertEqual(tier["bear_rsi_t1"], 50)
 
+    def test_daily_screen_zero_streak_drives_relax(self):
+        from utils import classic_si_screener as css
+
+        with patch.object(css, "_HEALTH_PATH", self.data / "health.json"):
+            with patch.object(css, "_META_PATH", self.data / "meta.json"):
+                with patch.object(css, "_RISK_PATH", self.data / "risk.json"):
+                    with patch.object(css, "_OVERRIDES_PATH", self.data / "overrides.json"):
+                        (self.data / "health.json").write_text(
+                            json.dumps(
+                                {
+                                    "daily_screen_consecutive_zero": 2,
+                                    "daily_screen_last_candidates": 0,
+                                    "last_candidates_found": 7,
+                                    "consecutive_zero_runs": 0,
+                                }
+                            )
+                        )
+                        (self.data / "risk.json").write_text(json.dumps({"regime": "VOLATILE"}))
+                        proposed = css.propose_relax_patch()
+        self.assertIsNotNone(proposed)
+
 
 class TestClassicSiAutonomous(unittest.TestCase):
     def setUp(self):

@@ -94,14 +94,21 @@ def screening_context() -> dict[str, Any]:
     health = read_json(_HEALTH_PATH, default={})
     meta = read_json(_META_PATH, default={})
     ov = load_overrides()
-    consecutive = int((health or {}).get("consecutive_zero_runs") or 0)
-    last_cands = int((health or {}).get("last_candidates_found") or (meta or {}).get("candidates_found") or 0)
+    daily_zero = int((health or {}).get("daily_screen_consecutive_zero") or 0)
+    daily_last = (health or {}).get("daily_screen_last_candidates")
+    if daily_zero or daily_last is not None:
+        consecutive = daily_zero
+        last_cands = int(daily_last if daily_last is not None else 0)
+    else:
+        consecutive = int((health or {}).get("consecutive_zero_runs") or 0)
+        last_cands = int((health or {}).get("last_candidates_found") or (meta or {}).get("candidates_found") or 0)
     regime = _current_regime()
     filter_counts = (meta or {}).get("filter_counts") if isinstance(meta, dict) else {}
     return {
         "regime": regime,
         "consecutive_zero_runs": consecutive,
         "last_candidates_found": last_cands,
+        "daily_screen_consecutive_zero": daily_zero,
         "relax_step": int(ov.get("relax_step") or 0),
         "filter_counts": filter_counts or {},
         "overrides": ov,
@@ -133,7 +140,7 @@ def should_auto_relax(*, min_zero_runs: int = 2) -> tuple[bool, str]:
         return False, "screener_si_disabled"
     ctx = screening_context()
     regime = ctx["regime"]
-    if regime in ("TRENDING_BULL", "BULL"):
+    if regime in ("TRENDING_BULL", "BULL") and int(ctx.get("daily_screen_consecutive_zero") or 0) < 2:
         return False, "bull_regime_use_bull_tiers"
     if ctx["consecutive_zero_runs"] < min_zero_runs and ctx["last_candidates_found"] > 0:
         return False, "candidates_ok"

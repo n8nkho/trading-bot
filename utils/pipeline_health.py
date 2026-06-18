@@ -14,6 +14,7 @@ _PATH = _ROOT / "data" / "screening_pipeline_health.json"
 
 
 def record_screening_outcome(*, candidates_found: int) -> dict[str, Any]:
+    """Periodic screener_agent runs (intraday refresh)."""
     doc = read_json(_PATH, default={})
     if not isinstance(doc, dict):
         doc = {}
@@ -30,6 +31,29 @@ def record_screening_outcome(*, candidates_found: int) -> dict[str, Any]:
     if consecutive >= 3:
         out["operator_warn"] = (
             "3+ consecutive screening runs with 0 candidates — review prefilter thresholds and watchlist."
+        )
+    _PATH.parent.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(_PATH, {**doc, **out})
+    return out
+
+
+def record_daily_screen_outcome(*, candidates_found: int) -> dict[str, Any]:
+    """Daily orchestrator screen (post-RecursiveScreener) — drives classic SI screener relax."""
+    doc = read_json(_PATH, default={})
+    if not isinstance(doc, dict):
+        doc = {}
+    prev = int(doc.get("daily_screen_consecutive_zero") or 0)
+    cands = int(candidates_found)
+    consecutive = prev + 1 if cands <= 0 else 0
+    out = {
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "daily_screen_last_candidates": cands,
+        "daily_screen_consecutive_zero": consecutive,
+        "daily_screen_updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if consecutive >= 2:
+        out["daily_screen_operator_warn"] = (
+            f"{consecutive} consecutive daily screens with 0 post-recursive candidates."
         )
     _PATH.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(_PATH, {**doc, **out})

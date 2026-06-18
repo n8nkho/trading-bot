@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from utils.atomic_json import write_json_atomic
-from utils.fill_recency_entry import days_since_last_fill, latest_regime, load_entry_overrides
+from utils.fill_recency_entry import (
+    days_since_last_activity,
+    days_since_last_fill,
+    latest_regime,
+    load_entry_overrides,
+)
 
 _ROOT = Path(__file__).resolve().parent.parent
 _OVERRIDES_PATH = _ROOT / "data" / "entry_si_overrides.json"
@@ -26,7 +31,9 @@ def maybe_auto_relax_entry_gate() -> dict[str, Any]:
     """Raise RSI / lower LLM confidence floor when fills are stale (bounded)."""
     if not si_entry_enabled():
         return {"skipped": "entry_si_disabled"}
-    days = days_since_last_fill()
+    days = days_since_last_activity()
+    if days is None:
+        days = days_since_last_fill()
     if days is None:
         return {"skipped": "no_fill_history"}
     regime = latest_regime() or "unknown"

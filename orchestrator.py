@@ -1847,6 +1847,21 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
                 "duration_seconds": duration,
             },
         )
+
+        try:
+            from utils.pipeline_health import record_daily_screen_outcome
+
+            record_daily_screen_outcome(candidates_found=len(candidates))
+        except Exception:
+            logger.exception("record_daily_screen_outcome failed")
+        try:
+            from utils.classic_si_screener import maybe_auto_relax_screener, reset_relax_on_candidates
+
+            reset_relax_on_candidates(candidates_found=len(candidates))
+            if len(candidates) <= 0:
+                maybe_auto_relax_screener()
+        except Exception:
+            logger.exception("classic_si_screener post-screen hook failed")
         
         return result
         

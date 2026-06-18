@@ -295,10 +295,10 @@ def run_classic_si_cycle(*, assess_limit: int = 5, apply_limit: int = 2) -> dict
 
     entry_direct = {}
     try:
-        from utils.fill_recency_entry import days_since_last_fill
+        from utils.fill_recency_entry import days_since_last_activity
         from utils.classic_si_entry import maybe_auto_relax_entry_gate
 
-        if (days_since_last_fill() or 0) >= 7:
+        if (days_since_last_activity() or 0) >= 7:
             entry_direct = maybe_auto_relax_entry_gate()
     except Exception:
         entry_direct = {}
