@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 
 # Classic book keys must win over Fortress/shell env leaked into cron/systemd.
 load_dotenv(_ORCHESTRATOR_ROOT / ".env", override=True)
+load_dotenv(_ORCHESTRATOR_ROOT / ".env.fortress", override=False)
 
 import asyncio
 import json
