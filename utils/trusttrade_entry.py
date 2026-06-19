@@ -38,6 +38,7 @@ def load_config() -> dict[str, float]:
         "fused_borderline_lo": -0.10,
         "fused_borderline_hi": 0.15,
         "fused_strong_min": 0.25,
+        "l2_veto_bypass_min": 75.0,
     }
     path = config_path()
     if not path.is_file():
@@ -143,3 +144,21 @@ def critique_consensus_needed(decision: dict[str, Any]) -> tuple[bool, str]:
         return True, "missing_l2_consensus"
 
     return False, "default_skip_critique"
+
+
+def l2_veto_bypass_min() -> float:
+    return load_config()["l2_veto_bypass_min"]
+
+
+def should_bypass_fused_veto(decision: dict[str, Any]) -> tuple[bool, str]:
+    """TrustTrade: high recursive L2 overrides macro fused veto."""
+    if not isinstance(decision, dict) or decision.get("action") != "BUY":
+        return False, ""
+    l2_raw = decision.get("layer2_score")
+    try:
+        l2 = float(l2_raw) if l2_raw is not None else None
+    except (TypeError, ValueError):
+        l2 = None
+    if l2 is not None and l2 >= l2_veto_bypass_min():
+        return True, "high_l2_fused_veto_bypass"
+    return False, ""

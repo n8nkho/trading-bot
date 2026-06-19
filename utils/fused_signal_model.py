@@ -333,6 +333,38 @@ def apply_fused_entry_gates(
     if fs >= threshold:
         return decision
 
+    bypass, bypass_reason = (False, "")
+    try:
+        from utils.trusttrade_entry import should_bypass_fused_veto
+
+        bypass, bypass_reason = should_bypass_fused_veto(decision)
+    except Exception:
+        pass
+    if bypass:
+        adv = decision.get("fused_signal_advisory")
+        if isinstance(adv, dict):
+            adv["mode"] = "l2_veto_bypass"
+            adv["veto_bypass"] = bypass_reason
+            adv["fused_score"] = fs
+            adv["threshold"] = threshold
+            adv["layer2_score"] = decision.get("layer2_score")
+        if logger is not None:
+            logger.info(
+                "%s: fused_signal veto BYPASS (%s) score=%.3f threshold=%.3f l2=%s",
+                decision.get("ticker") or "?",
+                bypass_reason,
+                fs,
+                threshold,
+                decision.get("layer2_score"),
+            )
+        decision["fused_veto_bypass"] = {
+            "reason": bypass_reason,
+            "fused_score": fs,
+            "threshold": threshold,
+            "layer2_score": decision.get("layer2_score"),
+        }
+        return decision
+
     ticker = decision.get("ticker") or "?"
     prior_conf = decision.get("confidence")
     decision["action"] = "SKIP"

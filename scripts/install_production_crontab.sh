@@ -23,6 +23,7 @@ CRON_TZ=America/New_York
 */20 9-16 * * 1-5 cd /home/ubuntu/trading-bot && bash scripts/cron_run.sh sentiment_velocity python3 -m agents.sentiment_velocity_agent >> /home/ubuntu/trading-bot/logs/cron_master.log 2>&1
 */30 9-16 * * 1-5 cd /home/ubuntu/trading-bot && bash scripts/cron_run.sh screener python3 -m agents.screener_agent >> /home/ubuntu/trading-bot/logs/cron_master.log 2>&1
 */30 9-16 * * 1-5 cd /home/ubuntu/trading-bot && bash scripts/cron_run.sh options_flow python3 -m agents.options_flow_agent >> /home/ubuntu/trading-bot/logs/cron_master.log 2>&1
+25,55 9-16 * * 1-5 cd /home/ubuntu/trading-bot && bash scripts/cron_run.sh cross_asset python3 -m agents.cross_asset_agent >> /home/ubuntu/trading-bot/logs/cron_master.log 2>&1
 */5 9-16 * * 1-5 cd /home/ubuntu/trading-bot && bash scripts/cron_run.sh monitor >> /home/ubuntu/trading-bot/logs/cron_master.log 2>&1
 45 8 * * 1-5 cd /home/ubuntu/trading-bot && bash scripts/cron_run.sh morning_briefing python3 -m agents.briefing_agent >> /home/ubuntu/trading-bot/logs/cron_master.log 2>&1
 0 8 * * 1-5 cd /home/ubuntu/trading-bot && bash scripts/cron_run.sh earnings_intel python3 -m agents.earnings_intel_agent >> /home/ubuntu/trading-bot/logs/cron_master.log 2>&1

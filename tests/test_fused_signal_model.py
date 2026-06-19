@@ -79,14 +79,14 @@ class TestFusedSignalModel(unittest.TestCase):
         with mock.patch.dict(os.environ, env, clear=False):
             out = apply_fused_entry_gates(
                 decision,
-                fused_row={"fused_score": -0.2, "components": {}},
+                fused_row={"fused_score": -0.3, "components": {}},
             )
         self.assertEqual(out["action"], "SKIP")
         self.assertEqual(out["reject_stage"], "fused_signal_veto")
         self.assertEqual(out["shares"], 0)
         self.assertEqual(out["fused_signal_advisory"]["mode"], "veto")
 
-    def test_fused_veto_allows_positive_score(self):
+    def test_fused_veto_allows_score_above_threshold(self):
         from utils.fused_signal_model import apply_fused_entry_gates
 
         decision = {"ticker": "AAPL", "action": "BUY", "confidence": 0.6}
@@ -97,9 +97,33 @@ class TestFusedSignalModel(unittest.TestCase):
         with mock.patch.dict(os.environ, env, clear=False):
             out = apply_fused_entry_gates(
                 decision,
-                fused_row={"fused_score": 0.15, "components": {}},
+                fused_row={"fused_score": -0.2, "components": {}},
             )
         self.assertEqual(out["action"], "BUY")
+
+    def test_fused_l2_bypass_overrides_veto(self):
+        from utils.fused_signal_model import apply_fused_entry_gates
+
+        decision = {
+            "ticker": "V",
+            "action": "BUY",
+            "confidence": 0.75,
+            "layer2_score": 81.6,
+            "shares": 10,
+            "position_size": 1000,
+        }
+        env = {
+            "FORTRESS_FUSED_SIGNAL_ENABLED": "1",
+            "FORTRESS_FUSED_SIGNAL_VETO": "1",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            out = apply_fused_entry_gates(
+                decision,
+                fused_row={"fused_score": -0.3, "components": {}},
+            )
+        self.assertEqual(out["action"], "BUY")
+        self.assertEqual(out["fused_signal_advisory"]["mode"], "l2_veto_bypass")
+        self.assertEqual(out["fused_veto_bypass"]["reason"], "high_l2_fused_veto_bypass")
 
 
 if __name__ == "__main__":

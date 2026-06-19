@@ -11,3 +11,5 @@ fused_borderline_lo: -0.10
 fused_borderline_hi: 0.15
 # Skip critique when L2 missing but fused >= this.
 fused_strong_min: 0.25
+# High L2 bypasses fused veto (stock-level anchor overrides macro fused anchor).
+l2_veto_bypass_min: 75

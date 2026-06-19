@@ -51,6 +51,17 @@ class TestTrustTradeEntry(unittest.TestCase):
         self.assertTrue(need)
         self.assertEqual(reason, "trusttrade_disabled")
 
+    def test_l2_veto_bypass(self):
+        from utils.trusttrade_entry import should_bypass_fused_veto
+
+        with mock.patch.dict(os.environ, {"FORTRESS_TRUSTTRADE_ENTRY": "1"}, clear=False):
+            ok, reason = should_bypass_fused_veto({"action": "BUY", "layer2_score": 81.0})
+        self.assertTrue(ok)
+        self.assertEqual(reason, "high_l2_fused_veto_bypass")
+        with mock.patch.dict(os.environ, {"FORTRESS_TRUSTTRADE_ENTRY": "1"}, clear=False):
+            ok, _ = should_bypass_fused_veto({"action": "BUY", "layer2_score": 70.0})
+        self.assertFalse(ok)
+
 
 if __name__ == "__main__":
     unittest.main()

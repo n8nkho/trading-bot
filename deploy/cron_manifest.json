@@ -31,6 +31,13 @@
       "expected_interval_minutes": 30
     },
     {
+      "job_name": "cross_asset",
+      "schedule": "25,55 9-16 * * 1-5 America/New_York",
+      "script_path": "scripts/cron_run.sh cross_asset python3 -m agents.cross_asset_agent",
+      "expected_duration_seconds": 120,
+      "expected_interval_minutes": 30
+    },
+    {
       "job_name": "screener",
       "schedule": "*/30 9-16 * * 1-5 America/New_York",
       "script_path": "scripts/cron_run.sh screener python3 -m agents.screener_agent",
