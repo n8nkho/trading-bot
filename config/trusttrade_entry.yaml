@@ -1,0 +1,13 @@
+# TrustTrade-lite — selective consensus + fused anchor for Classic entry.
+# Env FORTRESS_TRUSTTRADE_CONFIG_PATH overrides path.
+version: 1
+# Layer-2 recursive screener band: critique runs only inside [lo, hi).
+l2_borderline_lo: 60
+l2_borderline_hi: 75
+# Skip two-pass critique when layer2 >= this (high screener conviction).
+l2_strong_min: 75
+# Fused score band triggering consensus even when L2 is strong.
+fused_borderline_lo: -0.10
+fused_borderline_hi: 0.15
+# Skip critique when L2 missing but fused >= this.
+fused_strong_min: 0.25

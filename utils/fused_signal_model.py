@@ -3,6 +3,7 @@ Composite fused signal score from parallel intelligence artifacts.
 
 Read-only consumers of existing JSON producers — does not modify their writers.
 Default off: FORTRESS_FUSED_SIGNAL_ENABLED=0, FORTRESS_FUSED_SIGNAL_AFFECTS_ENTRY=0.
+Veto (hard SKIP): FORTRESS_FUSED_SIGNAL_VETO=1 when fused_score < fused_veto_threshold in weights YAML.
 """
 from __future__ import annotations
 
@@ -38,6 +39,15 @@ def _enabled() -> bool:
 
 def affects_entry() -> bool:
     return str(os.environ.get("FORTRESS_FUSED_SIGNAL_AFFECTS_ENTRY", "0")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def veto_enabled() -> bool:
+    return str(os.environ.get("FORTRESS_FUSED_SIGNAL_VETO", "0")).strip().lower() in (
         "1",
         "true",
         "yes",
@@ -90,6 +100,24 @@ def max_confidence_delta() -> float:
     except Exception:
         pass
     return 0.05
+
+
+def veto_threshold() -> float:
+    path = weights_path()
+    try:
+        if path.is_file():
+            doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            if isinstance(doc, dict) and doc.get("fused_veto_threshold") is not None:
+                return max(-1.0, min(1.0, float(doc["fused_veto_threshold"])))
+    except Exception:
+        pass
+    raw = (os.environ.get("FORTRESS_FUSED_SIGNAL_VETO_THRESHOLD") or "").strip()
+    if raw:
+        try:
+            return max(-1.0, min(1.0, float(raw)))
+        except ValueError:
+            pass
+    return 0.0
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -214,7 +242,7 @@ def write_fused_scores(symbols: list[str]) -> dict[str, Any]:
     """Persist per-symbol scores for audit / evolve reweighting."""
     if _halted():
         return {"ok": False, "skipped": "trading_halted"}
-    if not _enabled() and not affects_entry():
+    if not _enabled() and not affects_entry() and not veto_enabled():
         return {"ok": False, "skipped": "fused_signal_disabled"}
 
     weights = load_weights()
@@ -273,6 +301,63 @@ def apply_fused_signal_advisory(
             decision.get("ticker"),
             score,
             advisory.get("mode"),
+        )
+    return decision
+
+
+def apply_fused_entry_gates(
+    decision: dict[str, Any],
+    *,
+    fused_row: dict[str, Any] | None,
+    logger: Any | None = None,
+) -> dict[str, Any]:
+    """
+    Advisory nudge + optional hard veto (TrustTrade fused anchor).
+
+    When veto fires on a BUY, flips action to SKIP with reject_stage=fused_signal_veto.
+    """
+    decision = apply_fused_signal_advisory(decision, fused_row=fused_row, logger=logger)
+    if _halted() or not _enabled() or not veto_enabled():
+        return decision
+    if not isinstance(decision, dict) or decision.get("action") != "BUY":
+        return decision
+    row = fused_row or {}
+    score = row.get("fused_score")
+    if score is None:
+        return decision
+    try:
+        fs = float(score)
+    except (TypeError, ValueError):
+        return decision
+    threshold = veto_threshold()
+    if fs >= threshold:
+        return decision
+
+    ticker = decision.get("ticker") or "?"
+    prior_conf = decision.get("confidence")
+    decision["action"] = "SKIP"
+    decision["reason"] = (
+        f"Fused signal veto (score={fs:.3f} < threshold={threshold:.3f})"
+    )
+    decision["reject_stage"] = "fused_signal_veto"
+    decision["block_reason"] = "fused_signal_veto"
+    decision["fused_signal_veto"] = {
+        "fused_score": fs,
+        "threshold": threshold,
+        "confidence_before_veto": prior_conf,
+    }
+    for key in ("position_size", "shares", "contracts"):
+        if key in decision:
+            decision[key] = 0
+    adv = decision.get("fused_signal_advisory")
+    if isinstance(adv, dict):
+        adv["mode"] = "veto"
+    if logger is not None:
+        logger.info(
+            "%s: fused_signal VETO score=%.3f threshold=%.3f",
+            ticker,
+            fs,
+            threshold,
         )
     return decision
 

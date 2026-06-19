@@ -549,15 +549,21 @@ def evaluate_entry(candidates, portfolio_value=PORTFOLIO_VALUE):
             if isinstance(decision, dict):
                 decision.setdefault("signal_mode", signal_mode)
                 try:
-                    from utils.fused_signal_model import apply_fused_signal_advisory
+                    from utils.trusttrade_entry import attach_screener_context
 
-                    decision = apply_fused_signal_advisory(
+                    decision = attach_screener_context(decision, candidate)
+                except Exception as exc:
+                    logger.debug("trusttrade context attach skipped for %s: %s", ticker, exc)
+                try:
+                    from utils.fused_signal_model import apply_fused_entry_gates
+
+                    decision = apply_fused_entry_gates(
                         decision,
                         fused_row=fused_scores.get(str(ticker).upper()),
                         logger=logger,
                     )
                 except Exception as exc:
-                    logger.debug("fused_signal advisory skipped for %s: %s", ticker, exc)
+                    logger.debug("fused_signal gates skipped for %s: %s", ticker, exc)
                 if decision.get("action") == "BUY":
                     try:
                         deployed_so_far += float(decision.get("position_size") or 0.0)

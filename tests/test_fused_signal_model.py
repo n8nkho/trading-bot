@@ -68,6 +68,39 @@ class TestFusedSignalModel(unittest.TestCase):
                     msg=f"score={score}",
                 )
 
+    def test_fused_veto_flips_buy_to_skip(self):
+        from utils.fused_signal_model import apply_fused_entry_gates
+
+        decision = {"ticker": "AAPL", "action": "BUY", "confidence": 0.6, "shares": 10, "position_size": 1000}
+        env = {
+            "FORTRESS_FUSED_SIGNAL_ENABLED": "1",
+            "FORTRESS_FUSED_SIGNAL_VETO": "1",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            out = apply_fused_entry_gates(
+                decision,
+                fused_row={"fused_score": -0.2, "components": {}},
+            )
+        self.assertEqual(out["action"], "SKIP")
+        self.assertEqual(out["reject_stage"], "fused_signal_veto")
+        self.assertEqual(out["shares"], 0)
+        self.assertEqual(out["fused_signal_advisory"]["mode"], "veto")
+
+    def test_fused_veto_allows_positive_score(self):
+        from utils.fused_signal_model import apply_fused_entry_gates
+
+        decision = {"ticker": "AAPL", "action": "BUY", "confidence": 0.6}
+        env = {
+            "FORTRESS_FUSED_SIGNAL_ENABLED": "1",
+            "FORTRESS_FUSED_SIGNAL_VETO": "1",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            out = apply_fused_entry_gates(
+                decision,
+                fused_row={"fused_score": 0.15, "components": {}},
+            )
+        self.assertEqual(out["action"], "BUY")
+
 
 if __name__ == "__main__":
     unittest.main()

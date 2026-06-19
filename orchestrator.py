@@ -145,6 +145,74 @@ def _entry_trade_dict_for_critique(decision: dict) -> dict:
     }
 
 
+async def _apply_entry_critique_gate(decision: dict) -> tuple[bool, dict | None]:
+    """
+    TrustTrade-lite critique gating. Returns (proceed, critique_result_or_none).
+
+    When consensus is skipped (high L2), stamps CONFIRM without LLM calls.
+    """
+    if not _critique_loop_enabled():
+        return True, None
+    if decision.get("critique_verdict"):
+        return True, None
+
+    from utils.trusttrade_entry import critique_consensus_needed
+
+    need, skip_reason = critique_consensus_needed(decision)
+    ticker = decision.get("ticker") or "?"
+    if not need:
+        decision["critique_verdict"] = "CONFIRM"
+        decision["critique_skipped"] = True
+        decision["critique_skip_reason"] = skip_reason
+        decision["trusttrade_mode"] = "skip_consensus"
+        logger.info("%s: critique skipped (%s)", ticker, skip_reason)
+        return True, None
+
+    from agents.critique_loop import evaluate_with_critique
+
+    crit_signal = _entry_signal_dict_for_critique(decision)
+    crit_trade = _entry_trade_dict_for_critique(decision)
+    try:
+        crit = await asyncio.to_thread(evaluate_with_critique, crit_signal, crit_trade)
+    except Exception as e:
+        logger.warning(
+            "%s: critique loop failed (%s); proceeding without critique",
+            ticker,
+            e,
+        )
+        return True, None
+
+    decision["critique_verdict"] = crit["verdict"]
+    decision["critique_pass1"] = crit["pass1"]
+    decision["critique_pass2"] = crit["pass2"]
+    decision["critique_human_line"] = crit["human_line"]
+    decision["trusttrade_mode"] = "consensus"
+    decision["trusttrade_consensus_reason"] = skip_reason
+    if not crit["proceed"]:
+        return False, crit
+    mult = float(crit["size_multiplier"])
+    if mult < 1.0:
+        trade_type = decision.get("trade_type") or decision.get("type") or "STOCK"
+        if trade_type == "OPTION" or decision.get("type") == "OPTION":
+            c0 = int(decision.get("contracts") or 0)
+            if c0 > 0:
+                decision["contracts"] = max(1, int(c0 * mult))
+                decision["position_size"] = (
+                    decision["contracts"] * float(decision.get("entry_price") or 0) * 100
+                )
+        else:
+            sh0 = int(decision.get("shares") or 0)
+            if sh0 > 0:
+                decision["shares"] = max(1, int(sh0 * mult))
+                decision["position_size"] = decision["shares"] * float(
+                    decision.get("entry_price") or 0
+                )
+        decision["critique_size_adjusted"] = True
+    else:
+        decision["critique_size_adjusted"] = False
+    return True, crit
+
+
 def _append_trade_history_row(signal: dict, pos: dict | None) -> None:
     """Append one closed trade for reflection agent (SELL_ALL fills only)."""
     try:
@@ -1077,42 +1145,19 @@ async def submit_approved_screening_trade(trade, candidates, current_params):
     Used for autonomous execution and for ``execute_pending`` (human-in-the-loop flush).
     """
     if _critique_loop_enabled() and not trade.get("critique_verdict"):
-        from agents.critique_loop import evaluate_with_critique
-
-        cs = _entry_signal_dict_for_critique(trade)
-        ct = _entry_trade_dict_for_critique(trade)
         try:
-            crit = await asyncio.to_thread(evaluate_with_critique, cs, ct)
+            proceed, crit = await _apply_entry_critique_gate(trade)
         except Exception as e:
             logger.warning(
                 "%s: submit-time critique failed: %s; submitting without new critique",
                 trade.get("ticker"),
                 e,
             )
-            crit = None
-        if crit is not None:
-            trade["critique_verdict"] = crit["verdict"]
-            trade["critique_pass1"] = crit["pass1"]
-            trade["critique_pass2"] = crit["pass2"]
-            trade["critique_human_line"] = crit["human_line"]
-            if not crit["proceed"]:
-                trade["executed"] = False
-                trade["execution_error"] = "critique_reject_on_submit"
-                return ("failure", trade)
-            mult = float(crit["size_multiplier"])
-            if mult < 1.0:
-                if trade.get("trade_type") == "OPTION" or trade.get("type") == "OPTION":
-                    c0 = int(trade.get("contracts") or 0)
-                    if c0 > 0:
-                        trade["contracts"] = max(1, int(c0 * mult))
-                        trade["position_size"] = (
-                            trade["contracts"] * float(trade.get("entry_price") or 0) * 100
-                        )
-                else:
-                    sh0 = int(trade.get("shares") or 0)
-                    if sh0 > 0:
-                        trade["shares"] = max(1, int(sh0 * mult))
-                        trade["position_size"] = trade["shares"] * float(trade.get("entry_price") or 0)
+            proceed, crit = True, None
+        if not proceed:
+            trade["executed"] = False
+            trade["execution_error"] = "critique_reject_on_submit"
+            return ("failure", trade)
 
     option_symbol = None
     if trade.get("trade_type") == "OPTION" or trade.get("type") == "OPTION":
@@ -1754,59 +1799,17 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
                     
                     decision['risk_check'] = risk_check
                     if _critique_loop_enabled():
-                        from agents.critique_loop import evaluate_with_critique
-
-                        crit_signal = _entry_signal_dict_for_critique(decision)
-                        crit_trade = _entry_trade_dict_for_critique(decision)
-                        try:
-                            crit = await asyncio.to_thread(
-                                evaluate_with_critique,
-                                crit_signal,
-                                crit_trade,
+                        proceed, crit = await _apply_entry_critique_gate(decision)
+                        if not proceed:
+                            rejected_trades.append(
+                                {
+                                    "ticker": ticker,
+                                    "reason": f"CRITIQUE_REJECT: {(crit or {}).get('pass2', {}).get('critique', '')}",
+                                    "original_decision": decision,
+                                    "reject_stage": "critique_loop",
+                                }
                             )
-                        except Exception as e:
-                            logger.warning(
-                                "%s: critique loop failed (%s); proceeding without critique",
-                                ticker,
-                                e,
-                            )
-                            crit = None
-                        if crit is not None:
-                            decision["critique_verdict"] = crit["verdict"]
-                            decision["critique_pass1"] = crit["pass1"]
-                            decision["critique_pass2"] = crit["pass2"]
-                            decision["critique_human_line"] = crit["human_line"]
-                            if not crit["proceed"]:
-                                rejected_trades.append(
-                                    {
-                                        "ticker": ticker,
-                                        "reason": f"CRITIQUE_REJECT: {crit['pass2'].get('critique', '')}",
-                                        "original_decision": decision,
-                                        "reject_stage": "critique_loop",
-                                    }
-                                )
-                                continue
-                            mult = float(crit["size_multiplier"])
-                            if mult < 1.0:
-                                if trade_type == "OPTION":
-                                    c0 = int(decision.get("contracts") or 0)
-                                    if c0 > 0:
-                                        decision["contracts"] = max(1, int(c0 * mult))
-                                        decision["position_size"] = (
-                                            decision["contracts"]
-                                            * float(decision.get("entry_price") or 0)
-                                            * 100
-                                        )
-                                else:
-                                    sh0 = int(decision.get("shares") or 0)
-                                    if sh0 > 0:
-                                        decision["shares"] = max(1, int(sh0 * mult))
-                                        decision["position_size"] = decision["shares"] * float(
-                                            decision.get("entry_price") or 0
-                                        )
-                                decision["critique_size_adjusted"] = True
-                            else:
-                                decision["critique_size_adjusted"] = False
+                            continue
                     approved_trades.append(decision)
                     
                     # Track decision for performance analysis
