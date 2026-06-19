@@ -242,7 +242,17 @@ def _collect_findings() -> list[dict[str, Any]]:
         + scan_classic_zero_candidates()
         + scan_classic_post_recursive_attrition()
         + scan_fortress_ai_sibling()
+        + _scan_adaptive_rsi()
     )
+
+
+def _scan_adaptive_rsi() -> list[dict[str, Any]]:
+    try:
+        from utils.adaptive_rsi_reconciliation import scan_adaptive_rsi_screener_drift
+
+        return scan_adaptive_rsi_screener_drift()
+    except Exception:
+        return []
 
 
 def _write_scan(findings: list[dict[str, Any]], *, log: bool) -> dict[str, Any]:
