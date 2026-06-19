@@ -210,6 +210,19 @@ def scan_classic_zero_candidates() -> list[dict[str, Any]]:
     return findings
 
 
+def scan_classic_post_recursive_attrition() -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    try:
+        from utils.classic_si_autonomous import scan_post_recursive_attrition_finding
+
+        f = scan_post_recursive_attrition_finding()
+        if f:
+            findings.append(f)
+    except Exception:
+        pass
+    return findings
+
+
 def scan_classic_pnl_ledger_stale() -> list[dict[str, Any]]:
     try:
         from utils.pnl_ledger_health import scan_classic_pnl_ledger_stale as _scan
@@ -227,6 +240,7 @@ def _collect_findings() -> list[dict[str, Any]]:
         + scan_regime_stale_rth()
         + scan_classic_pnl_ledger_stale()
         + scan_classic_zero_candidates()
+        + scan_classic_post_recursive_attrition()
         + scan_fortress_ai_sibling()
     )
 

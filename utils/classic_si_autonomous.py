@@ -18,12 +18,16 @@ _FORTRESS_AI = Path("/home/ubuntu/fortress-ai")
 _SCREENER_CODES = frozenset(
     {
         "classic_zero_candidates",
-        "classic_candidate_throughput",
-        "classic_fill_recency",
         "classic_screener_throughput",
     }
 )
 _ENTRY_CODES = frozenset({"classic_fill_recency", "classic_fill_recency_gap"})
+_THROUGHPUT_CODES = frozenset(
+    {
+        "classic_candidate_throughput",
+        "classic_post_recursive_attrition",
+    }
+)
 
 
 def auto_enabled() -> bool:
@@ -37,12 +41,22 @@ def auto_enabled() -> bool:
 
 def _heuristic_assess(item: dict[str, Any]) -> dict[str, Any]:
     code = str(item.get("code") or "")
-    worth = code in _SCREENER_CODES or code in _ENTRY_CODES or code.startswith("classic_")
+    worth = (
+        code in _SCREENER_CODES
+        or code in _ENTRY_CODES
+        or code in _THROUGHPUT_CODES
+        or code.startswith("classic_")
+    )
     plan = str(item.get("recommendation") or "")
     if code in _SCREENER_CODES:
         plan += (
             "\nAuto-apply: utils/classic_si_screener.maybe_auto_relax_screener() "
             "and verify agents/screener_agent.py reads screener_si_overrides.json."
+        )
+    if code in _THROUGHPUT_CODES:
+        plan += (
+            "\nAuto-apply: utils/classic_si_recursive.maybe_auto_relax_recursive() "
+            "and utils/classic_si_entry.maybe_auto_relax_entry_gate()."
         )
     if code in _ENTRY_CODES:
         plan += (
@@ -115,6 +129,24 @@ def apply_screener_item(item: dict[str, Any]) -> dict[str, Any]:
     return {"ok": False, "skipped": result.get("skipped"), "detail": result}
 
 
+def apply_recursive_item(item: dict[str, Any]) -> dict[str, Any]:
+    from utils.classic_si_entry import maybe_auto_relax_entry_gate
+    from utils.classic_si_recursive import maybe_auto_relax_recursive
+
+    recursive = maybe_auto_relax_recursive()
+    entry = maybe_auto_relax_entry_gate()
+    if recursive.get("ok"):
+        return {"ok": True, "mode": "recursive_relax", **recursive, "entry": entry}
+    if entry.get("ok"):
+        return {"ok": True, "mode": "entry_relax", **entry, "recursive": recursive}
+    return {
+        "ok": False,
+        "skipped": recursive.get("skipped") or entry.get("skipped"),
+        "recursive": recursive,
+        "entry": entry,
+    }
+
+
 def apply_entry_item(item: dict[str, Any]) -> dict[str, Any]:
     from utils.classic_si_entry import maybe_auto_relax_entry_gate
 
@@ -144,6 +176,8 @@ def apply_queued_item(item_id: str) -> dict[str, Any]:
     code = str(item.get("code") or "")
     if code in _SCREENER_CODES:
         result = apply_screener_item(item)
+    elif code in _THROUGHPUT_CODES:
+        result = apply_recursive_item(item)
     elif code in _ENTRY_CODES:
         result = apply_entry_item(item)
     else:
@@ -257,6 +291,34 @@ def ingest_fortress_capability_gaps() -> list[dict[str, Any]]:
     return upserted
 
 
+def scan_post_recursive_attrition_finding() -> dict[str, Any] | None:
+    from utils.classic_si_recursive import attrition_context, should_auto_relax
+
+    ctx = attrition_context()
+    ok, reason = should_auto_relax()
+    if not ok:
+        return None
+    raw = int(ctx.get("last_raw_candidates_found") or 0)
+    post = int(ctx.get("last_candidates_found") or 0)
+    return {
+        "code": "classic_post_recursive_attrition",
+        "severity": "high" if int(ctx.get("daily_screen_consecutive_zero") or 0) >= 2 else "medium",
+        "component": "classic_fortress",
+        "title": "RecursiveScreener attrition — raw candidates not reaching entry",
+        "recommendation": (
+            f"{raw} raw → {post} post-recursive ({reason}) — "
+            "relax RecursiveScreener L2 min score via classic_si_recursive."
+        ),
+        "last_raw_candidates_found": raw,
+        "last_candidates_found": post,
+        "daily_screen_consecutive_zero": ctx.get("daily_screen_consecutive_zero"),
+        "kind": "tunable",
+        "effort": "low",
+        "impact": "high",
+        "si_action": reason,
+    }
+
+
 def scan_zero_candidate_finding() -> dict[str, Any] | None:
     from utils.classic_si_screener import screening_context, should_auto_relax
 
@@ -296,15 +358,27 @@ def run_classic_si_cycle(*, assess_limit: int = 5, apply_limit: int = 2) -> dict
     zf = scan_zero_candidate_finding()
     if zf:
         upsert_from_finding(zf, source="classic_si_scan")
+    af = scan_post_recursive_attrition_finding()
+    if af:
+        upsert_from_finding(af, source="classic_si_scan")
 
     assessed = auto_assess_pending(limit=assess_limit)
     applied = apply_queued(limit=apply_limit)
 
-    # Direct screener relax when streak persists even if queue empty
+    # Direct relax when streak persists even if queue empty
     direct = {}
     ctx = screening_context()
     if ctx["consecutive_zero_runs"] >= 2 and not any(a.get("ok") for a in applied):
         direct = maybe_auto_relax_screener()
+
+    recursive_direct = {}
+    try:
+        from utils.classic_si_recursive import maybe_auto_relax_recursive
+
+        if not any(a.get("ok") for a in applied):
+            recursive_direct = maybe_auto_relax_recursive()
+    except Exception:
+        recursive_direct = {}
 
     entry_direct = {}
     try:
@@ -323,6 +397,7 @@ def run_classic_si_cycle(*, assess_limit: int = 5, apply_limit: int = 2) -> dict
         "assessed": len(assessed),
         "applied": applied,
         "direct_screener": direct,
+        "direct_recursive": recursive_direct,
         "direct_entry": entry_direct,
         "context": ctx,
     }

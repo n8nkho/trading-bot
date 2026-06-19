@@ -948,9 +948,14 @@ class RecursiveScreener:
                 pass
             return []
 
-        # Use regime-adjusted min score if available, else existing default
-        _l2_min_score = _regime_min_score if _regime_min_score is not None \
-            else getattr(self, 'min_score', 65)
+        # Use regime-adjusted min score if available, else SI-tuned default.
+        try:
+            from utils.classic_si_recursive import effective_min_layer2_score
+
+            _si_l2 = effective_min_layer2_score()
+        except Exception:
+            _si_l2 = self.min_layer2_score
+        _l2_min_score = _regime_min_score if _regime_min_score is not None else _si_l2
         # ── End regime hook ──────────────────────────────────────────────────
 
         if not _recursive_screener_enabled():

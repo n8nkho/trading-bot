@@ -218,6 +218,9 @@ def _read_latest_json(data_dir: Path, filename_glob: str) -> dict:
             return {}
         latest_path = Path(paths[0])
         doc = json.loads(latest_path.read_text(encoding="utf-8"))
+        if isinstance(doc, dict) and isinstance(doc.get("runs"), list) and doc["runs"]:
+            last = doc["runs"][-1]
+            return last if isinstance(last, dict) else doc
         return doc if isinstance(doc, dict) else {}
     except Exception:
         return {}
@@ -1305,6 +1308,7 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
     logger.info("=" * 80)
     
     start_time = datetime.now()
+    raw_candidate_count = 0
     
     run_id = f"screen_{int(pytime.time())}"
     policy = get_profile_bundle()
@@ -1329,10 +1333,11 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
     try:
         # Step 1: Run screener
         logger.info("Step 1: Running stock screener...")
-        candidates = run_screener()
-        logger.info(f"Screener found {len(candidates)} raw candidates")
+        raw_candidates = run_screener()
+        raw_candidate_count = len(raw_candidates)
+        logger.info(f"Screener found {raw_candidate_count} raw candidates")
         candidates = RecursiveScreener(data_dir=DATA_DIR).screen_candidates(
-            candidates,
+            raw_candidates,
             portfolio_nav=float(portfolio_value) if portfolio_value else None,
         )
         logger.info(f"After RecursiveScreener: {len(candidates)} candidates")
@@ -1935,6 +1940,7 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
             'timestamp': end_time.isoformat(),
             'duration_seconds': duration,
             'candidates_found': len(candidates),
+            'raw_candidates_found': raw_candidate_count,
             'candidates': candidates,
             'screening_meta': screening_meta,
             'entry_gate_summary': entry_gate_summary,
@@ -1985,17 +1991,28 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         try:
             from utils.pipeline_health import record_daily_screen_outcome
 
-            record_daily_screen_outcome(candidates_found=len(candidates))
+            record_daily_screen_outcome(
+                candidates_found=len(candidates),
+                raw_candidates_found=raw_candidate_count,
+            )
         except Exception:
             logger.exception("record_daily_screen_outcome failed")
         try:
             from utils.classic_si_screener import maybe_auto_relax_screener, reset_relax_on_candidates
+            from utils.classic_si_recursive import (
+                maybe_auto_relax_recursive,
+                reset_relax_on_candidates as reset_recursive_relax,
+            )
+            from utils.classic_si_entry import maybe_auto_relax_entry_gate
 
             reset_relax_on_candidates(candidates_found=len(candidates))
+            reset_recursive_relax(candidates_found=len(candidates))
             if len(candidates) <= 0:
                 maybe_auto_relax_screener()
+                maybe_auto_relax_recursive()
+                maybe_auto_relax_entry_gate()
         except Exception:
-            logger.exception("classic_si_screener post-screen hook failed")
+            logger.exception("classic_si post-screen hook failed")
         
         return result
         
@@ -2584,7 +2601,7 @@ def get_sector_from_candidates(ticker, candidates):
 
 def save_daily_signals(result):
     """
-    Save daily screening signals to file.
+    Save daily screening signals to file (append runs per day like exit_signals).
     
     Args:
         result: Result dict from run_daily_screening()
@@ -2592,12 +2609,25 @@ def save_daily_signals(result):
     try:
         date_str = datetime.now().strftime('%Y%m%d')
         filename = DATA_DIR / f"daily_signals_{date_str}.json"
-        
+
+        if filename.exists():
+            with open(filename, 'r') as f:
+                existing_data = json.load(f)
+            if isinstance(existing_data, dict) and 'runs' in existing_data:
+                existing_data['runs'].append(result)
+                payload = existing_data
+            elif isinstance(existing_data, dict):
+                payload = {'runs': [existing_data, result]}
+            else:
+                payload = {'runs': [result]}
+        else:
+            payload = {'runs': [result]}
+
         with open(filename, 'w') as f:
-            json.dump(result, f, indent=2)
-        
-        logger.info(f"Daily signals saved to {filename}")
-        
+            json.dump(payload, f, indent=2)
+
+        logger.info(f"Daily signals saved to {filename} ({len(payload.get('runs') or [])} run(s) today)")
+
     except Exception as e:
         logger.error(f"Error saving daily signals: {type(e).__name__}: {str(e)}")
 
