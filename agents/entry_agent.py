@@ -643,6 +643,13 @@ def evaluate_single_entry(
         # Apply relaxed RSI ceiling before deterministic gate (not only on LLM SKIP fallthrough).
         rsi_cap = max(rsi_cap, float(_fr_ctx.get("relaxed_rsi_cap") or rsi_cap))
 
+    try:
+        from utils.adaptive_rsi import adaptive_rsi_ceiling
+
+        rsi_cap = max(rsi_cap, adaptive_rsi_ceiling())
+    except Exception:
+        pass
+
     # LLM-first reasoning path (replaces deterministic gating when provider is enabled).
     llm_decision = _get_llm_engine().evaluate_trade_opportunity(candidate)
     llm_fallthrough = False

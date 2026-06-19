@@ -324,10 +324,10 @@ def run_screener():
                 bull_rsi_t1 = 62
             tier_profiles = {
                 1: {"drop_min": -6, "drop_max": 2, "rsi_threshold": bull_rsi_t1, "volume_ratio_min": 0.85},
-                2: {"drop_min": -10, "drop_max": 3, "rsi_threshold": min(68, bull_rsi_t1 + 4), "volume_ratio_min": 0.75},
+                2: {"drop_min": -10, "drop_max": 3, "rsi_threshold": min(72, bull_rsi_t1 + 4), "volume_ratio_min": 0.75},
                 3: {"drop_min": -15, "drop_max": 4, "rsi_threshold": min(72, bull_rsi_t1 + 8), "volume_ratio_min": 0.65},
-                4: {"drop_min": -20, "drop_max": 5, "rsi_threshold": min(75, bull_rsi_t1 + 12), "volume_ratio_min": 0.55},
-                5: {"drop_min": -25, "drop_max": 6, "rsi_threshold": min(78, bull_rsi_t1 + 16), "volume_ratio_min": 0.50},
+                4: {"drop_min": -20, "drop_max": 5, "rsi_threshold": min(72, bull_rsi_t1 + 12), "volume_ratio_min": 0.55},
+                5: {"drop_min": -25, "drop_max": 6, "rsi_threshold": min(72, bull_rsi_t1 + 16), "volume_ratio_min": 0.50},
             }
         else:
             from utils.classic_si_screener import effective_bear_tier1
@@ -337,18 +337,28 @@ def run_screener():
             drop_min = float(bear.get("bear_drop_min") if bear.get("bear_drop_min") is not None else -15)
             drop_max = float(bear.get("bear_drop_max") if bear.get("bear_drop_max") is not None else -5)
             vol_min = float(bear.get("bear_volume_ratio_min") if bear.get("bear_volume_ratio_min") is not None else 1.5)
+            adaptive_cap = rsi_t1
             tier_profiles = {
                 1: {"drop_min": drop_min, "drop_max": drop_max, "rsi_threshold": rsi_t1, "volume_ratio_min": vol_min},
-                2: {"drop_min": min(-25, drop_min - 10), "drop_max": max(0, drop_max + 1), "rsi_threshold": min(58, rsi_t1 + 5), "volume_ratio_min": max(0.65, vol_min - 0.15)},
-                3: {"drop_min": min(-35, drop_min - 20), "drop_max": max(0, drop_max + 2), "rsi_threshold": min(62, rsi_t1 + 10), "volume_ratio_min": max(0.55, vol_min - 0.25)},
-                4: {"drop_min": min(-45, drop_min - 30), "drop_max": max(0, drop_max + 3), "rsi_threshold": min(65, rsi_t1 + 14), "volume_ratio_min": max(0.45, vol_min - 0.35)},
-                5: {"drop_min": min(-50, drop_min - 35), "drop_max": max(5, drop_max + 4), "rsi_threshold": min(68, rsi_t1 + 18), "volume_ratio_min": max(0.40, vol_min - 0.45)},
+                2: {"drop_min": min(-25, drop_min - 10), "drop_max": max(0, drop_max + 1), "rsi_threshold": min(adaptive_cap, rsi_t1 + 5), "volume_ratio_min": max(0.65, vol_min - 0.15)},
+                3: {"drop_min": min(-35, drop_min - 20), "drop_max": max(0, drop_max + 2), "rsi_threshold": min(adaptive_cap, rsi_t1 + 10), "volume_ratio_min": max(0.55, vol_min - 0.25)},
+                4: {"drop_min": min(-45, drop_min - 30), "drop_max": max(0, drop_max + 3), "rsi_threshold": min(adaptive_cap, rsi_t1 + 14), "volume_ratio_min": max(0.45, vol_min - 0.35)},
+                5: {"drop_min": min(-50, drop_min - 35), "drop_max": max(5, drop_max + 4), "rsi_threshold": min(adaptive_cap, rsi_t1 + 18), "volume_ratio_min": max(0.40, vol_min - 0.45)},
             }
             if bear.get("bear_ranging_extremes") and market_regime in ("TRENDING_BEAR", "RANGING", "VOLATILE"):
                 ranging_extremes = True
         prof = tier_profiles.get(tier_idx) or tier_profiles[5]
         merged = dict(params)
         merged.update(prof)
+        try:
+            from utils.adaptive_rsi import tier_rsi_threshold
+
+            merged["rsi_threshold"] = tier_rsi_threshold(
+                tier_rsi=float(merged["rsi_threshold"]),
+                tier_idx=tier_idx,
+            )
+        except Exception:
+            pass
         return merged
 
     # Compact pre-filter telemetry used by the dashboard.
@@ -412,9 +422,15 @@ def run_screener():
         # Check if stock meets ALL criteria before calling heavier analysis
         meets_drop_criteria = params_for_tier["drop_min"] <= drop_pct <= params_for_tier["drop_max"]
         if ranging_extremes and market_regime == "RANGING":
-            meets_rsi_criteria = (rsi < 35) or (rsi > 65)
+            from utils.adaptive_rsi import adaptive_ranging_overbought_floor, adaptive_ranging_oversold_cap
+
+            oversold_cap = adaptive_ranging_oversold_cap()
+            overbought_floor = adaptive_ranging_overbought_floor()
+            meets_rsi_criteria = (rsi < oversold_cap) or (rsi > overbought_floor)
+            rsi_rule_label = f"ranging_extremes_lt{oversold_cap:.0f}_or_gt{overbought_floor:.0f}"
         else:
             meets_rsi_criteria = rsi < params_for_tier["rsi_threshold"]
+            rsi_rule_label = f"lt_{params_for_tier['rsi_threshold']}"
         meets_volume_criteria = volume_ratio > params_for_tier["volume_ratio_min"]
 
         def _sample(reason: str) -> None:
@@ -427,7 +443,7 @@ def run_screener():
                     "rsi": round(float(rsi), 4),
                     "drop_pct": round(float(drop_pct), 4),
                     "volume_ratio": round(float(volume_ratio), 4),
-                    "rsi_rule": "ranging_extremes_lt35_or_gt65"
+                    "rsi_rule": rsi_rule_label
                     if (ranging_extremes and market_regime == "RANGING")
                     else f"lt_{params_for_tier['rsi_threshold']}",
                     "drop_band": [params_for_tier["drop_min"], params_for_tier["drop_max"]],
@@ -643,12 +659,9 @@ def run_screener():
             except Exception:
                 pass
         try:
-            from utils.pipeline_health import record_screening_outcome
+            from utils.classic_screening_hooks import post_screening_si_hooks
 
-            record_screening_outcome(candidates_found=len(candidates))
-            from utils.classic_si_screener import reset_relax_on_candidates
-
-            reset_relax_on_candidates(candidates_found=len(candidates))
+            post_screening_si_hooks(candidates_found=len(candidates))
         except Exception:
             pass
 
@@ -693,6 +706,12 @@ def run_screener():
                 "deterministic_candidates_output": deterministic_candidate_count,
             },
         }
+        try:
+            from utils.adaptive_rsi import adaptive_rsi_context
+
+            meta["adaptive_rsi"] = adaptive_rsi_context()
+        except Exception:
+            pass
         with open(meta_path, "w") as f:
             json.dump(meta, f, indent=2)
     except Exception:

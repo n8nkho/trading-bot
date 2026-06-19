@@ -56,10 +56,11 @@ class TestClassicSiScreener(unittest.TestCase):
         from utils import classic_si_screener as css
 
         with patch.object(css, "_OVERRIDES_PATH", self.data / "overrides.json"):
-            (self.data / "overrides.json").write_text(
-                json.dumps({"relax_step": 1, "bear_rsi_t1": 50, "bear_drop_min": -5})
-            )
-            tier = css.effective_bear_tier1()
+            with patch("utils.adaptive_rsi.adaptive_rsi_ceiling", return_value=40.0):
+                (self.data / "overrides.json").write_text(
+                    json.dumps({"relax_step": 1, "bear_rsi_t1": 50, "bear_drop_min": -5})
+                )
+                tier = css.effective_bear_tier1()
         self.assertEqual(tier["bear_rsi_t1"], 50)
 
     def test_daily_screen_zero_streak_drives_relax(self):

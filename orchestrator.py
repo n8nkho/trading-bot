@@ -1993,28 +1993,13 @@ async def run_daily_screening_async(portfolio_value=PORTFOLIO_VALUE):
         )
 
         try:
-            from utils.pipeline_health import record_daily_screen_outcome
+            from utils.classic_screening_hooks import post_screening_si_hooks
 
-            record_daily_screen_outcome(
+            post_screening_si_hooks(
                 candidates_found=len(candidates),
                 raw_candidates_found=raw_candidate_count,
+                daily_screen=True,
             )
-        except Exception:
-            logger.exception("record_daily_screen_outcome failed")
-        try:
-            from utils.classic_si_screener import maybe_auto_relax_screener, reset_relax_on_candidates
-            from utils.classic_si_recursive import (
-                maybe_auto_relax_recursive,
-                reset_relax_on_candidates as reset_recursive_relax,
-            )
-            from utils.classic_si_entry import maybe_auto_relax_entry_gate
-
-            reset_relax_on_candidates(candidates_found=len(candidates))
-            reset_recursive_relax(candidates_found=len(candidates))
-            if len(candidates) <= 0:
-                maybe_auto_relax_screener()
-                maybe_auto_relax_recursive()
-                maybe_auto_relax_entry_gate()
         except Exception:
             logger.exception("classic_si post-screen hook failed")
         

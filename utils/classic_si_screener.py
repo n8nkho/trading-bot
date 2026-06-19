@@ -123,15 +123,23 @@ def effective_bear_tier1() -> dict[str, Any]:
     if step > 0:
         merged = _RELAX_STEPS[min(step, _MAX_STEP) - 1]
         out.update({k: merged[k] for k in _BEAR_BASE if k in merged})
-    for k in _BEAR_BASE:
-        if k in ov and ov[k] is not None:
-            out[k] = ov[k]
+        for k in _BEAR_BASE:
+            if k in ov and ov[k] is not None:
+                out[k] = ov[k]
     env_rsi = os.environ.get("FORTRESS_SCREENER_BEAR_RSI_T1")
     if env_rsi:
         try:
             out["bear_rsi_t1"] = int(float(env_rsi))
         except ValueError:
             pass
+    try:
+        from utils.adaptive_rsi import adaptive_rsi_ceiling
+
+        cap = int(adaptive_rsi_ceiling())
+        if cap > int(out.get("bear_rsi_t1") or 0):
+            out["bear_rsi_t1"] = cap
+    except Exception:
+        pass
     return out
 
 
@@ -187,16 +195,23 @@ def apply_relax_patch(patch: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def reset_relax_on_candidates(*, candidates_found: int) -> None:
-    """Reset relax step when screening produces candidates."""
+    """Reset relax step and stale bear overrides when screening produces candidates."""
     if int(candidates_found) <= 0:
         return
     ov = load_overrides()
-    if int(ov.get("relax_step") or 0) == 0:
+    step = int(ov.get("relax_step") or 0)
+    stale_bear = any(
+        ov.get(k) is not None and ov.get(k) != _BEAR_BASE.get(k) for k in _BEAR_BASE
+    )
+    if step == 0 and not stale_bear:
         return
-    ov["relax_step"] = 0
-    ov["reset_reason"] = "candidates_found"
-    ov["reset_at_utc"] = datetime.now(timezone.utc).isoformat()
-    save_overrides(ov)
+    save_overrides(
+        {
+            "relax_step": 0,
+            "reset_reason": "candidates_found",
+            "reset_at_utc": datetime.now(timezone.utc).isoformat(),
+        }
+    )
 
 
 def maybe_auto_relax_screener() -> dict[str, Any]:
