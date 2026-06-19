@@ -188,8 +188,18 @@ def apply_queued_item(item_id: str) -> dict[str, Any]:
     return {"item_id": item_id, "code": code, **result}
 
 
+_MONITOR_ONLY_FORTRESS_CODES = frozenset({"classic_pnl_ledger_stale"})
+
+
 def _try_fortress_code_agent(item: dict[str, Any]) -> dict[str, Any]:
     """Delegate non-screener code fixes to fortress-ai si_code_implementation."""
+    code = str(item.get("code") or "")
+    if code in _MONITOR_ONLY_FORTRESS_CODES:
+        return {
+            "ok": False,
+            "skipped": "monitor_only_investigate_classic_ledger",
+            "code": code,
+        }
     if not _FORTRESS_AI.is_dir():
         return {"ok": False, "skipped": "fortress_ai_missing"}
     try:

@@ -160,6 +160,46 @@ class TestClassicSiEntry(unittest.TestCase):
             self.assertTrue(doc.get("active"))
             self.assertGreaterEqual(float(doc.get("relaxed_rsi_cap") or 0), 68)
 
+    def test_refresh_days_when_already_at_max_step(self):
+        from utils import classic_si_entry as cse
+
+        with tempfile.TemporaryDirectory() as td:
+            ov_path = Path(td) / "entry_si_overrides.json"
+            ov_path.write_text(
+                json.dumps(
+                    {
+                        "relaxed_rsi_cap": 70,
+                        "active": True,
+                        "relax_step": 2,
+                        "days_since_last_fill": 21,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(cse, "_OVERRIDES_PATH", ov_path), mock.patch.object(
+                cse, "days_since_last_activity", return_value=25
+            ), mock.patch.object(cse, "days_since_last_fill", return_value=25), mock.patch.object(
+                cse, "latest_regime", return_value="VOLATILE"
+            ), mock.patch.object(
+                cse,
+                "load_entry_overrides",
+                return_value=json.loads(ov_path.read_text(encoding="utf-8")),
+            ):
+                out = cse.maybe_auto_relax_entry_gate()
+            self.assertTrue(out.get("ok"))
+            self.assertEqual(out.get("mode"), "entry_relax_refresh")
+            doc = json.loads(ov_path.read_text(encoding="utf-8"))
+            self.assertEqual(doc.get("days_since_last_fill"), 25)
+
+
+class TestClassicSiLedgerSkip(unittest.TestCase):
+    def test_pnl_ledger_stale_skips_fortress_code_agent(self):
+        from utils.classic_si_autonomous import _try_fortress_code_agent
+
+        out = _try_fortress_code_agent({"id": "x", "code": "classic_pnl_ledger_stale"})
+        self.assertFalse(out.get("ok"))
+        self.assertEqual(out.get("skipped"), "monitor_only_investigate_classic_ledger")
+
 
 if __name__ == "__main__":
     unittest.main()
