@@ -24,7 +24,7 @@ Classic Fortress is a **rules-driven, multi-agent** US equities and options trad
 | Scheduling | Cron (screen 2x/day, monitor 5 min) | RTH loop every 5 min |
 | Primary P&L | `data/pnl_ledger.jsonl` | `data/ai_decisions.jsonl` + skim logs |
 
-**Core promise:** Hard risk/compliance gates (`pre_trade_gate`, `risk_guardian`, policy profiles) before any order reaches Alpaca. June 2026 adds **Classic SI** (integrity queue + fill-recency entry loosen + screener relax) and **chunked exits** under `FORTRESS_MAX_ORDER_NOTIONAL_USD`.
+**Core promise:** Hard risk/compliance gates (`pre_trade_gate`, `risk_guardian`, policy profiles) before any order reaches Alpaca. June 2026 adds **Classic SI** (integrity queue + fill-recency entry loosen + screener relax), **unified adaptive RSI** across screener prefilter and entry gate, and **chunked exits** under `FORTRESS_MAX_ORDER_NOTIONAL_USD`.
 
 ---
 
@@ -65,6 +65,7 @@ Cron / systemd
 
 | Job | Schedule | Command |
 |-----|----------|---------|
+| Intraday screener | Every 30 min 9-16 ET | `python3 -m agents.screener_agent` (via `cron_run.sh screener`) |
 | Full screen | 14:35, 14:50, 15:05, 15:35 ET weekdays | `orchestrator.py screen` |
 | Exit monitor | Every 5 min 9-16 ET | `orchestrator.py monitor` |
 | Regime detector | 30 min RTH | `agents.regime_detector` |
@@ -79,9 +80,9 @@ Cron / systemd
 
 ### 3.1 Daily screening (`orchestrator screen`)
 
-1. **Screener** (`screener_agent`) — RSI drop, volume, watchlist funnel
+1. **Screener** (`screener_agent`) — RSI drop, volume, watchlist funnel; **adaptive RSI ceiling** from `utils/adaptive_rsi.py` raises tier-1 `rsi_threshold` when fill-recency SI is active (must match entry gate)
 2. **Enrichment** — vision/news/fundamental paths (optional)
-3. **Entry evaluation** (`entry_agent`) — per-candidate gates
+3. **Entry evaluation** (`entry_agent`) — per-candidate gates; uses `loosen_context()` + `adaptive_rsi_ceiling()`
 4. **Risk Guardian** — circuit breaker, streak limits, VIX tiers
 5. **Pre-trade gate** — compliance, halt, spread, notional caps
 6. **Execution** — Alpaca submit or HITL queue (`pending_execution_queue.json`)
@@ -101,16 +102,21 @@ Parallel to recursive evolution — runs on integrity scan + evolve cron:
 
 | Module | Role |
 |--------|------|
-| `utils/integrity_diagnostics.py` | Detect classic_fill_recency, zero-candidate streaks, sibling fortress-ai findings |
+| `utils/integrity_diagnostics.py` | Detect classic_fill_recency, zero-candidate streaks, **adaptive_rsi_screener_drift**, sibling fortress-ai findings |
 | `utils/si_recommendation_queue.py` | Same schema as fortress-ai sibling queue |
 | `utils/classic_si_autonomous.py` | Heuristic assess + bounded auto-apply |
 | `utils/fill_recency_entry.py` | Entry-aware fill recency; bounded RSI/LLM relax when no recent fill |
 | `utils/classic_si_entry.py` | Auto-relax entry gate on persistent fill-recency gap |
 | `utils/classic_si_screener.py` | Bear/ranging tier-1 relax on zero-candidate streaks |
+| `utils/adaptive_rsi.py` | **Single adaptive RSI ceiling** — merges `current_params`, fill-recency, entry SI overrides |
+| `utils/classic_screening_hooks.py` | Shared post-screen SI (cron screener + orchestrator): health, auto-relax on zero candidates |
+| `utils/adaptive_rsi_reconciliation.py` | Integrity scan `adaptive_rsi_screener_drift` when screener prefilter lags entry relax |
 
-**Hooks:** `orchestrator.py` post-screen and entry paths; `agents/recursive_evolution.py` phase-1 queue process  
-**Data:** `data/si_recommendation_queue.json`, `data/entry_si_overrides.json`, `data/screener_si_overrides.json`  
+**Hooks:** `orchestrator.py` post-screen and entry paths; **`agents/screener_agent.py`** end-of-run (intraday cron); `agents/recursive_evolution.py` phase-1 queue process  
+**Data:** `data/si_recommendation_queue.json`, `data/entry_si_overrides.json`, `data/screener_si_overrides.json`, `data/last_screening_meta.json` (includes `adaptive_rsi` telemetry)  
 **Reads sibling:** `fortress-ai/data/si_recommendation_summary.json`, `data/si_capability/overrides.json`
+
+**Adaptive RSI policy (June 2026):** The system **always strives for adaptive RSI** — when fill-recency gap persists, entry SI raises `relaxed_rsi_cap` (up to 70). The screener prefilter must use the same ceiling via `tier_rsi_threshold()` and `effective_bear_tier1()`; ranging-extremes bands use `adaptive_ranging_oversold_cap()` instead of fixed 35. Misalignment is flagged by integrity scan code `adaptive_rsi_screener_drift`.
 
 **Key env vars:**
 
@@ -610,7 +616,9 @@ Classic Fortress has **layered** improvement loops — deterministic-first, LLM-
 | SI recommendation queue | `utils/si_recommendation_queue.py` | Integrity + capability findings | `data/si_recommendation_queue.json` | `FORTRESS_CLASSIC_SI_AUTO` |
 | Classic SI autonomous | `utils/classic_si_autonomous.py` | Heuristic assess + auto-apply | queue dispositions | default ON |
 | Fill-recency entry | `utils/fill_recency_entry.py` | Days since last fill/entry (positions.json-aware) | `entry_si_overrides.json` | `FORTRESS_CLASSIC_ENTRY_FILL_RECENCY_LOOSEN` |
+| Adaptive RSI (unified) | `utils/adaptive_rsi.py` | Screener + entry ceiling alignment | `last_screening_meta.json` → `adaptive_rsi` | fill-recency + entry SI |
 | Screener SI | `utils/classic_si_screener.py` | Zero-candidate streaks | `screener_si_overrides.json` | `FORTRESS_CLASSIC_SI_SCREENER` |
+| Screener cron hooks | `utils/classic_screening_hooks.py` | Intraday zero-candidate auto-relax | pipeline health JSON | every 30 min screener |
 | Chunked exits | `utils/order_sizer.py` | N/A (execution guard) | `chunked_exit` log markers | `FORTRESS_MAX_ORDER_NOTIONAL_USD` |
 | Param auto-tune | `orchestrator tune` | RSI, drop, volume thresholds | `current_params.json` | Manual or evolve |
 | Recursive evolution | `orchestrator evolve` | 5-phase diagnosis + Thompson sampling | `recursive_evolution_*.json` | `FORTRESS_EVOLUTION_ALLOW_WRITES=1` |
@@ -624,7 +632,8 @@ Classic Fortress has **layered** improvement loops — deterministic-first, LLM-
 | Drift rollback | `drift_detector` | Auto profile rollback | `policy_rollback_state.json` | Automatic on alert |
 | Ops autofix | `ops_autofix_agent` | Reconcile stale state | `ops_autofix_report_*.json` | Every 15 min |
 
-**Verify:** `python3 orchestrator.py verify_learning`
+**Verify:** `python3 orchestrator.py verify_learning`  
+**Pre-deploy:** `./scripts/e2e_before_deploy.sh` (required); optional `RUN_UNIT_TESTS=1` for full suite. Integrity scan runs on evolve cron and surfaces `adaptive_rsi_screener_drift` when screener/entry RSI diverge.
 
 ---
 
@@ -634,6 +643,7 @@ Classic Fortress has **layered** improvement loops — deterministic-first, LLM-
 |---------|-----------|------------|
 | Max order notional | Exit chunking via order_sizer | `FORTRESS_MAX_ORDER_NOTIONAL_USD` |
 | Fill-recency loosen | Bounded entry relax when no recent fill | `FORTRESS_CLASSIC_FILL_RECENCY_*` |
+| Adaptive RSI alignment | Screener tier RSI ≥ entry relaxed cap when SI active | `utils/adaptive_rsi.py`, integrity `adaptive_rsi_screener_drift` |
 | Classic SI master | Autonomous queue processing | `FORTRESS_CLASSIC_SI_AUTO` |
 | Pre-trade gate | `utils/pre_trade_gate.py` | All paths |
 | Risk guardian | Circuit breaker, streaks | `risk_guardian_state.json` |
@@ -662,6 +672,9 @@ Classic Fortress has **layered** improvement loops — deterministic-first, LLM-
 | `data/si_recommendation_summary.json` | Queue + classic_si cycle rollup |
 | `data/entry_si_overrides.json` | Fill-recency entry relax state |
 | `data/screener_si_overrides.json` | Screener SI relax state |
+| `data/last_screening_meta.json` | Screener telemetry + `adaptive_rsi` block |
+| `data/screening_pipeline_health.json` | Consecutive zero-candidate runs (cron + daily screen) |
+| `data/integrity_scan_latest.json` | Integrity findings incl. `adaptive_rsi_screener_drift` |
 | `data/decisions_log.jsonl` | All trading decisions + outcomes |
 | `data/positions.json` | Open positions (reconcile with Alpaca) |
 | `data/current_params.json` | Tunable RSI/drop/volume/stop params |
@@ -705,6 +718,7 @@ Classic code is **not modified** when fortress-ai runs side-by-side on the same 
 6. Paper trading default — live requires explicit ack.
 7. Separate Alpaca account from fortress-ai — Classic positions and capital are independent of Fortress AI skim/infra/unified books.
 8. No SI queue dashboard panel — queue is backend-only; review via `data/si_recommendation_summary.json` or fortress-ai SI APIs.
+9. **E2E** (`./scripts/e2e_before_deploy.sh`) validates imports and mocked smoke paths — it does **not** live-test Alpaca fill latency or screener/entry RSI alignment; use integrity scan `adaptive_rsi_screener_drift` and `./scripts/e2e_before_deploy.sh` before every deploy.
 
 ---
 
@@ -720,6 +734,8 @@ Classic code is **not modified** when fortress-ai runs side-by-side on the same 
 | Trust ledger | Governance audit log |
 | Evolution | 5-phase recursive self-improvement cycle |
 | Classic SI | Integrity-driven queue + fill-recency / screener auto-relax |
+| adaptive_rsi | Unified ceiling (up to 70) shared by screener prefilter and entry gate |
+| adaptive_rsi_screener_drift | Integrity finding when screener rejects on tighter RSI than entry SI |
 | chunked_exit | Sell split into child orders under notional cap |
 | CIO directive | Top-level agentic allocation artifact |
 | Sleeve | Day/swing/position timeframe bucket |
