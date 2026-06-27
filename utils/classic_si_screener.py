@@ -147,11 +147,16 @@ def should_auto_relax(*, min_zero_runs: int = 2) -> tuple[bool, str]:
     if not si_screener_enabled():
         return False, "screener_si_disabled"
     ctx = screening_context()
-    regime = ctx["regime"]
+    regime = str(ctx["regime"] or "").upper()
     if regime in ("TRENDING_BULL", "BULL") and int(ctx.get("daily_screen_consecutive_zero") or 0) < 2:
         return False, "bull_regime_use_bull_tiers"
-    if ctx["consecutive_zero_runs"] < min_zero_runs and ctx["last_candidates_found"] > 0:
-        return False, "candidates_ok"
+    daily_zero = int(ctx.get("daily_screen_consecutive_zero") or 0)
+    if daily_zero >= 2:
+        pass
+    else:
+        effective_min = 1 if regime in ("VOLATILE", "TRENDING_BEAR", "BEAR", "RANGING") else min_zero_runs
+        if ctx["consecutive_zero_runs"] < effective_min and ctx["last_candidates_found"] > 0:
+            return False, "candidates_ok"
     step = int(ctx["relax_step"] or 0)
     if step >= _MAX_STEP:
         return False, "max_relax_step"

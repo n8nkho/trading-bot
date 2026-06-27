@@ -91,6 +91,22 @@ class TestClassicSiAutonomous(unittest.TestCase):
         self.addCleanup(self._td.cleanup)
         os.environ["FORTRESS_CLASSIC_SI_AUTO"] = "1"
 
+    def test_volatile_regime_relaxes_after_one_zero_run(self):
+        from utils import classic_si_screener as css
+
+        data = Path(self._td.name)
+        with patch.object(css, "_HEALTH_PATH", data / "health.json"):
+            with patch.object(css, "_META_PATH", data / "meta.json"):
+                with patch.object(css, "_RISK_PATH", data / "risk.json"):
+                    with patch.object(css, "_OVERRIDES_PATH", data / "overrides.json"):
+                        (data / "health.json").write_text(
+                            json.dumps({"consecutive_zero_runs": 1, "last_candidates_found": 0})
+                        )
+                        (data / "risk.json").write_text(json.dumps({"regime": "VOLATILE"}))
+                        ok, reason = css.should_auto_relax()
+        self.assertTrue(ok)
+        self.assertEqual(reason, "zero_candidate_streak")
+
     def test_scan_zero_finding(self):
         from utils import classic_si_autonomous as csa
         from utils import classic_si_screener as css
