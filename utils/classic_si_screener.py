@@ -191,12 +191,19 @@ def apply_relax_patch(patch: dict[str, Any] | None = None) -> dict[str, Any]:
     ov.update(patch)
     ov["applied_by"] = "classic_si_screener"
     save_overrides(ov)
-    return {
+    result = {
         "ok": True,
         "applied": patch,
         "effective_tier1": effective_bear_tier1(),
         "marker": "classic_si_screener_relax",
     }
+    try:
+        from utils.si_rsi_auto_deploy import deploy_screener_relax
+
+        result["rsi_deploy"] = deploy_screener_relax(reason=str(patch.get("reason") or "relax"))
+    except Exception:
+        pass
+    return result
 
 
 def reset_relax_on_candidates(*, candidates_found: int) -> None:
