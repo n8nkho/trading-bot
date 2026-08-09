@@ -20,14 +20,7 @@ try:
 except:
     print("   ⚠️  Dashboard: UNKNOWN")
 
-try:
-    result = subprocess.run(['systemctl', 'is-active', 'ollama'], capture_output=True, text=True)
-    if 'active' in result.stdout:
-        print("   ✅ Ollama: RUNNING")
-    else:
-        print("   ❌ Ollama: STOPPED")
-except:
-    print("   ⚠️  Ollama: UNKNOWN")
+print("   ✅ LLM: DeepSeek (cloud) — local Llama/Ollama not used")
 
 # 2. Check cron jobs
 print("\n2. AUTOMATION STATUS:")

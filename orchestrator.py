@@ -46,7 +46,6 @@ from agents.performance_analyzer import (
     DEFAULT_PARAMS,
 )
 from utils.llm_decision_tracker import get_llm_decision_tracker
-from agents.llama_watchdog import run_watchdog, preload_models, is_emergency_mode
 # Fortress hedging is optionally deployable; avoid import-time failures.
 # We import it lazily inside `run_fortress()` so `orchestrator.py` can start
 # even if some hedge dependencies are missing.
@@ -795,7 +794,7 @@ def verify_learning() -> dict:
         "hints": [
             "llm_decisions.jsonl is created on first LLM entry evaluation (screen → entry gate with provider≠none).",
             "llm_lessons.jsonl appears after a full position exit (SELL_ALL) with signal_id on the position, or after evolve batch review.",
-            "If files stay empty: confirm config/fortress_runtime.yaml llm.provider is deepseek (or ollama), DEEPSEEK_API_KEY set, and run a weekday screen during/after RTH for candidates.",
+            "If files stay empty: confirm config/fortress_runtime.yaml llm.provider is deepseek, DEEPSEEK_API_KEY set, and run a weekday screen during/after RTH for candidates.",
         ],
     }
 
@@ -3062,8 +3061,6 @@ if __name__ == "__main__":
         print("  python orchestrator.py monitor                    - Monitor positions")
         print("  python orchestrator.py status                     - Check market status")
         print("  python orchestrator.py costs                      - Show comprehensive cost report")
-        print("  python orchestrator.py watchdog                   - Check Llama health and optimize")
-        print("  python orchestrator.py preload                    - Preload Llama models (run at 2:55 AM)")
         print("  python orchestrator.py tune                       - Auto-tune parameters")
         print("  python orchestrator.py review                     - Weekly performance review")
         print("  python orchestrator.py architect                  - Run meta-architect improvement cycle")
@@ -3475,14 +3472,11 @@ if __name__ == "__main__":
         if today_costs['service_breakdown']:
             for service, data in today_costs['service_breakdown'].items():
                 service_name = service.capitalize()
-                if service == 'ollama':
-                    print(f"  {GREEN}✓{RESET} {service_name}: {GREEN}$0.00 (FREE){RESET} ({data['calls']} calls)")
-                else:
-                    cost_color = GREEN if data['cost'] < 0.10 else YELLOW if data['cost'] < 1.0 else RED
-                    print(f"  • {service_name}: {cost_color}${data['cost']:.4f}{RESET} ({data['calls']} calls)")
-                    if data['savings'] > 0:
-                        savings_pct = (data['savings'] / (data['cost'] + data['savings'])) * 100
-                        print(f"    {CYAN}↓ Cache savings: ${data['savings']:.4f} ({savings_pct:.0f}%){RESET}")
+                cost_color = GREEN if data['cost'] < 0.10 else YELLOW if data['cost'] < 1.0 else RED
+                print(f"  • {service_name}: {cost_color}${data['cost']:.4f}{RESET} ({data['calls']} calls)")
+                if data['savings'] > 0:
+                    savings_pct = (data['savings'] / (data['cost'] + data['savings'])) * 100
+                    print(f"    {CYAN}↓ Cache savings: ${data['savings']:.4f} ({savings_pct:.0f}%){RESET}")
         
         if today_costs['api_savings'] > 0:
             total_before = today_costs['api_cost'] + today_costs['api_savings']
@@ -3582,48 +3576,6 @@ if __name__ == "__main__":
                 print(f"    Reason: {change['reason']}")
         else:
             print(f"\nReason: {result.get('reason', 'No changes needed')}")
-    
-    elif command == "watchdog":
-        print("\nRunning Llama watchdog...")
-        report = run_watchdog()
-        
-        print("\n" + "=" * 80)
-        print("LLAMA WATCHDOG REPORT")
-        print("=" * 80)
-        print(f"Health Score: {report['health']['health_score']}/100")
-        print(f"Service Running: {report['health']['service_running']}")
-        print(f"Emergency Mode: {report['emergency_mode']}")
-        
-        if report['health']['response_time']:
-            print(f"Response Time: {report['health']['response_time']:.2f}s")
-        
-        if report['health']['models_loaded']:
-            print(f"Models Loaded: {', '.join(report['health']['models_loaded'])}")
-        
-        if report['health']['issues']:
-            print("\nIssues Detected:")
-            for issue in report['health']['issues']:
-                print(f"  - {issue}")
-        
-        if report['optimization']['optimized']:
-            print("\nOptimizations Applied:")
-            for action in report['optimization']['actions_taken']:
-                print(f"  - {action}")
-    
-    elif command == "preload":
-        print("\nPreloading Llama models...")
-        result = preload_models()
-        
-        print("\n" + "=" * 80)
-        print("LLAMA PRELOAD")
-        print("=" * 80)
-        print(f"Success: {result['success']}")
-        
-        if result['success']:
-            print(f"Preload Time: {result['preload_time']:.2f}s")
-            print("Models ready for 3 AM screening")
-        else:
-            print(f"Error: {result['error']}")
     
     elif command == "review":
         from agents.performance_analyzer import weekly_review

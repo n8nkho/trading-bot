@@ -1,6 +1,6 @@
 """
 Review LLM entry decisions vs realized outcomes and persist lessons (paper trading).
-Uses the configured LLM provider (DeepSeek/Ollama) via utils.local_llm.call_llm.
+Uses the configured LLM provider (DeepSeek) via utils.local_llm.call_llm.
 """
 
 from __future__ import annotations

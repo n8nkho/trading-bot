@@ -185,13 +185,6 @@ def fetch_anthropic_credits() -> dict[str, Any]:
     return out
 
 
-def ollama_row() -> dict[str, Any]:
-    return {
-        "provider": "ollama",
-        "mode": "local",
-        "note": "Local inference — no cloud prepaid credits.",
-    }
-
 
 def get_llm_credit_snapshot() -> dict[str, Any]:
     """Balances / spend rollup for all LLM backends used by Fortress."""
@@ -202,6 +195,5 @@ def get_llm_credit_snapshot() -> dict[str, Any]:
             fetch_deepseek_credits(),
             fetch_xai_credits(),
             fetch_anthropic_credits(),
-            ollama_row(),
         ],
     }

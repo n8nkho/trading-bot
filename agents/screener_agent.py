@@ -191,7 +191,7 @@ def run_screener():
         logger.info("Agentic queue unavailable or empty; using deterministic-only screener tiers.")
 
     # LLM is optional/advisory. By default runtime config sets llm.provider=none,
-    # so we should not block screening on a local Ollama call.
+    # so we should not block screening on an optional LLM call.
     llm_cfg = {}
     try:
         llm_cfg = get_llm_config() or {}

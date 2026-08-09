@@ -5,7 +5,7 @@ Loads ``config/fortress_runtime.yaml`` if present, merged over built-in defaults
 Override path with env ``FORTRESS_RUNTIME_CONFIG``.
 
 Policy risk/screening knobs stay in ``config/policy_profiles.json``; this file is for
-agent on/off switches, default portfolio sizing, and LLM hints (e.g. Ollama on Oracle).
+agent on/off switches, default portfolio sizing, and LLM hints (DeepSeek in production).
 """
 
 from __future__ import annotations
@@ -43,9 +43,11 @@ def _builtin_defaults() -> dict[str, Any]:
             "universe_expansion_d_plus": "us_equities_options",
         },
         "llm": {
-            "provider": "none",
-            "ollama_base_url": "http://127.0.0.1:11434",
-            "default_model": "llama3.2:3b",
+            # Production: DeepSeek only. Ollama/Llama not used.
+            "provider": "deepseek",
+            "deepseek_base_url": "https://api.deepseek.com/v1",
+            "deepseek_model": "deepseek-chat",
+            "default_model": "deepseek-chat",
         },
     }
 

@@ -667,7 +667,7 @@ Consider negative: earnings misses, regulatory issues, lawsuits, management chan
 Consider neutral/positive: normal market moves, analyst upgrades, product launches."""
 
         # LLM is advisory/optional. If provider=none (default runtime), skip the
-        # blocking Ollama call so the monitor can run autonomously.
+        # blocking LLM call so the monitor can run autonomously.
         try:
             llm_cfg = get_llm_config() or {}
         except Exception:
@@ -683,7 +683,7 @@ Consider neutral/positive: normal market moves, analyst upgrades, product launch
             logging.info(f"{ticker}: Exit-monitor LLM disabled (provider=none or EXITMONITOR_DISABLE_LLM=1).")
             return {"has_negative_news": False, "summary": "LLM disabled (provider=none)."}
 
-        # Call configured provider (ollama/deepseek) only when enabled.
+        # Call configured LLM provider (deepseek) only when enabled.
         response = call_llm(prompt, timeout=30)
         
         # Parse response

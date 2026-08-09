@@ -241,7 +241,6 @@ AGENT_LOGS = {
     "ops_autofix": {"log": LOGS_DIR / "ops_autofix.log", "name": "Ops AutoFix", "max_age_hours": 2},
     "orchestrator": {"log": LOGS_DIR / "orchestrator.log", "name": "Orchestrator", "max_age_hours": 9999},
     "agent_manager": {"log": LOGS_DIR / "agent_manager.log", "name": "Agent Manager", "max_age_hours": 1},
-    "llama_watchdog": {"log": LOGS_DIR / "llama_watchdog.log", "name": "Llama Watchdog", "max_age_hours": 2},
     "error_detective": {"log": LOGS_DIR / "error_detective.log", "name": "Error Detective", "max_age_hours": 25},
     "main_loop": {"log": LOGS_DIR / "main_loop.log", "name": "Main Loop", "max_age_hours": 1},
     # Fortress AI pipeline (logs match utils.fortress_logger / agents)
@@ -298,7 +297,6 @@ ALWAYS_SHOW_NONCORE_IDS = {
     "risk_guardian",
     "bot_audit_agent",
     "drift_detector",
-    "llama_watchdog",
     "error_detective",
     "walk_forward_validator",
     "intelligence_brief_generator",
@@ -332,7 +330,6 @@ def _extend_agent_logs_from_modules() -> None:
         "ops_autofix_agent": ("ops_autofix.log", "Ops AutoFix"),
         "entry_agent": ("entry.log", "Entry Agent"),
         "risk_guardian": ("risk.log", "Risk Guardian"),
-        "llama_watchdog": ("llama_watchdog.log", "Llama Watchdog"),
         "meta_architect": ("meta_architect.log", "Meta Architect"),
         "vision_analyst": ("grok.log", "Vision Analyst"),
         "document_analyst": ("grok.log", "Document Analyst"),
@@ -370,7 +367,6 @@ def _extend_agent_logs_from_modules() -> None:
             "ops_autofix_agent": "ops_autofix",
             "entry_agent": "entry",
             "risk_guardian": "risk_guardian",
-            "llama_watchdog": "llama_watchdog",
             "meta_architect": "meta_architect",
             # vision/document share grok.log but still show as dedicated modules.
             "vision_analyst": "vision_analyst",
@@ -894,15 +890,11 @@ def _build_system_health() -> dict:
     }
     # Services
     for name, cmd in [
-        ("ollama", ["systemctl", "is-active", "ollama"]),
         ("dashboard", ["pgrep", "-f", "dashboard"]),
     ]:
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-            if name == "ollama":
-                health["services"][name] = "active" in (r.stdout or "").lower()
-            else:
-                health["services"][name] = r.returncode == 0 and bool((r.stdout or "").strip())
+            health["services"][name] = r.returncode == 0 and bool((r.stdout or "").strip())
         except Exception:
             health["services"][name] = False
 
@@ -3121,7 +3113,7 @@ def _attach_llm_provider_credits(out: dict) -> None:
 
 def get_llm_usage_status() -> dict:
     """
-    Load DeepSeek/Ollama LLM token usage + estimated costs for dashboard display.
+    Load DeepSeek LLM token usage + estimated costs for dashboard display.
     """
     out = {
         "timestamp": datetime.now().isoformat(),

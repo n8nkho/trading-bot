@@ -14,7 +14,7 @@ from collections import defaultdict
 import subprocess
 from typing import Any
 
-from utils.local_llm import call_ollama
+from utils.local_llm import call_llm
 
 # Setup logging
 log_dir = Path("logs")
@@ -159,7 +159,7 @@ def analyze_performance_gaps(lookback_days=LOOKBACK_DAYS):
     """
     Analyze last N days of trades to identify performance gaps.
     
-    Uses LOCAL Llama to identify patterns in losses:
+    Uses configured LLM (DeepSeek) to identify patterns in losses:
     - Sector-specific losses
     - Volatility-related losses
     - Early exits
@@ -210,14 +210,14 @@ def analyze_performance_gaps(lookback_days=LOOKBACK_DAYS):
         # Analyze loss patterns
         loss_patterns = analyze_loss_patterns(losses)
         
-        # Use Llama to identify weaknesses
-        llama_analysis = get_llama_weakness_analysis(trades, wins, losses, loss_patterns)
+        # Use LLM to identify weaknesses
+        llm_analysis = get_llm_weakness_analysis(trades, wins, losses, loss_patterns)
         
         # Combine patterns
-        all_patterns = loss_patterns + llama_analysis.get('patterns', [])
+        all_patterns = loss_patterns + llm_analysis.get('patterns', [])
         
         # Generate agent suggestions
-        suggested_agents = generate_agent_suggestions(all_patterns, llama_analysis)
+        suggested_agents = generate_agent_suggestions(all_patterns, llm_analysis)
         
         result = {
             'timestamp': datetime.now().isoformat(),
@@ -227,7 +227,7 @@ def analyze_performance_gaps(lookback_days=LOOKBACK_DAYS):
             'losses': len(losses),
             'win_rate': win_rate,
             'loss_patterns': loss_patterns,
-            'llama_analysis': llama_analysis,
+            'llm_analysis': llm_analysis,
             'suggested_agents': suggested_agents
         }
         
@@ -347,7 +347,7 @@ def analyze_loss_patterns(losses):
     return patterns
 
 
-def get_llama_weakness_analysis(trades, wins, losses, loss_patterns):
+def get_llm_weakness_analysis(trades, wins, losses, loss_patterns):
     """
     Use LOCAL Llama to analyze trading patterns and identify weaknesses.
     
@@ -358,7 +358,7 @@ def get_llama_weakness_analysis(trades, wins, losses, loss_patterns):
         loss_patterns: Pre-identified patterns
         
     Returns:
-        dict: Llama's analysis with patterns and suggestions
+        dict: LLM analysis with patterns and suggestions
     """
     logger.info("Requesting Llama analysis of trading patterns...")
     
@@ -402,7 +402,7 @@ Return ONLY valid JSON in this format:
 }}"""
 
     try:
-        response = call_ollama(prompt, model="llama3.1:8b", timeout=90)
+        response = call_llm(prompt, timeout=90)
         
         if not response:
             logger.warning("Llama returned empty response")
@@ -430,13 +430,13 @@ Return ONLY valid JSON in this format:
         return {'patterns': []}
 
 
-def generate_agent_suggestions(patterns, llama_analysis):
+def generate_agent_suggestions(patterns, llm_analysis):
     """
     Generate specific agent suggestions based on identified patterns.
     
     Args:
         patterns: List of pattern dicts
-        llama_analysis: Llama's analysis
+        llm_analysis: LLM analysis
         
     Returns:
         list: List of agent suggestion dicts
@@ -480,14 +480,14 @@ def generate_agent_suggestions(patterns, llama_analysis):
             })
     
     # Add Llama suggestions
-    for llama_pattern in llama_analysis.get('patterns', []):
+    for llm_pattern in llm_analysis.get('patterns', []):
         suggestions.append({
-            'agent_name': llama_pattern.get('agent_type', 'CustomAgent').replace(' ', '_'),
-            'purpose': llama_pattern.get('weakness'),
-            'weakness_addressed': llama_pattern.get('weakness'),
-            'potential_improvement': llama_pattern.get('potential_improvement'),
+            'agent_name': llm_pattern.get('agent_type', 'CustomAgent').replace(' ', '_'),
+            'purpose': llm_pattern.get('weakness'),
+            'weakness_addressed': llm_pattern.get('weakness'),
+            'potential_improvement': llm_pattern.get('potential_improvement'),
             'priority': 'HIGH',
-            'source': 'llama'
+            'source': 'llm'
         })
     
     # Remove duplicates
@@ -543,7 +543,7 @@ Return ONLY valid JSON in this format:
 }}"""
 
     try:
-        response = call_ollama(prompt, model="llama3.1:8b", timeout=90)
+        response = call_llm(prompt, timeout=90)
         
         if not response:
             logger.warning("Llama returned empty response")
@@ -595,7 +595,7 @@ Blueprint:
 Requirements:
 - Complete, executable Python code
 - Use existing imports: logging, json, datetime, Path
-- Use utils.local_llm.call_ollama() if needed
+- Use utils.local_llm.call_llm() if needed
 - Include docstrings
 - Include error handling
 - Include logging statements
@@ -606,7 +606,7 @@ Return ONLY the Python code, no explanations or markdown.
 Start with imports and end with the main function."""
 
     try:
-        response = call_ollama(prompt, model="llama3.1:8b", timeout=120)
+        response = call_llm(prompt, timeout=120)
         
         if not response:
             logger.warning("Llama returned empty response")

@@ -10,7 +10,7 @@ from pathlib import Path
 from collections import defaultdict
 import statistics
 
-from utils.local_llm import call_ollama
+from utils.local_llm import call_llm
 
 # Setup logging
 logging.basicConfig(
@@ -381,8 +381,8 @@ Analyze the data and return a JSON object with:
 
 Return ONLY valid JSON, no other text."""
 
-        logger.info("Calling Llama for pattern analysis...")
-        response = call_ollama(prompt, model="llama3.1:8b", timeout=90)
+        logger.info("Calling LLM for pattern analysis...")
+        response = call_llm(prompt, timeout=90)
         
         # Parse JSON response
         try:

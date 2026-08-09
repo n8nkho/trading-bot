@@ -32,11 +32,6 @@ PRICING = {
         'deepseek-chat': {'input': 0.28, 'output': 0.42},
         'deepseek-reasoner': {'input': 0.28, 'output': 0.42},
     },
-    'ollama': {
-        'llama3.1:8b': {'input': 0.0, 'output': 0.0},  # FREE
-        'llama3.2:3b': {'input': 0.0, 'output': 0.0},  # FREE
-        'deepseek-r1:14b': {'input': 0.0, 'output': 0.0},  # FREE local
-    }
 }
 
 # Cache discount (90% off cached tokens)
@@ -89,8 +84,8 @@ def track_api_cost(service, model, input_tokens, output_tokens, cached_tokens=0)
     Track API cost for a single call.
     
     Args:
-        service: 'anthropic', 'deepseek', 'grok', 'xai', or 'ollama'
-        model: Model name (e.g., 'claude-haiku', 'grok-mini', 'llama3.1:8b')
+        service: 'anthropic', 'deepseek', 'grok', or 'xai'
+        model: Model name (e.g., 'claude-haiku', 'grok-mini', 'deepseek-chat')
         input_tokens: Number of input tokens
         output_tokens: Number of output tokens
         cached_tokens: Number of cached input tokens (default 0)
@@ -366,10 +361,7 @@ def generate_cost_report():
     
     for service, data in today_costs['service_breakdown'].items():
         service_name = service.capitalize()
-        if service == 'ollama':
-            report.append(f"  - {service_name}: $0.00 (FREE) ({data['calls']} calls)")
-        else:
-            report.append(f"  - {service_name}: ${data['cost']:.2f} ({data['calls']} calls)")
+        report.append(f"  - {service_name}: ${data['cost']:.2f} ({data['calls']} calls)")
     
     if today_costs['api_savings'] > 0:
         cache_pct = (today_costs['api_savings'] / (today_costs['api_cost'] + today_costs['api_savings'])) * 100

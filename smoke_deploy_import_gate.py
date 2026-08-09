@@ -70,7 +70,6 @@ def main() -> int:
         "agents.exit_monitor",
         "agents.risk_guardian",
         "agents.performance_analyzer",
-        "agents.llama_watchdog",
         "agents.intraday_sniper",
         "agents.spy_intraday_swing",
         "agents.critique_loop",

@@ -114,7 +114,7 @@ This document is a single-source blueprint for external review of the Fortress t
 - Safety fallback remains active:
   - if provider is disabled/unavailable or response is malformed, deterministic fallback path executes.
 - Provider routing:
-  - `llm.provider=ollama|deepseek|none` in runtime config (`none` remains safest default).
+  - `llm.provider=deepseek|none` in runtime config (production default is deepseek).
 - Cost/usage telemetry:
   - DeepSeek calls now log token usage and estimated USD cost into `data/api_costs.jsonl`.
   - Daily/monthly/lifetime summaries are available via `utils/cost_calculator.py`.

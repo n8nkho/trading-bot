@@ -356,12 +356,11 @@ def health():
         except Exception:
             alpaca_status = "ERROR"
         
-        ollama_status = "OK"
+        llm_status = "OK"
         try:
-            # Simple check - in production, ping Ollama
-            ollama_status = "OK"
+            llm_status = "OK"
         except Exception:
-            ollama_status = "ERROR"
+            llm_status = "ERROR"
         
         # System metrics
         disk_usage = shutil.disk_usage('/')
@@ -390,7 +389,7 @@ def health():
         return render_template('health.html',
                              circuit_breaker=circuit_breaker_status,
                              alpaca_status=alpaca_status,
-                             ollama_status=ollama_status,
+                             llm_status=llm_status,
                              disk_free_gb=disk_free_gb,
                              disk_total_gb=disk_total_gb,
                              disk_pct=disk_pct,
@@ -401,7 +400,7 @@ def health():
         return render_template('health.html',
                              circuit_breaker="ERROR",
                              alpaca_status="ERROR",
-                             ollama_status="ERROR",
+                             llm_status="ERROR",
                              disk_free_gb=0,
                              disk_total_gb=0,
                              disk_pct=0,

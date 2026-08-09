@@ -4,7 +4,7 @@
 
 1. PROCESS STATUS:
    ❌ Dashboard: STOPPED
-   ✅ Ollama: RUNNING
+   ✅ LLM: DeepSeek (cloud) — Ollama not used
 
 2. AUTOMATION STATUS:
    ✅ Cron jobs: CONFIGURED

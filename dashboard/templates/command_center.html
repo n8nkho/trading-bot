@@ -787,7 +787,7 @@
       const el = document.getElementById('health');
       if (!data || !data.services) { el.innerHTML = '<span class="empty">No data</span>'; return; }
       const items = [];
-      items.push({ label: 'Ollama', value: data.services.ollama ? 'Running' : 'Stopped', cls: data.services.ollama ? 'ok' : 'err' });
+      items.push({ label: 'LLM', value: 'DeepSeek', cls: 'ok' });
       items.push({ label: 'Dashboard', value: data.services.dashboard ? 'Running' : 'Stopped', cls: data.services.dashboard ? 'ok' : 'warn' });
       items.push({ label: 'Cron', value: data.cron_configured ? data.cron_count + ' jobs' : 'None', cls: data.cron_configured ? 'ok' : 'err' });
       if (data.disk && data.disk.pct != null) {

@@ -1,6 +1,8 @@
+"""DeepSeek LLM helpers for Classic Fortress (no local Llama/Ollama)."""
+from __future__ import annotations
+
 import json
 import re
-import subprocess
 from typing import Any
 
 from utils.cost_calculator import track_api_cost
@@ -15,26 +17,8 @@ def _llm_provider() -> str:
         return "none"
 
 
-def call_ollama(prompt: str, model: str = "llama3.1:8b", timeout: int = 60) -> str:
-    """Call local Ollama model."""
-    try:
-        result = subprocess.run(
-            ["ollama", "run", model, prompt],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        return result.stdout.strip()
-    except subprocess.TimeoutExpired:
-        return "Error: Timeout (model too slow)"
-    except Exception as e:
-        return f"Error: {str(e)}"
-
-
 def call_deepseek(prompt: str, *, timeout: int = 60) -> str:
-    """
-    Call DeepSeek using OpenAI-compatible chat endpoint.
-    """
+    """Call DeepSeek using OpenAI-compatible chat endpoint."""
     try:
         from utils.llm_router import ensure_llm_env_loaded
 
@@ -63,13 +47,10 @@ def call_deepseek(prompt: str, *, timeout: int = 60) -> str:
             temperature=0.2,
             max_tokens=300,
         )
-        # Cost tracking: record prompt/completion token usage per call.
         try:
             usage = getattr(resp, "usage", None)
             prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0) if usage is not None else 0
             completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0) if usage is not None else 0
-            # DeepSeek cache-hit tokens are not consistently exposed by SDK responses.
-            # Track cached_tokens=0 unless provider starts returning explicit cache counters.
             track_api_cost(
                 service="deepseek",
                 model=model,
@@ -78,7 +59,6 @@ def call_deepseek(prompt: str, *, timeout: int = 60) -> str:
                 cached_tokens=0,
             )
         except Exception:
-            # Cost telemetry must never block trading decisions.
             pass
         text = (resp.choices[0].message.content or "").strip() if resp.choices else ""
         return text or "Error: Empty DeepSeek response"
@@ -87,25 +67,20 @@ def call_deepseek(prompt: str, *, timeout: int = 60) -> str:
 
 
 def call_llm(prompt: str, *, timeout: int = 60, model: str | None = None) -> str:
-    """
-    Provider-aware LLM caller.
-    - none: short-circuit with disabled message
-    - ollama: local model
-    - deepseek: OpenAI-compatible DeepSeek endpoint
-    """
+    """Provider-aware LLM caller — DeepSeek only (local Llama/Ollama removed)."""
+    del model  # DeepSeek model comes from runtime config / env
     provider = _llm_provider()
     if provider == "none":
         return "Error: LLM provider disabled (provider=none)"
     if provider == "deepseek":
         return call_deepseek(prompt, timeout=timeout)
-
-    cfg = get_llm_config() or {}
-    chosen_model = model or str(cfg.get("default_model") or "llama3.1:8b").strip()
-    return call_ollama(prompt, model=chosen_model, timeout=timeout)
+    if provider == "ollama":
+        return "Error: Ollama/Llama removed — set llm.provider=deepseek"
+    return f"Error: Unsupported LLM provider '{provider}' (use deepseek or none)"
 
 
 def analyze_stock_drop(ticker: str, news_headlines: list[str], metrics: dict[str, Any]) -> dict[str, Any]:
-    """Analyze if stock drop is unfair"""
+    """Analyze if stock drop is unfair."""
     news_text = "\n".join([f"- {h}" for h in news_headlines]) if news_headlines else "No news"
 
     prompt = f"""Analyze: {ticker} dropped {metrics.get('drop_pct', 0):.1f}%

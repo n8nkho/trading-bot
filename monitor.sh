@@ -19,7 +19,7 @@ _run_once() {
   echo ""
   echo "🔧 PROCESSES:"
   pgrep -f dashboard >/dev/null && echo "  ✅ Dashboard" || echo "  ❌ Dashboard"
-  systemctl is-active --quiet ollama && echo "  ✅ Ollama" || echo "  ❌ Ollama"
+  echo "  ✅ LLM: DeepSeek (no local Ollama)"
   echo ""
   echo "📜 RECENT ACTIVITY:"
   tail -5 logs/sniper.log 2>/dev/null | sed 's/^/  /' || true

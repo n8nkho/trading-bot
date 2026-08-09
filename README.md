@@ -1,6 +1,6 @@
 # KHF Zero-Cost Trading Bot
 
-Fundamental value strategy using local Llama models.
+Fundamental value strategy (DeepSeek LLM + Alpaca).
 
 **Operator default (Oracle + Mac mirror):** the **personal bot and all cron jobs run on Oracle** (`~/trading-bot` on the VM). **Default sync is Oracle → Mac** (`./scripts/sync_pull_from_oracle.sh`) so your Mac stays a Cursor/editor mirror — see **`docs/SYNC_ORACLE_SOURCE_OF_TRUTH.md`**.
 
@@ -17,12 +17,7 @@ chmod +x scripts/*.sh
 
 **systemd (Linux server):** `sudo ./scripts/install_systemd.sh --now` — see `deploy/systemd/README.md` and `docs/INSTALL.md`.
 
-## Quick Start (Llama / aider)
-```bash
-cd ~/trading-bot
-source venv/bin/activate
-python test_llama.py
-aider --model ollama/llama3.1:8b
-```
+## Quick Start
 
-Cost: $0/month
+Configure DeepSeek via `DEEPSEEK_API_KEY` and `config/fortress_runtime.yaml` (`llm.provider: deepseek`).
+
